@@ -1,4 +1,5 @@
 import './globals.css';
+import { LanguageProvider } from '@/context/LanguageContext';
 
 export const metadata = {
   title: 'Mettivo - Meet Your Kind of People',
@@ -13,7 +14,9 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body style={{ backgroundColor: '#0D0A10', color: '#F2E9E4', minHeight: '100vh', margin: 0 }}>
-        {children}
+        <LanguageProvider>
+          {children}
+        </LanguageProvider>
       </body>
     </html>
   );
