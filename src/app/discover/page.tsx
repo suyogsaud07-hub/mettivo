@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase'; 
 import { useRouter } from 'next/navigation';
+import MobileNav from '../components/layout/MobileNav'; // Adjusted path to match your file tree
 
 interface Profile {
   id: string;
@@ -120,11 +121,8 @@ export default function DiscoverPage() {
   };
 
   const handleMicClick = () => {
-    if (isRecording) {
-      stopRecording();
-    } else {
-      startRecording();
-    }
+    if (isRecording) stopRecording();
+    else startRecording();
   };
 
   const styles = {
@@ -165,7 +163,6 @@ export default function DiscoverPage() {
     modalBox: { backgroundColor: '#1C1822', width: '90%', maxWidth: '350px', borderRadius: '24px', padding: '30px 24px', border: '1px solid #4A1828', textAlign: 'center' as const },
     modalTitle: { fontSize: '20px', fontWeight: '700', color: '#F2E9E4', marginBottom: '12px' },
     modalSub: { fontSize: '14px', color: '#B58A83', marginBottom: '24px', lineHeight: '1.5' },
-    modalBtn: { width: '100%', padding: '16px', borderRadius: '16px', backgroundColor: '#29202D', color: '#F2E9E4', fontSize: '15px', fontWeight: '600', border: '1px solid #4A1828', cursor: 'pointer', marginBottom: '12px' },
     endCallBtn: { width: '100%', padding: '16px', borderRadius: '16px', backgroundColor: '#EF4444', color: '#FFFFFF', fontSize: '15px', fontWeight: '700', border: 'none', cursor: 'pointer' },
 
     // Filter Styles
@@ -199,7 +196,7 @@ export default function DiscoverPage() {
         </button>
       </div>
 
-      {/* Mettivo Live Banner - UPDATED TO ROUTE TO SEPARATE PAGE */}
+      {/* Mettivo Live Banner */}
       <div 
         style={{ ...styles.echoBanner, cursor: 'pointer' }} 
         onClick={() => router.push('/discover/mettivo_live')}
@@ -213,15 +210,12 @@ export default function DiscoverPage() {
         </div>
         
         <div style={styles.echoIcons}>
-          {/* Mic Icon */}
           <div style={styles.echoIconBtn}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg>
           </div>
-          {/* Phone Icon */}
           <div style={styles.echoIconBtn}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
           </div>
-          {/* Forward Arrow */}
           <div style={{ ...styles.echoIconBtn, backgroundColor: 'transparent' }}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#D4B18A" strokeWidth="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
           </div>
@@ -322,6 +316,9 @@ export default function DiscoverPage() {
           </div>
         </div>
       )}
+
+      {/* FINAL STEP: The bottom navigation bar */}
+      <MobileNav />
 
     </div>
   );

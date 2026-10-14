@@ -32,55 +32,37 @@ export default function LandingPage() {
 
   return (
     <div style={styles.container}>
-      {/* Top Bar with Language Selector */}
       <div style={styles.topBar}>
         <div style={{ position: 'relative' }}>
           <button style={styles.langBtn} onClick={() => setLangMenuOpen(!langMenuOpen)}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"></circle><path d="M2 12h20"></path><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
           </button>
-          
           {langMenuOpen && (
             <div style={styles.langDropdown}>
               {LANGUAGES.map((lang) => (
-                <div 
-                  key={lang} 
-                  style={{ ...styles.langItem, backgroundColor: selectedLang === lang ? '#4A1828' : 'transparent' }}
-                  onClick={() => { setSelectedLang(lang); setLangMenuOpen(false); }}
-                >
-                  {lang}
-                </div>
+                <div key={lang} style={{ ...styles.langItem, backgroundColor: selectedLang === lang ? '#4A1828' : 'transparent' }} onClick={() => { setSelectedLang(lang); setLangMenuOpen(false); }}>{lang}</div>
               ))}
             </div>
           )}
         </div>
       </div>
 
-      {/* Main Hero Content */}
       <div style={styles.main}>
         <div style={styles.logoContainer}>
           <svg viewBox="0 0 100 100" style={{ width: '80px', height: '80px', fill: 'none', stroke: '#D4B18A', strokeWidth: 6 }}>
             <path d="M 25,30 C 15,30 15,70 25,70 C 40,70 60,30 75,30 C 85,30 85,70 75,70 C 60,70 40,30 25,30 Z" />
           </svg>
         </div>
-        
         <h1 style={styles.title}>Mettivo</h1>
         <h2 style={styles.subtitle}>Meet your kind of people.</h2>
-        <p style={styles.description}>
-          An intimate space to find meaningful connections wrapped in luxury.
-        </p>
-
+        <p style={styles.description}>An intimate space to find meaningful connections wrapped in luxury.</p>
         <div style={styles.buttonContainer}>
-          <Link href="/signup" style={styles.primaryBtn}>
-            Get started →
-          </Link>
-          <Link href="/signup" style={styles.secondaryBtn}>
-            Get the app
-          </Link>
+          <Link href="/auth" style={styles.primaryBtn}>Get started →</Link>
+          <Link href="/auth" style={styles.secondaryBtn}>Get the app</Link>
         </div>
       </div>
 
-      {/* Footer */}
       <div style={styles.footer}>
         <p>Someone on Mettivo might give you butterflies.</p>
         <p style={{ fontSize: '11px', marginTop: '8px', opacity: 0.7 }}>© 2026 Mettivo. All rights reserved.</p>
