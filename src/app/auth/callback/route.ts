@@ -3,7 +3,7 @@ import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 
 // Force dynamic rendering in Next.js 15 to prevent build errors
-export const dynamic = 'force-dynamic';
+
 
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url);
