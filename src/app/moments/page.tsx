@@ -135,8 +135,6 @@ export default function MomentsPage() {
     // Header
     header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '20px', borderBottom: '1px solid #29202D' },
     headerTitle: { fontSize: '24px', fontWeight: '800', color: '#F2E9E4' },
-    bellBtn: { position: 'relative' as const, background: 'none', border: 'none', color: '#F2E9E4', cursor: 'pointer' },
-    bellBadge: { position: 'absolute' as const, top: '-4px', right: '-4px', backgroundColor: '#EF4444', color: '#FFF', fontSize: '10px', fontWeight: 'bold', width: '16px', height: '16px', borderRadius: '50%', display: 'flex', justifyContent: 'center', alignItems: 'center' },
 
     // Top Tabs
     tabsContainer: { display: 'flex', gap: '20px', padding: '16px 20px', borderBottom: '1px solid #29202D' },
@@ -188,13 +186,9 @@ export default function MomentsPage() {
   return (
     <div style={styles.container}>
       
-      {/* Header */}
+      {/* Header (Bell Icon Removed) */}
       <div style={styles.header}>
         <div style={styles.headerTitle}>Moments</div>
-        <button style={styles.bellBtn}>
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
-          <div style={styles.bellBadge}>1</div>
-        </button>
       </div>
 
       {/* Top Tabs */}
