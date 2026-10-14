@@ -2,7 +2,7 @@
 
 import { usePathname } from "next/navigation";
 import { Header } from "./Header";
-import { MobileNav } from "./MobileNav";
+import  MobileNav  from "./MobileNav";
 
 interface AppShellProps {
   children: React.ReactNode;
