@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { supabase } from '../lib/supabase'; 
+import { supabase } from '@/lib/supabase'; 
+
 import { useRouter } from 'next/navigation';
 import MobileNav from '../components/layout/MobileNav'; // Adjusted path to match your file tree
 

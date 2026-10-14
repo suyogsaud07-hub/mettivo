@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { supabase } from '../../lib/supabase'; 
+// FIXED: Using 4 levels up to reach src/lib and src/components
+import { supabase } from '@/lib/supabase'; 
 import { useRouter } from 'next/navigation';
 import MobileNav from '../../components/layout/MobileNav';
 

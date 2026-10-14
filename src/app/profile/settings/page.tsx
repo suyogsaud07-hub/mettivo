@@ -2,7 +2,8 @@
 
 import { useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { supabase } from '../../lib/supabase';
+import { supabase } from '@/lib/supabase'; 
+
 
 const LANGUAGES = [
   'English (United Kingdom)', 'English (United States)', 'Mandarin Chinese (中文)', 'Hindi (हिन्दी)',

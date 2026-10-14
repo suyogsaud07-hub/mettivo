@@ -3,7 +3,8 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 // FIXED IMPORT PATH: Go up two levels from app/signup to src/lib
-import { supabase } from '../lib/supabase'; 
+import { supabase } from '@/lib/supabase'; 
+
 
 export default function SignUpPage() {
   const router = useRouter();
