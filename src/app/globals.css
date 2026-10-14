@@ -1,3 +1,7 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 :root {
   --met-bg: #E8E1DF;
   --met-card: #F1ECE8;

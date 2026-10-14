@@ -1,8 +1,7 @@
-// src/app/layout.tsx
 import './globals.css';
 
 export const metadata = {
-  title: 'Spark - Meet Your Kind of People',
+  title: 'Mettivo - Meet Your Kind of People',
   description: 'Premium International Dating & Connections Platform',
 };
 
