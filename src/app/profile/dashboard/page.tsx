@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase'; 
 import { useRouter } from 'next/navigation';
-import CameraModal from '../../components/CameraModal';
+import MobileNav from '../../components/layout/MobileNav'; // Added import
+
 interface Profile {
   id: string;
   display_name: string;
@@ -34,15 +35,6 @@ export default function ProfileDashboardPage() {
   const [userEmail, setUserEmail] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'about' | 'gallery'>('about');
-  
-  // Gallery Edit States
-  const [tempPhotos, setTempPhotos] = useState<string[]>(['', '', '', '', '', '']);
-  const [editingPhotoIndex, setEditingPhotoIndex] = useState<number | null>(null);
-  const [isSavingGallery, setIsSavingGallery] = useState(false);
-  const [isCameraOpen, setIsCameraOpen] = useState(false); // State for Camera Modal
-  
-  // Ref for Gallery file input
-  const galleryInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     async function loadProfile() {
@@ -60,11 +52,6 @@ export default function ProfileDashboardPage() {
       }
       
       setProfile(data);
-      if (data && data.photos) {
-        const loadedPhotos = [...data.photos];
-        while (loadedPhotos.length < 6) loadedPhotos.push('');
-        setTempPhotos(loadedPhotos.slice(0, 6));
-      }
       setLoading(false);
     }
     loadProfile();
@@ -85,66 +72,6 @@ export default function ProfileDashboardPage() {
 
   const completionPercentage = calculateCompletion();
 
-  // --- PHOTO UPLOAD LOGIC ---
-  const handlePhotoUpload = (index: number, e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const updatedPhotos = [...tempPhotos];
-        updatedPhotos[index] = reader.result as string;
-        setTempPhotos(updatedPhotos);
-        setEditingPhotoIndex(null); // Close the prompt overlay after selection
-      };
-      reader.readAsDataURL(file);
-    }
-    e.target.value = ''; // Reset input value
-  };
-
-  // Handler for when a photo is captured via the CameraModal
-  const handleCameraCapture = (imageSrc: string) => {
-    if (editingPhotoIndex !== null) {
-      const updatedPhotos = [...tempPhotos];
-      updatedPhotos[editingPhotoIndex] = imageSrc;
-      setTempPhotos(updatedPhotos);
-    }
-    setIsCameraOpen(false);
-    setEditingPhotoIndex(null); // Close the prompt overlay
-  };
-
-  const handleSaveGallery = async () => {
-    const validPhotos = tempPhotos.filter(p => p && p.trim() !== '');
-    if (validPhotos.length < 4) {
-      alert('You must have at least 4 photos to save your profile gallery.');
-      return;
-    }
-
-    setIsSavingGallery(true);
-    const newAvatarUrl = validPhotos[0];
-
-    const { error } = await supabase.from('profiles').update({
-      photos: tempPhotos,
-      avatar_url: newAvatarUrl
-    }).eq('id', profile?.id);
-
-    setIsSavingGallery(false);
-
-    if (error) {
-      alert(`Error saving gallery: ${error.message}`);
-    } else {
-      alert('Gallery updated successfully!');
-      setProfile(prev => prev ? { ...prev, photos: tempPhotos, avatar_url: newAvatarUrl } : null);
-    }
-  };
-
-  const openCamera = (index: number) => {
-    setIsCameraOpen(true); // Open the custom camera modal
-  };
-
-  const openGallery = (index: number) => {
-    galleryInputRef.current?.click(); // Open the file picker
-  };
-
   if (loading) {
     return (
       <div style={{ minHeight: '100vh', display: 'flex', justifyContent: 'center', alignItems: 'center', backgroundColor: '#0D0A10', color: '#D4B18A', fontFamily: 'system-ui' }}>
@@ -153,10 +80,23 @@ export default function ProfileDashboardPage() {
     );
   }
 
+  // If no profile is found, show this screen WITH the bottom navigation
   if (!profile) {
     return (
-      <div style={{ minHeight: '100vh', display: 'flex', justifyContent: 'center', alignItems: 'center', backgroundColor: '#0D0A10', color: '#D4B18A', fontFamily: 'system-ui' }}>
-        Profile not found. Please complete onboarding.
+      <div style={{ minHeight: '100vh', backgroundColor: '#0D0A10', color: '#F2E9E4', fontFamily: 'system-ui', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', textAlign: 'center', padding: '20px' }}>
+          <div>
+            <h2 style={{ fontSize: '20px', fontWeight: '700', marginBottom: '12px' }}>Profile not found.</h2>
+            <p style={{ color: '#B58A83', marginBottom: '24px' }}>You need to complete the onboarding process.</p>
+            <button 
+              onClick={() => router.push('/profile')} 
+              style={{ backgroundColor: '#D4B18A', color: '#17121C', padding: '16px 32px', borderRadius: '30px', fontSize: '16px', fontWeight: '700', border: 'none', cursor: 'pointer' }}
+            >
+              Start Onboarding
+            </button>
+          </div>
+        </div>
+        <MobileNav />
       </div>
     );
   }
@@ -175,48 +115,31 @@ export default function ProfileDashboardPage() {
     ageBadge: { backgroundColor: '#4A1828', color: '#D4B18A', padding: '4px 12px', borderRadius: '20px', fontSize: '14px', fontWeight: '700' },
     location: { fontSize: '14px', color: '#B58A83', marginBottom: '16px' },
     intentionTag: { backgroundColor: '#29202D', color: '#D4B18A', border: '1px solid #4A1828', padding: '6px 16px', borderRadius: '20px', fontSize: '12px', fontWeight: '600' },
-    
     statsGrid: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', padding: '0 20px', marginBottom: '24px' },
     statCard: { backgroundColor: '#1C1822', borderRadius: '16px', padding: '16px 8px', display: 'flex', flexDirection: 'column' as const, alignItems: 'center', border: '1px solid #29202D' },
     statIcon: { fontSize: '22px', marginBottom: '8px' },
     statValue: { fontSize: '18px', fontWeight: '800', color: '#F2E9E4', marginBottom: '4px' },
     statLabel: { fontSize: '10px', color: '#B58A83', fontWeight: '600', textTransform: 'uppercase' as const, letterSpacing: '0.5px' },
-    
     progressCard: { margin: '0 20px 24px 20px', backgroundColor: '#1C1822', borderRadius: '16px', padding: '20px', display: 'flex', alignItems: 'center', gap: '16px', border: '1px solid #29202D' },
     progressCircle: { width: '50px', height: '50px' },
     progressText: { flex: 1 },
     progressTitle: { fontSize: '15px', fontWeight: '700', color: '#F2E9E4', marginBottom: '4px' },
     progressSubtitle: { fontSize: '12px', color: '#B58A83' },
     completeBtn: { backgroundColor: '#D4B18A', color: '#17121C', padding: '10px 16px', borderRadius: '20px', fontSize: '12px', fontWeight: '700', border: 'none', cursor: 'pointer' },
-    
     tabsContainer: { display: 'flex', padding: '0 20px', marginBottom: '24px', gap: '12px' },
     tab: { flex: 1, padding: '14px', borderRadius: '14px', textAlign: 'center' as const, fontSize: '14px', fontWeight: '700', cursor: 'pointer', transition: 'all 0.2s', border: '1px solid #29202D' },
     tabActive: { background: 'linear-gradient(135deg, #D4B18A, #B58A83)', color: '#17121C', border: 'none' },
     tabInactive: { backgroundColor: '#1C1822', color: '#B58A83' },
-    
     section: { margin: '0 20px 24px 20px', backgroundColor: '#1C1822', borderRadius: '20px', padding: '20px', border: '1px solid #29202D' },
     sectionHeader: { display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' },
     sectionIcon: { width: '32px', height: '32px', borderRadius: '10px', background: 'linear-gradient(135deg, #4A1828, #D4B18A)', display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '16px' },
     sectionTitle: { fontSize: '16px', fontWeight: '700', color: '#F2E9E4' },
-    
     infoRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', borderBottom: '1px solid #29202D' },
     infoLabel: { display: 'flex', alignItems: 'center', gap: '10px', fontSize: '14px', color: '#B58A83', fontWeight: '500' },
     infoValue: { fontSize: '14px', color: '#F2E9E4', fontWeight: '600', textAlign: 'right' as const, maxWidth: '60%' },
-    
     galleryGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' },
-    galleryItem: { position: 'relative' as const, width: '100%', aspectRatio: '1/1', borderRadius: '16px', overflow: 'hidden', cursor: 'pointer', border: '1px solid #4A1828' },
-    galleryImage: { width: '100%', height: '100%', objectFit: 'cover' as const, backgroundColor: '#29202D' },
-    galleryEmpty: { width: '100%', height: '100%', backgroundColor: '#29202D', border: '2px dashed #4A1828', display: 'flex', flexDirection: 'column' as const, justifyContent: 'center', alignItems: 'center', color: '#B58A83', fontSize: '24px' },
-    saveBtn: { width: '100%', padding: '18px', borderRadius: '30px', backgroundColor: '#D4B18A', color: '#17121C', fontSize: '16px', fontWeight: '700', border: 'none', cursor: 'pointer', marginTop: '20px', transition: 'all 0.2s' },
-    saveBtnDisabled: { backgroundColor: '#29202D', color: '#B58A83', cursor: 'not-allowed' },
-    
-    // Overlay for Permission Prompt
-    overlay: { position: 'fixed' as const, inset: 0, backgroundColor: 'rgba(13, 10, 16, 0.8)', backdropFilter: 'blur(4px)', display: 'flex', justifyContent: 'center', alignItems: 'flex-end', paddingBottom: '40px', zIndex: 1000 },
-    promptBox: { backgroundColor: '#1C1822', width: '90%', maxWidth: '400px', borderRadius: '24px', padding: '24px', border: '1px solid #4A1828', textAlign: 'center' as const },
-    promptTitle: { fontSize: '18px', fontWeight: '700', color: '#F2E9E4', marginBottom: '8px' },
-    promptSub: { fontSize: '13px', color: '#B58A83', marginBottom: '24px' },
-    promptBtn: { width: '100%', padding: '16px', borderRadius: '16px', backgroundColor: '#29202D', color: '#F2E9E4', fontSize: '15px', fontWeight: '600', border: '1px solid #4A1828', cursor: 'pointer', marginBottom: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' },
-    cancelBtn: { width: '100%', padding: '16px', borderRadius: '16px', backgroundColor: 'transparent', color: '#B58A83', fontSize: '15px', fontWeight: '600', border: 'none', cursor: 'pointer' }
+    galleryImage: { width: '100%', aspectRatio: '1/1', borderRadius: '16px', objectFit: 'cover' as const, backgroundColor: '#29202D', border: '1px solid #4A1828' },
+    galleryEmpty: { width: '100%', aspectRatio: '1/1', borderRadius: '16px', backgroundColor: '#29202D', border: '2px dashed #4A1828', display: 'flex', justifyContent: 'center', alignItems: 'center', color: '#B58A83', fontSize: '24px' }
   };
 
   const radius = 20;
@@ -230,50 +153,6 @@ export default function ProfileDashboardPage() {
   return (
     <div style={styles.container}>
       
-      {/* Hidden Input for Gallery */}
-      <input 
-        type="file" 
-        accept="image/*" 
-        ref={galleryInputRef} 
-        style={{ display: 'none' }} 
-        onChange={(e) => editingPhotoIndex !== null && handlePhotoUpload(editingPhotoIndex, e)} 
-      />
-
-      {/* Custom Camera Modal */}
-      {isCameraOpen && (
-        <CameraModal 
-          onCapture={handleCameraCapture} 
-          onClose={() => {
-            setIsCameraOpen(false);
-            setEditingPhotoIndex(null); // Close the prompt overlay too
-          }} 
-        />
-      )}
-
-      {/* Permission Prompt Overlay */}
-      {editingPhotoIndex !== null && (
-        <div style={styles.overlay}>
-          <div style={styles.promptBox}>
-            <h3 style={styles.promptTitle}>Update Photo {editingPhotoIndex + 1}</h3>
-            <p style={styles.promptSub}>Choose how you want to provide your photo</p>
-            
-            <button style={styles.promptBtn} onClick={() => openCamera(editingPhotoIndex)}>
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
-              Take a Photo
-            </button>
-            
-            <button style={styles.promptBtn} onClick={() => openGallery(editingPhotoIndex)}>
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
-              Choose from Gallery
-            </button>
-            
-            <button style={styles.cancelBtn} onClick={() => setEditingPhotoIndex(null)}>
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* Top Navigation Bar */}
       <div style={styles.topBar}>
         <button style={styles.iconButton} onClick={() => router.back()}>
@@ -311,7 +190,7 @@ export default function ProfileDashboardPage() {
       <div style={styles.statsGrid}>
         <div style={styles.statCard}>
           <span style={styles.statIcon}>📸</span>
-          <span style={styles.statValue}>{tempPhotos.filter(p => p && p.trim() !== '').length}</span>
+          <span style={styles.statValue}>{profile.photos?.filter(p => p).length || 0}</span>
           <span style={styles.statLabel}>Photos</span>
         </div>
         <div style={styles.statCard}>
@@ -324,7 +203,6 @@ export default function ProfileDashboardPage() {
           <span style={styles.statValue}>0</span>
           <span style={styles.statLabel}>Matches</span>
         </div>
-        
         <div style={styles.statCard}>
           <span style={styles.statIcon}>👥</span>
           <span style={styles.statValue}>{profile.followers || 0}</span>
@@ -421,41 +299,33 @@ export default function ProfileDashboardPage() {
         </div>
       )}
 
-      {/* Tab Content: Gallery (Editable) */}
+      {/* Tab Content: Gallery */}
       {activeTab === 'gallery' && (
         <div style={styles.section}>
           <div style={styles.sectionHeader}>
             <div style={styles.sectionIcon}>🖼️</div>
             <div style={styles.sectionTitle}>Verification Gallery</div>
           </div>
-          <p style={{ fontSize: '12px', color: '#B58A83', marginBottom: '20px' }}>
-            You must have at least 4 photos to save. Tap any photo to replace it.
-          </p>
-          
           <div style={styles.galleryGrid}>
-            {tempPhotos.map((photo, index) => (
-              <div key={index} style={styles.galleryItem} onClick={() => setEditingPhotoIndex(index)}>
-                {photo ? (
-                  <img src={photo} alt={`Gallery ${index}`} style={styles.galleryImage} />
+            {profile.photos && profile.photos.length > 0 ? (
+              profile.photos.map((photo, index) => (
+                photo ? (
+                  <img key={index} src={photo} alt={`Gallery ${index}`} style={styles.galleryImage} />
                 ) : (
-                  <div style={styles.galleryEmpty}>
-                    <span>+</span>
-                    <span style={{ fontSize: '10px', marginTop: '4px' }}>Add Photo</span>
-                  </div>
-                )}
-              </div>
-            ))}
+                  <div key={index} style={styles.galleryEmpty}>+</div>
+                )
+              ))
+            ) : (
+              Array.from({ length: 6 }).map((_, index) => (
+                <div key={index} style={styles.galleryEmpty}>+</div>
+              ))
+            )}
           </div>
-
-          <button 
-            style={{ ...styles.saveBtn, ...(isSavingGallery ? styles.saveBtnDisabled : {}) }} 
-            onClick={handleSaveGallery}
-            disabled={isSavingGallery}
-          >
-            {isSavingGallery ? 'Saving Gallery...' : 'Save Gallery Changes'}
-          </button>
         </div>
       )}
+
+      {/* Bottom Navigation */}
+      <MobileNav />
 
     </div>
   );
