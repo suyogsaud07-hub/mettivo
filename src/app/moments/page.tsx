@@ -129,6 +129,11 @@ export default function MomentsPage() {
     }
   };
 
+  // Handle removing the selected media
+  const handleRemoveMedia = () => {
+    setNewMedia(null);
+  };
+
   const styles = {
     container: { minHeight: '100vh', backgroundColor: '#0D0A10', color: '#F2E9E4', fontFamily: 'system-ui', paddingBottom: '100px' },
     
@@ -179,14 +184,16 @@ export default function MomentsPage() {
     closeBtn: { background: 'none', border: 'none', color: '#B58A83', fontSize: '24px', cursor: 'pointer' },
     input: { width: '100%', padding: '16px', borderRadius: '16px', border: '1px solid #4A1828', backgroundColor: '#0D0A10', color: '#F2E9E4', fontSize: '15px', outline: 'none', minHeight: '100px', resize: 'vertical' as const, marginBottom: '16px', fontFamily: 'system-ui' },
     uploadBtn: { width: '100%', padding: '16px', borderRadius: '16px', border: '2px dashed #4A1828', backgroundColor: '#0D0A10', color: '#B58A83', fontSize: '15px', fontWeight: '600', cursor: 'pointer', display: 'flex', flexDirection: 'column' as const, alignItems: 'center', gap: '8px', marginBottom: '20px' },
-    mediaPreview: { width: '100%', maxHeight: '200px', objectFit: 'cover' as const, borderRadius: '12px', marginBottom: '20px' },
+    mediaPreviewContainer: { position: 'relative' as const, width: '100%', marginBottom: '20px' },
+    mediaPreview: { width: '100%', maxHeight: '250px', objectFit: 'cover' as const, borderRadius: '12px' },
+    removeMediaBtn: { position: 'absolute' as const, top: '8px', right: '8px', width: '28px', height: '28px', borderRadius: '50%', backgroundColor: 'rgba(0,0,0,0.7)', color: '#fff', border: 'none', display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '16px', cursor: 'pointer', fontWeight: 'bold' },
     postBtn: { width: '100%', padding: '18px', borderRadius: '30px', background: 'linear-gradient(135deg, #A855F7, #7C3AED)', color: '#FFF', fontSize: '16px', fontWeight: '800', border: 'none', cursor: 'pointer' }
   };
 
   return (
     <div style={styles.container}>
       
-      {/* Header (Bell Icon Removed) */}
+      {/* Header */}
       <div style={styles.header}>
         <div style={styles.headerTitle}>Moments</div>
       </div>
@@ -296,7 +303,7 @@ export default function MomentsPage() {
           <div style={styles.modalBox} onClick={(e) => e.stopPropagation()}>
             <div style={styles.modalHeader}>
               <div style={styles.modalTitle}>New Moment</div>
-              <button style={styles.closeBtn} onClick={() => setIsCreateOpen(false)}>×</button>
+              <button style={styles.closeBtn} onClick={() => { setIsCreateOpen(false); setNewCaption(''); setNewMedia(null); }}>×</button>
             </div>
             
             <textarea 
@@ -307,7 +314,13 @@ export default function MomentsPage() {
             />
 
             {newMedia ? (
-              <img src={newMedia} alt="Preview" style={styles.mediaPreview} />
+              <div style={styles.mediaPreviewContainer}>
+                <img src={newMedia} alt="Preview" style={styles.mediaPreview} />
+                {/* REMOVE MEDIA BUTTON */}
+                <button style={styles.removeMediaBtn} onClick={handleRemoveMedia}>
+                  ×
+                </button>
+              </div>
             ) : (
               <label style={styles.uploadBtn}>
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
