@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { supabase } from '@/lib/supabase';  
+import { supabase } from '@/lib/supabase'; 
 import MobileNav from '../../../components/layout/MobileNav';
 
 const MOCK_USERS = [
@@ -36,9 +36,6 @@ export default function MatchesPage() {
     userName: { fontSize: '16px', fontWeight: '700', color: '#F2E9E4' },
     userFlag: { fontSize: '14px' },
     userStatus: { fontSize: '12px', color: '#B58A83', marginTop: '2px' },
-    emptyState: { display: 'flex', flexDirection: 'column' as const, alignItems: 'center', justifyContent: 'center', padding: '60px 20px', textAlign: 'center' as const },
-    emptyIcon: { fontSize: '50px', marginBottom: '16px' },
-    emptyText: { fontSize: '16px', color: '#B58A83' }
   };
 
   if (loading) return <div style={{ minHeight: '100vh', display: 'flex', justifyContent: 'center', alignItems: 'center', backgroundColor: '#0D0A10', color: '#D4B18A' }}>Loading...</div>;
@@ -46,7 +43,9 @@ export default function MatchesPage() {
   return (
     <div style={styles.container}>
       <div style={styles.header}>
-        <button style={styles.backBtn} onClick={() => router.back()}><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg></button>
+        <button style={styles.backBtn} onClick={() => router.back()}>
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+        </button>
         <div style={styles.headerTitle}>✨ My Matches</div>
       </div>
       <div style={styles.subtitle}>People you connected with</div>

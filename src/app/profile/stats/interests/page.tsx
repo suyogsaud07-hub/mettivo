@@ -14,6 +14,7 @@ export default function InterestsPage() {
     async function loadData() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.push('/auth'); return; }
+      
       const { data } = await supabase.from('profiles').select('hobbies').eq('id', user.id).single();
       if (data && data.hobbies) setHobbies(data.hobbies);
       setLoading(false);
@@ -39,7 +40,9 @@ export default function InterestsPage() {
   return (
     <div style={styles.container}>
       <div style={styles.header}>
-        <button style={styles.backBtn} onClick={() => router.back()}><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg></button>
+        <button style={styles.backBtn} onClick={() => router.back()}>
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+        </button>
         <div style={styles.headerTitle}>❤️ My Interests</div>
       </div>
       <div style={styles.subtitle}>Things you love</div>

@@ -14,6 +14,7 @@ export default function PhotosPage() {
     async function loadPhotos() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.push('/auth'); return; }
+      
       const { data } = await supabase.from('profiles').select('photos').eq('id', user.id).single();
       if (data && data.photos) {
         setPhotos(data.photos.filter((p: string) => p));
