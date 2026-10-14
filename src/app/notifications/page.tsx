@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import MobileNav from '../components/layout/MobileNav'; // Adjust path if needed
 
-// Mock Data based on your reference image and typical dating app notifications
+// Mock Data for the Notifications
 const MOCK_NOTIFICATIONS = [
   {
     id: 1,
