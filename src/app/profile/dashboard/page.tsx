@@ -1,0 +1,462 @@
+'use client';
+
+import { useState, useEffect, useRef } from 'react';
+import { supabase } from '../../lib/supabase'; 
+import { useRouter } from 'next/navigation';
+import CameraModal from '../../components/CameraModal';
+interface Profile {
+  id: string;
+  display_name: string;
+  age: number;
+  gender: string;
+  city: string;
+  country: string;
+  avatar_url: string;
+  photos: string[];
+  intention: string;
+  looking_for: string[];
+  hobbies: string[];
+  pets: string[];
+  personality: string[];
+  religion: string;
+  politics: string;
+  drinking: string;
+  smoking: string;
+  birth_date: string;
+  followers?: number;
+  following?: number;
+  friends?: number;
+}
+
+export default function ProfileDashboardPage() {
+  const router = useRouter();
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [userEmail, setUserEmail] = useState<string>('');
+  const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<'about' | 'gallery'>('about');
+  
+  // Gallery Edit States
+  const [tempPhotos, setTempPhotos] = useState<string[]>(['', '', '', '', '', '']);
+  const [editingPhotoIndex, setEditingPhotoIndex] = useState<number | null>(null);
+  const [isSavingGallery, setIsSavingGallery] = useState(false);
+  const [isCameraOpen, setIsCameraOpen] = useState(false); // State for Camera Modal
+  
+  // Ref for Gallery file input
+  const galleryInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    async function loadProfile() {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        router.push('/auth');
+        return;
+      }
+      setUserEmail(user.email || 'Not set');
+
+      const { data, error } = await supabase.from('profiles').select('*').eq('id', user.id).single();
+      
+      if (error) {
+        console.error("Error fetching profile:", error);
+      }
+      
+      setProfile(data);
+      if (data && data.photos) {
+        const loadedPhotos = [...data.photos];
+        while (loadedPhotos.length < 6) loadedPhotos.push('');
+        setTempPhotos(loadedPhotos.slice(0, 6));
+      }
+      setLoading(false);
+    }
+    loadProfile();
+  }, [router]);
+
+  const calculateCompletion = () => {
+    if (!profile) return 0;
+    const fields = [
+      profile.display_name, profile.age, profile.gender, profile.city, 
+      profile.country, profile.avatar_url, profile.intention, 
+      profile.looking_for?.length, profile.hobbies?.length, 
+      profile.pets?.length, profile.personality?.length, 
+      profile.religion, profile.politics, profile.drinking, profile.smoking
+    ];
+    const filledFields = fields.filter(field => field !== null && field !== undefined && field !== '' && field !== 0).length;
+    return Math.round((filledFields / fields.length) * 100);
+  };
+
+  const completionPercentage = calculateCompletion();
+
+  // --- PHOTO UPLOAD LOGIC ---
+  const handlePhotoUpload = (index: number, e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const updatedPhotos = [...tempPhotos];
+        updatedPhotos[index] = reader.result as string;
+        setTempPhotos(updatedPhotos);
+        setEditingPhotoIndex(null); // Close the prompt overlay after selection
+      };
+      reader.readAsDataURL(file);
+    }
+    e.target.value = ''; // Reset input value
+  };
+
+  // Handler for when a photo is captured via the CameraModal
+  const handleCameraCapture = (imageSrc: string) => {
+    if (editingPhotoIndex !== null) {
+      const updatedPhotos = [...tempPhotos];
+      updatedPhotos[editingPhotoIndex] = imageSrc;
+      setTempPhotos(updatedPhotos);
+    }
+    setIsCameraOpen(false);
+    setEditingPhotoIndex(null); // Close the prompt overlay
+  };
+
+  const handleSaveGallery = async () => {
+    const validPhotos = tempPhotos.filter(p => p && p.trim() !== '');
+    if (validPhotos.length < 4) {
+      alert('You must have at least 4 photos to save your profile gallery.');
+      return;
+    }
+
+    setIsSavingGallery(true);
+    const newAvatarUrl = validPhotos[0];
+
+    const { error } = await supabase.from('profiles').update({
+      photos: tempPhotos,
+      avatar_url: newAvatarUrl
+    }).eq('id', profile?.id);
+
+    setIsSavingGallery(false);
+
+    if (error) {
+      alert(`Error saving gallery: ${error.message}`);
+    } else {
+      alert('Gallery updated successfully!');
+      setProfile(prev => prev ? { ...prev, photos: tempPhotos, avatar_url: newAvatarUrl } : null);
+    }
+  };
+
+  const openCamera = (index: number) => {
+    setIsCameraOpen(true); // Open the custom camera modal
+  };
+
+  const openGallery = (index: number) => {
+    galleryInputRef.current?.click(); // Open the file picker
+  };
+
+  if (loading) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', justifyContent: 'center', alignItems: 'center', backgroundColor: '#0D0A10', color: '#D4B18A', fontFamily: 'system-ui' }}>
+        Loading Profile...
+      </div>
+    );
+  }
+
+  if (!profile) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', justifyContent: 'center', alignItems: 'center', backgroundColor: '#0D0A10', color: '#D4B18A', fontFamily: 'system-ui' }}>
+        Profile not found. Please complete onboarding.
+      </div>
+    );
+  }
+
+  const styles = {
+    container: { minHeight: '100vh', backgroundColor: '#0D0A10', color: '#F2E9E4', fontFamily: 'system-ui', paddingBottom: '100px' },
+    topBar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '20px', borderBottom: '1px solid #29202D' },
+    iconButton: { width: '40px', height: '40px', borderRadius: '50%', backgroundColor: '#1C1822', border: '1px solid #29202D', display: 'flex', justifyContent: 'center', alignItems: 'center', cursor: 'pointer', color: '#F2E9E4' },
+    title: { fontSize: '18px', fontWeight: '700', color: '#F2E9E4', letterSpacing: '0.5px' },
+    heroSection: { display: 'flex', flexDirection: 'column' as const, alignItems: 'center', padding: '30px 20px', position: 'relative' as const },
+    avatarContainer: { position: 'relative' as const, marginBottom: '16px' },
+    avatar: { width: '120px', height: '120px', borderRadius: '50%', objectFit: 'cover' as const, border: '3px solid #D4B18A', backgroundColor: '#29202D' },
+    onlineBadge: { position: 'absolute' as const, bottom: '5px', right: '10px', width: '20px', height: '20px', borderRadius: '50%', backgroundColor: '#34D399', border: '3px solid #0D0A10' },
+    nameRow: { display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '4px' },
+    name: { fontSize: '26px', fontWeight: '800', color: '#F2E9E4' },
+    ageBadge: { backgroundColor: '#4A1828', color: '#D4B18A', padding: '4px 12px', borderRadius: '20px', fontSize: '14px', fontWeight: '700' },
+    location: { fontSize: '14px', color: '#B58A83', marginBottom: '16px' },
+    intentionTag: { backgroundColor: '#29202D', color: '#D4B18A', border: '1px solid #4A1828', padding: '6px 16px', borderRadius: '20px', fontSize: '12px', fontWeight: '600' },
+    
+    statsGrid: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', padding: '0 20px', marginBottom: '24px' },
+    statCard: { backgroundColor: '#1C1822', borderRadius: '16px', padding: '16px 8px', display: 'flex', flexDirection: 'column' as const, alignItems: 'center', border: '1px solid #29202D' },
+    statIcon: { fontSize: '22px', marginBottom: '8px' },
+    statValue: { fontSize: '18px', fontWeight: '800', color: '#F2E9E4', marginBottom: '4px' },
+    statLabel: { fontSize: '10px', color: '#B58A83', fontWeight: '600', textTransform: 'uppercase' as const, letterSpacing: '0.5px' },
+    
+    progressCard: { margin: '0 20px 24px 20px', backgroundColor: '#1C1822', borderRadius: '16px', padding: '20px', display: 'flex', alignItems: 'center', gap: '16px', border: '1px solid #29202D' },
+    progressCircle: { width: '50px', height: '50px' },
+    progressText: { flex: 1 },
+    progressTitle: { fontSize: '15px', fontWeight: '700', color: '#F2E9E4', marginBottom: '4px' },
+    progressSubtitle: { fontSize: '12px', color: '#B58A83' },
+    completeBtn: { backgroundColor: '#D4B18A', color: '#17121C', padding: '10px 16px', borderRadius: '20px', fontSize: '12px', fontWeight: '700', border: 'none', cursor: 'pointer' },
+    
+    tabsContainer: { display: 'flex', padding: '0 20px', marginBottom: '24px', gap: '12px' },
+    tab: { flex: 1, padding: '14px', borderRadius: '14px', textAlign: 'center' as const, fontSize: '14px', fontWeight: '700', cursor: 'pointer', transition: 'all 0.2s', border: '1px solid #29202D' },
+    tabActive: { background: 'linear-gradient(135deg, #D4B18A, #B58A83)', color: '#17121C', border: 'none' },
+    tabInactive: { backgroundColor: '#1C1822', color: '#B58A83' },
+    
+    section: { margin: '0 20px 24px 20px', backgroundColor: '#1C1822', borderRadius: '20px', padding: '20px', border: '1px solid #29202D' },
+    sectionHeader: { display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' },
+    sectionIcon: { width: '32px', height: '32px', borderRadius: '10px', background: 'linear-gradient(135deg, #4A1828, #D4B18A)', display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '16px' },
+    sectionTitle: { fontSize: '16px', fontWeight: '700', color: '#F2E9E4' },
+    
+    infoRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', borderBottom: '1px solid #29202D' },
+    infoLabel: { display: 'flex', alignItems: 'center', gap: '10px', fontSize: '14px', color: '#B58A83', fontWeight: '500' },
+    infoValue: { fontSize: '14px', color: '#F2E9E4', fontWeight: '600', textAlign: 'right' as const, maxWidth: '60%' },
+    
+    galleryGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' },
+    galleryItem: { position: 'relative' as const, width: '100%', aspectRatio: '1/1', borderRadius: '16px', overflow: 'hidden', cursor: 'pointer', border: '1px solid #4A1828' },
+    galleryImage: { width: '100%', height: '100%', objectFit: 'cover' as const, backgroundColor: '#29202D' },
+    galleryEmpty: { width: '100%', height: '100%', backgroundColor: '#29202D', border: '2px dashed #4A1828', display: 'flex', flexDirection: 'column' as const, justifyContent: 'center', alignItems: 'center', color: '#B58A83', fontSize: '24px' },
+    saveBtn: { width: '100%', padding: '18px', borderRadius: '30px', backgroundColor: '#D4B18A', color: '#17121C', fontSize: '16px', fontWeight: '700', border: 'none', cursor: 'pointer', marginTop: '20px', transition: 'all 0.2s' },
+    saveBtnDisabled: { backgroundColor: '#29202D', color: '#B58A83', cursor: 'not-allowed' },
+    
+    // Overlay for Permission Prompt
+    overlay: { position: 'fixed' as const, inset: 0, backgroundColor: 'rgba(13, 10, 16, 0.8)', backdropFilter: 'blur(4px)', display: 'flex', justifyContent: 'center', alignItems: 'flex-end', paddingBottom: '40px', zIndex: 1000 },
+    promptBox: { backgroundColor: '#1C1822', width: '90%', maxWidth: '400px', borderRadius: '24px', padding: '24px', border: '1px solid #4A1828', textAlign: 'center' as const },
+    promptTitle: { fontSize: '18px', fontWeight: '700', color: '#F2E9E4', marginBottom: '8px' },
+    promptSub: { fontSize: '13px', color: '#B58A83', marginBottom: '24px' },
+    promptBtn: { width: '100%', padding: '16px', borderRadius: '16px', backgroundColor: '#29202D', color: '#F2E9E4', fontSize: '15px', fontWeight: '600', border: '1px solid #4A1828', cursor: 'pointer', marginBottom: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' },
+    cancelBtn: { width: '100%', padding: '16px', borderRadius: '16px', backgroundColor: 'transparent', color: '#B58A83', fontSize: '15px', fontWeight: '600', border: 'none', cursor: 'pointer' }
+  };
+
+  const radius = 20;
+  const circumference = 2 * Math.PI * radius;
+  const strokeDashoffset = circumference - (completionPercentage / 100) * circumference;
+
+  const displayLocation = profile.city && profile.country 
+    ? `${profile.city}, ${profile.country}` 
+    : profile.city || profile.country || 'Location not set';
+
+  return (
+    <div style={styles.container}>
+      
+      {/* Hidden Input for Gallery */}
+      <input 
+        type="file" 
+        accept="image/*" 
+        ref={galleryInputRef} 
+        style={{ display: 'none' }} 
+        onChange={(e) => editingPhotoIndex !== null && handlePhotoUpload(editingPhotoIndex, e)} 
+      />
+
+      {/* Custom Camera Modal */}
+      {isCameraOpen && (
+        <CameraModal 
+          onCapture={handleCameraCapture} 
+          onClose={() => {
+            setIsCameraOpen(false);
+            setEditingPhotoIndex(null); // Close the prompt overlay too
+          }} 
+        />
+      )}
+
+      {/* Permission Prompt Overlay */}
+      {editingPhotoIndex !== null && (
+        <div style={styles.overlay}>
+          <div style={styles.promptBox}>
+            <h3 style={styles.promptTitle}>Update Photo {editingPhotoIndex + 1}</h3>
+            <p style={styles.promptSub}>Choose how you want to provide your photo</p>
+            
+            <button style={styles.promptBtn} onClick={() => openCamera(editingPhotoIndex)}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
+              Take a Photo
+            </button>
+            
+            <button style={styles.promptBtn} onClick={() => openGallery(editingPhotoIndex)}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
+              Choose from Gallery
+            </button>
+            
+            <button style={styles.cancelBtn} onClick={() => setEditingPhotoIndex(null)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Top Navigation Bar */}
+      <div style={styles.topBar}>
+        <button style={styles.iconButton} onClick={() => router.back()}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        </button>
+        <div style={styles.title}>My Profile</div>
+        <button style={styles.iconButton} onClick={() => router.push('/profile/edit')}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
+        </button>
+      </div>
+
+      {/* Hero Section */}
+      <div style={styles.heroSection}>
+        <div style={styles.avatarContainer}>
+          {profile.avatar_url ? (
+            <img src={profile.avatar_url} alt="Avatar" style={styles.avatar} />
+          ) : (
+            <div style={{ ...styles.avatar, display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '40px' }}>👤</div>
+          )}
+          <div style={styles.onlineBadge} />
+        </div>
+        <div style={styles.nameRow}>
+          <span style={styles.name}>{profile.display_name}</span>
+          <span style={styles.ageBadge}>{profile.age}</span>
+        </div>
+        <div style={styles.location}>
+          {profile.gender} • {displayLocation}
+        </div>
+        <div style={styles.intentionTag}>
+          {profile.intention || 'Looking for connections'}
+        </div>
+      </div>
+
+      {/* Stats Grid */}
+      <div style={styles.statsGrid}>
+        <div style={styles.statCard}>
+          <span style={styles.statIcon}>📸</span>
+          <span style={styles.statValue}>{tempPhotos.filter(p => p && p.trim() !== '').length}</span>
+          <span style={styles.statLabel}>Photos</span>
+        </div>
+        <div style={styles.statCard}>
+          <span style={styles.statIcon}>❤️</span>
+          <span style={styles.statValue}>{profile.hobbies?.length || 0}</span>
+          <span style={styles.statLabel}>Interests</span>
+        </div>
+        <div style={styles.statCard}>
+          <span style={styles.statIcon}>✨</span>
+          <span style={styles.statValue}>0</span>
+          <span style={styles.statLabel}>Matches</span>
+        </div>
+        
+        <div style={styles.statCard}>
+          <span style={styles.statIcon}>👥</span>
+          <span style={styles.statValue}>{profile.followers || 0}</span>
+          <span style={styles.statLabel}>Followers</span>
+        </div>
+        <div style={styles.statCard}>
+          <span style={styles.statIcon}>➕</span>
+          <span style={styles.statValue}>{profile.following || 0}</span>
+          <span style={styles.statLabel}>Following</span>
+        </div>
+        <div style={styles.statCard}>
+          <span style={styles.statIcon}>🤝</span>
+          <span style={styles.statValue}>{profile.friends || 0}</span>
+          <span style={styles.statLabel}>Friends</span>
+        </div>
+      </div>
+
+      {/* Profile Completion Progress */}
+      <div style={styles.progressCard}>
+        <svg style={styles.progressCircle} viewBox="0 0 50 50">
+          <circle cx="25" cy="25" r={radius} fill="none" stroke="#29202D" strokeWidth="4" />
+          <circle cx="25" cy="25" r={radius} fill="none" stroke="#D4B18A" strokeWidth="4" strokeDasharray={circumference} strokeDashoffset={strokeDashoffset} strokeLinecap="round" transform="rotate(-90 25 25)" />
+          <text x="25" y="28" textAnchor="middle" fill="#F2E9E4" fontSize="10" fontWeight="bold">{completionPercentage}%</text>
+        </svg>
+        <div style={styles.progressText}>
+          <div style={styles.progressTitle}>Complete your profile</div>
+          <div style={styles.progressSubtitle}>Add more info to attract matches</div>
+        </div>
+        <button style={styles.completeBtn} onClick={() => router.push('/profile/edit')}>
+          Complete
+        </button>
+      </div>
+
+      {/* Tabs */}
+      <div style={styles.tabsContainer}>
+        <div style={{ ...styles.tab, ...(activeTab === 'about' ? styles.tabActive : styles.tabInactive) }} onClick={() => setActiveTab('about')}>
+          About
+        </div>
+        <div style={{ ...styles.tab, ...(activeTab === 'gallery' ? styles.tabActive : styles.tabInactive) }} onClick={() => setActiveTab('gallery')}>
+          Gallery
+        </div>
+      </div>
+
+      {/* Tab Content: About */}
+      {activeTab === 'about' && (
+        <div>
+          <div style={styles.section}>
+            <div style={styles.sectionHeader}>
+              <div style={styles.sectionIcon}>👤</div>
+              <div style={styles.sectionTitle}>About Me</div>
+            </div>
+            <div style={styles.infoRow}>
+              <div style={styles.infoLabel}>📝 Bio</div>
+              <div style={styles.infoValue}>{profile.intention || 'No bio added yet.'}</div>
+            </div>
+            <div style={{ ...styles.infoRow, borderBottom: 'none' }}>
+              <div style={styles.infoLabel}>🎂 Birthday</div>
+              <div style={styles.infoValue}>
+                {profile.birth_date ? new Date(profile.birth_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Not set'} ({profile.age} years)
+              </div>
+            </div>
+            <div style={{ ...styles.infoRow, borderBottom: 'none' }}>
+              <div style={styles.infoLabel}>👥 Gender</div>
+              <div style={styles.infoValue}>{profile.gender || 'Not set'}</div>
+            </div>
+            <div style={{ ...styles.infoRow, borderBottom: 'none' }}>
+              <div style={styles.infoLabel}>❤️ Looking for</div>
+              <div style={styles.infoValue}>{profile.looking_for?.join(', ') || 'Not set'}</div>
+            </div>
+          </div>
+
+          <div style={styles.section}>
+            <div style={styles.sectionHeader}>
+              <div style={styles.sectionIcon}>✨</div>
+              <div style={styles.sectionTitle}>More About Me</div>
+            </div>
+            <div style={styles.infoRow}><div style={styles.infoLabel}>💫 Intention</div><div style={styles.infoValue}>{profile.intention || 'Not set'}</div></div>
+            <div style={styles.infoRow}><div style={styles.infoLabel}>🍷 Drinking</div><div style={styles.infoValue}>{profile.drinking || 'Not set'}</div></div>
+            <div style={styles.infoRow}><div style={styles.infoLabel}>🚬 Smoking</div><div style={styles.infoValue}>{profile.smoking || 'Not set'}</div></div>
+            <div style={styles.infoRow}><div style={styles.infoLabel}>🛐 Religion</div><div style={styles.infoValue}>{profile.religion || 'Not set'}</div></div>
+            <div style={styles.infoRow}><div style={styles.infoLabel}>⚖️ Politics</div><div style={styles.infoValue}>{profile.politics || 'Not set'}</div></div>
+            <div style={{ ...styles.infoRow, borderBottom: 'none' }}><div style={styles.infoLabel}>🐾 Pets</div><div style={styles.infoValue}>{profile.pets?.join(', ') || 'Not set'}</div></div>
+            <div style={{ ...styles.infoRow, borderBottom: 'none' }}><div style={styles.infoLabel}>🧠 Personality</div><div style={styles.infoValue}>{profile.personality?.join(', ') || 'Not set'}</div></div>
+          </div>
+
+          <div style={styles.section}>
+            <div style={styles.sectionHeader}>
+              <div style={styles.sectionIcon}>📞</div>
+              <div style={styles.sectionTitle}>Contact</div>
+            </div>
+            <div style={styles.infoRow}><div style={styles.infoLabel}>📧 Email</div><div style={styles.infoValue}>{userEmail}</div></div>
+            <div style={{ ...styles.infoRow, borderBottom: 'none' }}><div style={styles.infoLabel}>📱 Phone</div><div style={styles.infoValue}>Not set</div></div>
+          </div>
+        </div>
+      )}
+
+      {/* Tab Content: Gallery (Editable) */}
+      {activeTab === 'gallery' && (
+        <div style={styles.section}>
+          <div style={styles.sectionHeader}>
+            <div style={styles.sectionIcon}>🖼️</div>
+            <div style={styles.sectionTitle}>Verification Gallery</div>
+          </div>
+          <p style={{ fontSize: '12px', color: '#B58A83', marginBottom: '20px' }}>
+            You must have at least 4 photos to save. Tap any photo to replace it.
+          </p>
+          
+          <div style={styles.galleryGrid}>
+            {tempPhotos.map((photo, index) => (
+              <div key={index} style={styles.galleryItem} onClick={() => setEditingPhotoIndex(index)}>
+                {photo ? (
+                  <img src={photo} alt={`Gallery ${index}`} style={styles.galleryImage} />
+                ) : (
+                  <div style={styles.galleryEmpty}>
+                    <span>+</span>
+                    <span style={{ fontSize: '10px', marginTop: '4px' }}>Add Photo</span>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          <button 
+            style={{ ...styles.saveBtn, ...(isSavingGallery ? styles.saveBtnDisabled : {}) }} 
+            onClick={handleSaveGallery}
+            disabled={isSavingGallery}
+          >
+            {isSavingGallery ? 'Saving Gallery...' : 'Save Gallery Changes'}
+          </button>
+        </div>
+      )}
+
+    </div>
+  );
+}
