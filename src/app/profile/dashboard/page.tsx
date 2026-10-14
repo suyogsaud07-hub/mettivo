@@ -1,9 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-// FIXED: Using 4 levels up to reach src/lib and src/components
-import { supabase } from '@/lib/supabase'; 
 import { useRouter } from 'next/navigation';
+// FIXED: Using absolute imports for guaranteed reliability
+import { supabase } from '@/lib/supabase'; 
 import MobileNav from '../../components/layout/MobileNav';
 
 interface Profile {
