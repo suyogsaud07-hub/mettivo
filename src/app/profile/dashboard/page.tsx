@@ -14,6 +14,7 @@ import {
   PROFILE_SMOKING_OPTIONS,
 } from '@/lib/profile-options';
 import { MomentError, fetchUserMoments, likeMoment, unlikeMoment } from '@/lib/moments';
+import { isMissingColumnError } from '@/lib/postgrest-errors';
 import type { MomentAuthor, MomentFeedRow } from '@/lib/types';
 import MobileNav from '../../components/layout/MobileNav';
 import ProfileHeader from '../../components/profile/ProfileHeader';
@@ -124,12 +125,42 @@ const EDITOR_FIELDS: Record<EditableKey, FieldConfig> = {
  * outright — and the page must render the derived `age` in any case
  * (`CONSTITUTION.md` Article 1.4).
  *
- * Written as a single string literal on purpose: supabase-js parses the column
+ * Written as single string literals on purpose: supabase-js parses the column
  * list at the TYPE level, and a value built with `.join()` is just `string`, so
  * inference collapses to an error type.
+ *
+ * THE COUNTERS ARE OPT-IN
+ *   The four social counters were added by M18 and are maintained by triggers.
+ *   On a deployment where that migration has not run, naming them in the select
+ *   fails with `42703` and — before this was split out — blanked the whole page.
+ *   So they are requested separately: `PROFILE_COUNT_COLUMNS` is tried first and
+ *   dropped to zero when the schema is behind, leaving the profile itself
+ *   readable on a partially migrated database.
  */
-const PROFILE_COLUMNS =
-  'id, display_name, age, gender, city, country, avatar_url, photos, bio, intention, looking_for, hobbies, pets, personality, religion, politics, drinking, smoking, followers_count, following_count, matches_count, profile_likes_count' as const;
+const PROFILE_CORE_COLUMNS =
+  'id, display_name, age, gender, city, country, avatar_url, photos, bio, intention, looking_for, hobbies, pets, personality, religion, politics, drinking, smoking' as const;
+
+const PROFILE_COUNT_COLUMNS =
+  'followers_count, following_count, matches_count, profile_likes_count' as const;
+
+const PROFILE_COLUMNS = `${PROFILE_CORE_COLUMNS}, ${PROFILE_COUNT_COLUMNS}` as const;
+
+/** The row shape when the optional counter columns are not available. */
+type ProfileCoreRow = Omit<
+  Profile,
+  'followers_count' | 'following_count' | 'matches_count' | 'profile_likes_count'
+>;
+
+/** Fills the counters with zero so a partially migrated row still renders. */
+function withDefaultCounts(row: ProfileCoreRow): Profile {
+  return {
+    ...row,
+    followers_count: 0,
+    following_count: 0,
+    matches_count: 0,
+    profile_likes_count: 0,
+  };
+}
 
 export default function ProfileDashboardPage() {
   const router = useRouter();
@@ -191,12 +222,36 @@ export default function ProfileDashboardPage() {
         if (!isMounted) return;
 
         if (error) {
+          // A schema that is behind (the M18 counters absent) is not a failed
+          // load: re-read the core columns and render the profile with zeroed
+          // counters, rather than blanking the page over a missing column.
+          if (isMissingColumnError(error)) {
+            const fallback = await supabase
+              .from('profiles')
+              .select(PROFILE_CORE_COLUMNS)
+              .eq('id', user.id)
+              .maybeSingle();
+
+            if (!isMounted) return;
+
+            if (fallback.error) {
+              console.error('Error fetching profile (core fallback):', fallback.error.message);
+              setLoadError('We could not load your profile.');
+              return;
+            }
+
+            setProfile(
+              fallback.data ? withDefaultCounts(fallback.data as ProfileCoreRow) : null
+            );
+            return;
+          }
+
           console.error("Error fetching profile:", error.message);
           setLoadError('We could not load your profile.');
           return;
         }
 
-        setProfile(data);
+        setProfile((data ?? null) as Profile | null);
       } catch (err) {
         if (isMounted) {
           console.error('Unexpected error fetching profile:', err);

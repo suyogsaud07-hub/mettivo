@@ -77,6 +77,9 @@ import {
 import { DiscoveryError, fetchDiscoveryCandidates } from '@/lib/discovery';
 import { CatalogueError, loadCatalogue } from '@/lib/catalogue';
 import { saveProfile } from '@/lib/profile';import { ModerationError, fetchReportQueue, resolveReport } from '@/lib/admin';
+import { fetchMomentFeed, fetchUserMoments } from '@/lib/moments';
+import { fetchPublicProfile } from '@/lib/public-profiles';
+import { isMissingColumnError, isMissingRelationError } from '@/lib/postgrest-errors';
 
 beforeEach(() => {
   h.state.reset();
@@ -403,5 +406,120 @@ describe('§3.2 — admin', () => {
   it('surfaces a resolve failure', async () => {
     h.state.rpc = { data: null, error: { message: 'report not found', code: 'P0002' } };
     await expect(resolveReport('r1', 'dismissed')).rejects.toThrow(/report not found/i);
+  });
+});
+
+describe('§3.2 — schema-drift classification', () => {
+  it('recognises a missing column by SQLSTATE', () => {
+    expect(isMissingColumnError({ code: '42703', message: 'whatever' })).toBe(true);
+    expect(isMissingColumnError({ code: 'PGRST204', message: 'whatever' })).toBe(true);
+  });
+
+  it('recognises a missing column from the message alone', () => {
+    expect(
+      isMissingColumnError({ message: 'column profiles.profile_likes_count does not exist' })
+    ).toBe(true);
+    expect(
+      isMissingColumnError({
+        message: "Could not find the 'matches_count' column of 'profiles' in the schema cache",
+      })
+    ).toBe(true);
+  });
+
+  it('recognises a missing relation or function', () => {
+    expect(isMissingRelationError({ code: '42P01' })).toBe(true);
+    expect(isMissingRelationError({ code: 'PGRST205', message: 'Could not find the table' })).toBe(true);
+    expect(isMissingRelationError({ code: 'PGRST202' })).toBe(true);
+  });
+
+  it('does not treat a genuine failure as schema drift', () => {
+    // A permission denial or a network error must be surfaced, not degraded.
+    expect(isMissingColumnError({ code: '42501', message: 'permission denied' })).toBe(false);
+    expect(isMissingRelationError({ message: 'network unreachable', code: '' })).toBe(false);
+    expect(isMissingColumnError(undefined)).toBe(false);
+  });
+});
+
+describe('§3.2 — schema drift does not blank a profile surface', () => {
+  const coreMoment = {
+    id: 'mo1',
+    author_id: 'user-1',
+    caption: 'hello',
+    media: [],
+    tags: [],
+    shares: 0,
+    created_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
+    like_count: 2,
+    comment_count: 1,
+    liked_by_me: false,
+  };
+
+  it('falls back to the base moment_feed columns for the profile Posts tab', async () => {
+    h.state.tableQueue = [
+      { data: null, error: { message: 'column moment_feed.media_type does not exist', code: '42703' } },
+      { data: [coreMoment], error: null },
+    ];
+
+    const rows = await fetchUserMoments('user-1');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ id: 'mo1', media_type: null, views_count: 0, unique_views: 0 });
+  });
+
+  it('falls back to the base moment_feed columns for the feed', async () => {
+    h.state.tableQueue = [
+      { data: null, error: { message: 'column moment_feed.views_count does not exist', code: '42703' } },
+      { data: [coreMoment], error: null },
+    ];
+
+    const rows = await fetchMomentFeed({ tab: 'Latest' });
+    expect(rows[0]).toMatchObject({ media_type: null, views_count: 0, unique_views: 0 });
+  });
+
+  it('still surfaces a real moments failure rather than an empty feed', async () => {
+    h.state.table = { data: null, error: { message: 'connection refused', code: '' } };
+    await expect(fetchUserMoments('user-1')).rejects.toThrow(/connection refused/i);
+  });
+
+  it('zeros the social counters when the public_profiles view is behind', async () => {
+    h.state.tableQueue = [
+      {
+        data: null,
+        error: { message: 'column public_profiles.followers_count does not exist', code: '42703' },
+      },
+      {
+        data: {
+          id: 'user-2',
+          display_name: 'Bo',
+          age: 30,
+          gender: 'Man',
+          city: 'Pokhara',
+          country: 'Nepal',
+          avatar_url: null,
+          bio: null,
+          intention: null,
+          looking_for: null,
+          hobbies: null,
+          pets: null,
+          personality: null,
+          religion: null,
+          politics: null,
+          drinking: null,
+          smoking: null,
+          is_online: false,
+          is_verified: false,
+        },
+        error: null,
+      },
+    ];
+
+    const profile = await fetchPublicProfile('user-2');
+    expect(profile).toMatchObject({
+      id: 'user-2',
+      followers_count: 0,
+      following_count: 0,
+      matches_count: 0,
+      profile_likes_count: 0,
+    });
   });
 });

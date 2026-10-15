@@ -81,7 +81,9 @@ export default function LandingPage() {
     // `flexWrap` lets the header's right-hand group (language picker + letter
     // pill) drop below the logo on a narrow phone instead of overflowing.
     topBar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap' as const, rowGap: '12px', padding: '24px 30px', zIndex: 50 },
-    topBarActions: { display: 'flex', alignItems: 'center', gap: '10px' },
+    // The grouped right side: language picker then Founder's Letter, `gap-3`
+    // (12px) apart so the two pills sit as one cluster.
+    topBarActions: { display: 'flex', alignItems: 'center', gap: '12px' },
     logoWrapper: { display: 'flex', alignItems: 'center', gap: '12px' },
     logoText: { display: 'flex', flexDirection: 'column' as const, gap: '2px' },
     logoTitle: { fontSize: '16px', fontWeight: '800', color: mr.heading, letterSpacing: '4px', lineHeight: '1' },
@@ -118,7 +120,8 @@ export default function LandingPage() {
           <LanguagePicker />
 
           {/*
-            The founder's Welcome Letter, reachable from the header. The footer
+            The founder's Welcome Letter, sitting right beside the language
+            picker so the two pills form one right-hand group. The floating
             corner pill below points at the same `/letter` route.
           */}
           <FounderLetterLink variant="header" label="Letter" />

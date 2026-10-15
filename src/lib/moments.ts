@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { isMissingColumnError } from '@/lib/postgrest-errors';
 import type {
   MomentAuthor,
   MomentCommentRow,
@@ -119,6 +120,87 @@ export interface FetchFeedOptions {
 }
 
 /**
+ * `moment_feed` columns, split so the M19 media/engagement columns are optional.
+ *
+ * A deployment that has not run the Moments engagement migration still has the
+ * base view, so a select naming `media_type`/`views_count`/`unique_views` fails
+ * with `42703` and the feed — and the profile Posts tab — would go blank. The
+ * core list is tried first and upgraded only when the schema supports it.
+ *
+ * Single literals (not a `.join()`): supabase-js parses the column list at the
+ * type level.
+ */
+const MOMENT_FEED_CORE_COLUMNS =
+  'id, author_id, caption, media, tags, shares, created_at, updated_at, like_count, comment_count, liked_by_me' as const;
+
+const MOMENT_FEED_ENGAGEMENT_COLUMNS = 'media_type, views_count, unique_views' as const;
+
+const MOMENT_FEED_COLUMNS = `${MOMENT_FEED_CORE_COLUMNS}, ${MOMENT_FEED_ENGAGEMENT_COLUMNS}` as const;
+
+/** A feed row without the optional media/engagement columns. */
+type MomentFeedCoreRow = Omit<MomentFeedRow, 'media_type' | 'views_count' | 'unique_views'>;
+
+/** Defaults the M19 columns so a legacy view row still renders. */
+function withDefaultEngagement(row: MomentFeedCoreRow): MomentFeedRow {
+  return { ...row, media_type: null, views_count: 0, unique_views: 0 };
+}
+
+interface FeedQueryOptions {
+  tab: MomentTab;
+  tag: string | null;
+  limit: number;
+}
+
+/** Runs the tab/tag/order query against a given column list. */
+function momentFeedQuery(tab: MomentTab, tag: string | null, limit: number) {
+  let query = supabase.from('moment_feed').select(MOMENT_FEED_COLUMNS);
+
+  if (tag) query = query.contains('tags', [tag]);
+
+  if (tab === 'For You') {
+    query = query.order('like_count', { ascending: false }).order('created_at', { ascending: false });
+  } else {
+    query = query.order('created_at', { ascending: false });
+  }
+
+  return query.limit(limit);
+}
+
+/** The same query against the base columns, for a schema without M19. */
+function momentFeedCoreQuery(tab: MomentTab, tag: string | null, limit: number) {
+  let query = supabase.from('moment_feed').select(MOMENT_FEED_CORE_COLUMNS);
+
+  if (tag) query = query.contains('tags', [tag]);
+
+  if (tab === 'For You') {
+    query = query.order('like_count', { ascending: false }).order('created_at', { ascending: false });
+  } else {
+    query = query.order('created_at', { ascending: false });
+  }
+
+  return query.limit(limit);
+}
+
+/** Loads feed rows, transparently dropping the optional columns if needed. */
+async function loadFeedRows({ tab, tag, limit }: FeedQueryOptions): Promise<MomentFeedRow[]> {
+  const { data, error } = await momentFeedQuery(tab, tag, limit);
+
+  if (!error) return (data ?? []) as MomentFeedRow[];
+
+  if (isMissingColumnError(error)) {
+    const fallback = await momentFeedCoreQuery(tab, tag, limit);
+    if (fallback.error) {
+      console.error('[moments] load feed failed (core fallback):', fallback.error.message);
+      throw new MomentError(fallback.error.message, fallback.error.code);
+    }
+    return ((fallback.data ?? []) as MomentFeedCoreRow[]).map(withDefaultEngagement);
+  }
+
+  console.error('[moments] load feed failed:', error.message);
+  throw new MomentError(error.message, error.code);
+}
+
+/**
  * Loads the feed for a tab.
  *
  *   Latest    -> newest first
@@ -130,30 +212,7 @@ export async function fetchMomentFeed(
 ): Promise<MomentFeedRow[]> {
   const { tab = 'Latest', tag = null, limit = 50, userId } = options;
 
-  let query = supabase
-    .from('moment_feed')
-    .select(
-      'id, author_id, caption, media, media_type, tags, shares, views_count, unique_views, created_at, updated_at, like_count, comment_count, liked_by_me'
-    );
-
-  if (tag) {
-    query = query.contains('tags', [tag]);
-  }
-
-  if (tab === 'For You') {
-    query = query.order('like_count', { ascending: false }).order('created_at', { ascending: false });
-  } else {
-    query = query.order('created_at', { ascending: false });
-  }
-
-  const { data, error } = await query.limit(limit);
-
-  if (error) {
-    console.error('[moments] load feed failed:', error.message);
-    throw new MomentError(error.message, error.code);
-  }
-
-  let rows = (data ?? []) as MomentFeedRow[];
+  let rows = await loadFeedRows({ tab, tag, limit });
 
   if (tab === 'Following') {
     let me = userId;
@@ -186,19 +245,33 @@ export async function fetchUserMoments(
 ): Promise<MomentFeedRow[]> {
   const { data, error } = await supabase
     .from('moment_feed')
-    .select(
-      'id, author_id, caption, media, media_type, tags, shares, views_count, unique_views, created_at, updated_at, like_count, comment_count, liked_by_me'
-    )
+    .select(MOMENT_FEED_COLUMNS)
     .eq('author_id', userId)
     .order('created_at', { ascending: false })
     .limit(limit);
 
-  if (error) {
-    console.error('[moments] load user moments failed:', error.message);
-    throw new MomentError(error.message, error.code);
+  if (!error) return (data ?? []) as MomentFeedRow[];
+
+  // A schema without the M19 media/engagement columns still has the base view;
+  // read it rather than failing the profile's Posts tab.
+  if (isMissingColumnError(error)) {
+    const fallback = await supabase
+      .from('moment_feed')
+      .select(MOMENT_FEED_CORE_COLUMNS)
+      .eq('author_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    if (fallback.error) {
+      console.error('[moments] load user moments failed (core fallback):', fallback.error.message);
+      throw new MomentError(fallback.error.message, fallback.error.code);
+    }
+
+    return ((fallback.data ?? []) as MomentFeedCoreRow[]).map(withDefaultEngagement);
   }
 
-  return (data ?? []) as MomentFeedRow[];
+  console.error('[moments] load user moments failed:', error.message);
+  throw new MomentError(error.message, error.code);
 }
 
 /** Display data for the authors of a set of moments. */

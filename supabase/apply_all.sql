@@ -3952,14 +3952,18 @@ create trigger matches_sync_counts_trg
 -- ---------------------------------------------------------------------------
 -- 7. public_profiles — expose the four counters
 -- ---------------------------------------------------------------------------
--- Recreated with the counters appended. `create or replace view` may only add
--- columns at the END of the list, which is what happens here; the existing
--- allow-list is otherwise unchanged. The counts are public information by
--- design (they are the numbers rendered on a public profile card).
+-- Recreated with the counters appended to the allow-list. The view is DROPPED
+-- and recreated rather than `create or replace`d: `create or replace view` may
+-- only append columns, so once a deployment has a view whose column order was
+-- produced by an older `public_profiles` definition it can refuse the replace.
+-- Dropping first makes this step idempotent against any prior shape — the same
+-- reason the M6 definition does it. Nothing depends on the view structurally.
 --
 -- Still excluded: birth_date, and the raw `followers`/`following`/`friends`
 -- arrays (the aggregate counts are all any surface needs).
-create or replace view public.public_profiles as
+drop view if exists public.public_profiles;
+
+create view public.public_profiles as
 select
   id,
   display_name,
