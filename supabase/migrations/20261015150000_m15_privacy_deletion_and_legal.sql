@@ -154,26 +154,28 @@ comment on function public.delete_my_account() is
   'Irreversibly erases the caller''s profile, activity and identity. Audited before deletion.';
 
 -- ---------------------------------------------------------------------------
--- 3. Track the outstanding column-level hardening
+-- 3. Column-level hardening for birth_date — COMPLETED
 -- ---------------------------------------------------------------------------
--- `revoke select (birth_date) on public.profiles from authenticated` is the
--- correct end state and M15 owns it, BUT it is deliberately NOT executed yet.
+-- This section originally recorded the following as the correct end state, and
+-- deliberately did not execute it:
 --
--- Reason: revoking a column breaks every `select('*')` on `profiles`, and five
--- call sites still use it (discover, mettivo_live, profile/edit,
--- profile/dashboard, plus the stats pages). Each of those belongs to a
--- different in-flight milestone, so the revoke must be sequenced last.
+--     revoke select (birth_date) on public.profiles from authenticated, anon;
 --
--- Correct order to complete it safely:
---   1. Replace every `select('*')` on `profiles` with an explicit column list
---      or with `public_profiles` (created in the M6 migration).
---   2. Stop rendering `profile.birth_date` in profile/dashboard/page.tsx and
---      display the stored `age` instead.
---   3. Then run:
---        revoke select (birth_date) on public.profiles from authenticated, anon;
+-- Steps 1 and 2 of that plan are now done (every `select('*')` on `profiles`
+-- was replaced with an explicit allow-list, and the dashboard renders `age`).
 --
--- Until step 3, `public.public_profiles` remains the only projection that
--- guarantees birth_date never leaves the database.
+-- IMPORTANT CORRECTION: the statement above does not work anyway. A table-wide
+-- SELECT grant covers every column, and a column-level REVOKE cannot subtract
+-- from it — verified empirically. Shipping it would have produced a security
+-- control that silently protected nothing.
+--
+-- The working form is a table-wide revoke followed by a column re-grant, and it
+-- lives in its own migration so the sequencing is explicit:
+--
+--     20261015260000_m15_revoke_birth_date.sql
+--
+-- That migration also adds `my_birth_date()`, the owner-only accessor the
+-- onboarding wizard uses to prefill the member's own date of birth.
 -- ---------------------------------------------------------------------------
 
 -- Report the resulting posture.

@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import {
   MAX_BIO_LENGTH,
+  MAX_PHOTOS,
   MIN_AGE,
   calculateAge,
   saveProfile,
@@ -60,6 +61,20 @@ const PETS_OPTIONS = [
 const PHYSICAL_ATTRS = [
   "Athletic", "Average", "Slim", "Muscular", "Curvy", "Tall", "Petite"
 ];
+
+/**
+ * Columns the wizard may read from `profiles`.
+ *
+ * Deliberately an allow-list rather than `select('*')`: `birth_date` has a
+ * column-level revoke, so a wildcard select would be denied outright. The date
+ * of birth is fetched separately via `my_birth_date()`.
+ *
+ * Written as a single string literal on purpose: supabase-js parses the column
+ * list at the TYPE level, and a value built with `.join()` is just `string`, so
+ * inference collapses to an error type.
+ */
+const WIZARD_PROFILE_COLUMNS =
+  'id, display_name, avatar_url, photos, gender, pronouns, age, country, city, height, physical_attributes, intention, looking_for, sexual_orientation, mbti, personality, hobbies, pets, interests, prompts, smoking, drinking, exercise, education, profession, languages_spoken, bio' as const;
 
 /** M8: how many curated prompts a member may answer during onboarding. */
 const MAX_PROMPT_SLOTS = 3;
@@ -191,11 +206,24 @@ export default function EditProfileWizardPage() {
 
         setUserId(user.id);
 
-        const { data, error: loadError } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', user.id)
-          .maybeSingle();
+        // `birth_date` is NOT in the column list: it carries a column-level
+        // revoke for every role (`20261015260000_m15_revoke_birth_date.sql`), so
+        // `select('*')` would fail and even naming it here would be denied. The
+        // member's own date of birth is fetched through `my_birth_date()`, which
+        // derives the caller from `auth.uid()` and can only ever return their
+        // own row.
+        const [profileResult, birthDateResult] = await Promise.all([
+          supabase
+            .from('profiles')
+            .select(WIZARD_PROFILE_COLUMNS)
+            .eq('id', user.id)
+            .maybeSingle(),
+          supabase.rpc('my_birth_date'),
+        ]);
+
+        const { data, error: loadError } = profileResult;
+        const ownBirthDate =
+          typeof birthDateResult.data === 'string' ? birthDateResult.data : '';
 
         if (!isMounted) return;
 
@@ -209,7 +237,7 @@ export default function EditProfileWizardPage() {
             photos: Array.isArray(data.photos) ? data.photos : [],
             gender: data.gender ?? '',
             pronouns: data.pronouns ?? '',
-            birthDate: data.birth_date ?? '',
+            birthDate: ownBirthDate,
             age: data.age ?? 18,
             country: data.country ?? '',
             city: data.city ?? '',
@@ -313,18 +341,23 @@ export default function EditProfileWizardPage() {
 
   const handleGalleryUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
-    if (files) {
-      Array.from(files).forEach((file) => {
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          setFormData((prev) => ({
-            ...prev,
-            photos: [...prev.photos, reader.result as string].slice(0, 6),
-          }));
-        };
-        reader.readAsDataURL(file);
-      });
+    if (!files || files.length === 0) return;
+
+    for (const file of Array.from(files)) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setFormData((prev) => ({
+          ...prev,
+          // Capped at MAX_PHOTOS here as well as in validation, so the UI can
+          // never render more thumbnails than the payload will carry.
+          photos: [...prev.photos, reader.result as string].slice(0, MAX_PHOTOS),
+        }));
+      };
+      reader.readAsDataURL(file);
     }
+
+    // Allow re-selecting the same file, which `change` otherwise suppresses.
+    e.target.value = '';
   };
 
   const handleNext = () => {
@@ -508,6 +541,63 @@ export default function EditProfileWizardPage() {
                   Upload Photo
                 </button>
               </div>
+            </div>
+
+            {/* Gallery — the handler and ref existed but were never rendered, so
+                this was dead code and `photos` could never be populated by a
+                member despite being sent on every save. */}
+            <div style={{ marginTop: '20px' }}>
+              <label style={styles.label}>
+                Gallery ({formData.photos.length}/{MAX_PHOTOS})
+              </label>
+              <input
+                type="file"
+                accept="image/*"
+                multiple
+                ref={galleryInputRef}
+                style={{ display: 'none' }}
+                onChange={handleGalleryUpload}
+              />
+
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'center' }}>
+                {formData.photos.map((photo, index) => (
+                  <div key={index} style={{ position: 'relative' }}>
+                    <img
+                      src={photo}
+                      alt={`Gallery photo ${index + 1}`}
+                      style={{ width: '64px', height: '64px', borderRadius: '12px', objectFit: 'cover' }}
+                    />
+                    <button
+                      type="button"
+                      aria-label={`Remove gallery photo ${index + 1}`}
+                      onClick={() =>
+                        setFormData((prev) => ({
+                          ...prev,
+                          photos: prev.photos.filter((_, position) => position !== index),
+                        }))
+                      }
+                      style={{ position: 'absolute', top: '-6px', right: '-6px', width: '22px', height: '22px', borderRadius: '50%', backgroundColor: '#7F1D2E', color: '#F2E9E4', border: 'none', cursor: 'pointer', fontSize: '13px', lineHeight: 1, padding: 0 }}
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+
+                {formData.photos.length < MAX_PHOTOS && (
+                  <button
+                    type="button"
+                    aria-label="Add gallery photos"
+                    onClick={() => galleryInputRef.current?.click()}
+                    style={{ width: '64px', height: '64px', borderRadius: '12px', border: '1px dashed #4A1828', backgroundColor: 'transparent', color: '#D4B18A', cursor: 'pointer', fontSize: '22px', lineHeight: 1 }}
+                  >
+                    +
+                  </button>
+                )}
+              </div>
+
+              <p style={{ fontSize: '12px', color: '#B58A83', marginTop: '8px' }}>
+                Up to {MAX_PHOTOS} photos. Profiles with photos get far more matches.
+              </p>
             </div>
           </div>
         )}

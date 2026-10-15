@@ -243,34 +243,11 @@ export async function saveProfile(draft: ProfileDraft): Promise<void> {
   }
 }
 
-/**
- * Loads the signed-in member's own profile.
- *
- * Returns `null` when the row does not exist yet, which is a normal outcome for
- * a member who has not finished onboarding — not an error.
- */
-export async function loadOwnProfile(): Promise<Record<string, unknown> | null> {
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    throw new ProfileError('You must be signed in to do that.', '28000');
-  }
-
-  const { data, error } = await supabase
-    .from('profiles')
-    .select('*')
-    .eq('id', user.id)
-    .maybeSingle();
-
-  if (error) {
-    console.error('[profile] load failed:', error.message);
-    throw new ProfileError('We could not load your profile.', error.code);
-  }
-
-  return (data as Record<string, unknown> | null) ?? null;
-}
+// `loadOwnProfile()` used to live here with a `select('*')`. It was imported by
+// nothing, and a wildcard select is now denied outright because `birth_date`
+// carries a column-level revoke. Removed rather than repaired: the two surfaces
+// that genuinely need the member's own row (the wizard and the dashboard) each
+// read an explicit allow-list sized to what they render.
 
 // Data-subject rights (export and erasure) live in `src/lib/privacy.ts` and are
 // already wired into `/profile/settings`. They are deliberately NOT duplicated

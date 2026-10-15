@@ -87,6 +87,11 @@ test.describe('§3.3 — the onboarding wizard', () => {
           },
         ],
       },
+      rpc: {
+        // The wizard prefills the date of birth through this owner-only RPC,
+        // because `profiles.birth_date` is revoked for every role.
+        my_birth_date: null,
+      },
     });
 
     await page.goto('/profile/edit');

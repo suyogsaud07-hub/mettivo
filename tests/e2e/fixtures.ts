@@ -64,7 +64,19 @@ export interface StubOptions {
    * asks for one via `.single()`/`.maybeSingle()`); a plain OBJECT is returned
    * verbatim, which is the reliable way to stub a single-row read.
    */
-  tables?: Record<string, unknown[] | Record<string, unknown> | ((url: URL) => unknown[])>;
+  /**
+   * Table name -> response.
+   *
+   * An ARRAY is returned as a list (narrowed to a single object when the client
+   * asks for one via `.single()`/`.maybeSingle()`); a plain OBJECT is returned
+   * verbatim, which is the reliable way to stub a single-row read. A FUNCTION
+   * receives the query URL, which is how one table can serve two different
+   * shapes — a single-row gatekeeper read and a list read with names.
+   */
+  tables?: Record<
+    string,
+    unknown[] | Record<string, unknown> | ((url: URL) => unknown)
+  >;
   /** RPC name -> payload, or a function of the request URL. */
   rpc?: Record<string, unknown | ((url: URL) => unknown)>;
 }
@@ -175,17 +187,19 @@ export async function stubSupabase(page: Page, options: StubOptions = {}): Promi
     }
 
     const handler = options.tables?.[path];
-    const rows = typeof handler === 'function' ? handler(url) : (handler ?? []);
+    const resolved: unknown = typeof handler === 'function' ? handler(url) : (handler ?? []);
 
     // A plain object means "return exactly this row", which makes a stubbed
     // `.single()` independent of the Accept header supabase-js chooses.
-    if (rows !== null && typeof rows === 'object' && !Array.isArray(rows)) {
+    if (resolved !== null && typeof resolved === 'object' && !Array.isArray(resolved)) {
       return route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify(rows),
+        body: JSON.stringify(resolved),
       });
     }
+
+    const rows: unknown[] = Array.isArray(resolved) ? resolved : [];
 
     // `.single()` / `.maybeSingle()` ask PostgREST for an object, not an array.
     const accept = request.headers()['accept'] ?? '';

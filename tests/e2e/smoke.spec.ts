@@ -1,5 +1,10 @@
 import { expect, test } from '@playwright/test';
-import { signedIn, stubSupabase } from './fixtures';
+import {
+  E2E_OTHER_USER_ID,
+  E2E_USER_ID,
+  signedIn,
+  stubSupabase,
+} from './fixtures';
 
 /**
  * §3.3 — routes, PWA artefacts and the protected navigation.
@@ -89,6 +94,69 @@ test.describe('§3.3 — protected navigation and routes (R-12)', () => {
         page.locator('a[href="/notifications"]').first(),
         `${path} must render the app shell`
       ).toBeVisible();
+    }
+  });
+
+  test('renders real content on /people, not an empty scaffold', async ({ page }) => {
+    // Regression guard. `/people` previously shipped as a full-height dark div
+    // containing nothing but <MobileNav />, with the author's own
+    // `{/* ... content ... */}` markers still in the source. It is a protected
+    // nav destination, so every member who tapped it got a blank screen.
+    await page.goto('/people');
+
+    await expect(page.getByRole('heading', { name: /connections/i })).toBeVisible();
+    // With no matches stubbed, the empty state is the content that must exist.
+    await expect(page.getByText(/no connections yet/i)).toBeVisible();
+    await expect(page.getByRole('link', { name: /start discovering/i })).toBeVisible();
+  });
+
+  test('lists a mutual match and links it to the conversation', async ({ page }) => {
+    await stubSupabase(page, {
+      tables: {
+        // Two different reads hit `profiles`: the gatekeeper wants one row, the
+        // connection lookup wants a list with names. Branch on the query.
+        profiles: (url) =>
+          url.searchParams.get('select')?.includes('onboarding_completed')
+            ? { onboarding_completed: true, intention: 'dating', interests: [], prompts: {} }
+            : [
+                {
+                  id: E2E_OTHER_USER_ID,
+                  display_name: 'Bo',
+                  age: 30,
+                  city: 'Pokhara',
+                  country: 'Nepal',
+                  avatar_url: null,
+                  is_online: true,
+                },
+              ],
+        matches: [{ id: 'match-1', user_a: E2E_USER_ID, user_b: E2E_OTHER_USER_ID }],
+      },
+      rpc: { discover_profiles: [] },
+    });
+    await page.goto('/people');
+
+    await expect(page.getByText('Bo')).toBeVisible();
+    await expect(page.locator('a[href="/chat/match-1"]')).toBeVisible();
+  });
+
+  test('no protected route renders a bare navigation shell', async ({ page }) => {
+    // The general form of the bug above: a route that technically returns 200
+    // and paints the nav, but no content of its own.
+    const NAV_LABELS = ['Discover', 'People', 'Notifications', 'Moments', 'Games', 'Profile'];
+
+    for (const path of ['/people', '/notifications', '/moments', '/game-zone']) {
+      await page.goto(path);
+
+      const bodyText = (await page.locator('body').innerText()).trim();
+      const withoutNav = NAV_LABELS.reduce(
+        (text, label) => text.replaceAll(label, ''),
+        bodyText
+      ).replace(/\s+/g, '');
+
+      expect(
+        withoutNav.length,
+        `${path} renders no content of its own — only the navigation shell`
+      ).toBeGreaterThan(0);
     }
   });
 });

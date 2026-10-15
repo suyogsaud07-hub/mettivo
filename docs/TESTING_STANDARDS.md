@@ -3,7 +3,7 @@
 > **Current state (M18 + launch checklist).** Every layer of the pyramid exists
 > and runs in CI.
 >
-> `npm test` — **267 tests in ~9 seconds**, no external services, no secrets:
+> `npm test` — **274 tests in ~10 seconds**, no external services, no secrets:
 >
 > | Suite | Tests | Covers |
 > | --- | --- | --- |
@@ -24,9 +24,9 @@
 > | `tests/database/restore_rehearsal.test.ts` | 9 | R-14: a rebuild is structurally identical to the normal path |
 > | `tests/integration/auth-callback.test.ts` | 11 | §3.2: the OAuth route — every branch, failing closed |
 > | `tests/integration/data-access.test.ts` | 33 | §3.2: every data-access module's error branches surface a message |
-> | `tests/security/security.test.ts` | 20 | M17: anonymous bypass, privilege escalation, `SECURITY DEFINER` hardening, secrets hygiene, public-surface hygiene |
+> | `tests/security/security.test.ts` | 26 | M17: anonymous bypass, privilege escalation, `SECURITY DEFINER` hardening, secrets hygiene, public-surface hygiene, column-level `birth_date` denial |
 >
-> `npm run test:e2e` — **17 Chromium journeys in ~6 seconds** (§3.3). The app
+> `npm run test:e2e` — **20 Chromium journeys in ~7 seconds** (§3.3). The app
 > under test points at `e2e.invalid` and every Supabase call is intercepted, so
 > they need no secrets and cannot touch real data.
 >
@@ -136,7 +136,7 @@ and pinned by a test.
 
 ### 3.3 End-to-end — Playwright (Chromium)
 
-**Implemented** — `tests/e2e/`, 17 journeys, `npm run test:e2e`.
+**Implemented** — `tests/e2e/`, 20 journeys, `npm run test:e2e`.
 
 ```bash
 npm run test:e2e:install   # once: downloads Chromium into .playwright-browsers/
@@ -177,6 +177,8 @@ If an interception is ever missed, the request fails harmlessly against
 | Manifest, theme colour and iOS touch icon are linked | `apple-mobile-web-app-capable` + `apple-touch-icon` are what make iOS "Add to Home Screen" produce a standalone app |
 | A service worker registers and takes control | `NEXT_PUBLIC_ENABLE_SW=true` in the E2E web server, since `next dev` disables it by default |
 | The offline page and manifest are precached | offline support is a claim until the cache is inspected |
+| `/people` renders real content | it shipped as an empty scaffold behind a protected nav entry |
+| **No protected route renders a bare nav shell** | the general form of the bug above: any route that returns 200 and paints the nav but no content of its own |
 
 The full browser signup → chat → reload journey in the original plan needs a
 real backend to create an account and persist a message; it is deliberately not

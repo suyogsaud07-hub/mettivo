@@ -60,11 +60,15 @@ const PERSONAL_TABLES = [
 
 describe('1. auth bypass attempts (anonymous callers)', () => {
   it('cannot read a single row from any personal-data table', async () => {
-    // Guard against a vacuous pass. On the core personal tables Supabase grants
-    // anonymous callers table privileges and relies on RLS alone -- the harness
-    // mirrors that. Pin the grant here: if it ever goes missing, "zero rows"
-    // would prove only that a GRANT is absent, not that RLS works.
-    for (const table of ['profiles', 'messages', 'follows', 'reports', 'blocked_users']) {
+    // Guard against a vacuous pass. On these tables Supabase grants anonymous
+    // callers table privileges and relies on RLS alone -- the harness mirrors
+    // that. Pin the grant here: if it ever goes missing, "zero rows" would prove
+    // only that a GRANT is absent, not that RLS works.
+    //
+    // `profiles` is deliberately absent: M15 revokes table-wide SELECT from anon
+    // there, so its denial is structural rather than policy-based. That is
+    // asserted separately below -- it is a stronger position, not a weaker one.
+    for (const table of ['messages', 'follows', 'reports', 'blocked_users']) {
       expect(
         await systemicCount(
           db,
@@ -446,5 +450,102 @@ describe('5. public surface hygiene', () => {
 
     const lib = readFileSync(join(root, 'src/lib/discovery.ts'), 'utf8');
     expect(lib).toContain("rpc('discover_profiles'");
+  });
+});
+
+describe('6. birth_date is unreadable by every role', () => {
+  let db: PGlite;
+
+  beforeAll(async () => {
+    db = await createTestDb();
+    await seed(db, `update public.profiles set birth_date = '1998-05-04' where id = '${USER_A}'`);
+  });
+
+  it('grants no column-level SELECT on birth_date to anon or authenticated', async () => {
+    // Filtered to SELECT on purpose: `column_privileges` also derives rows from
+    // the table-level INSERT/UPDATE grants, so an unfiltered count is noisy and
+    // would not mean what it appears to.
+    const result = await db.query<{ n: number }>(`
+      select count(*)::int as n
+      from information_schema.column_privileges
+      where table_schema = 'public'
+        and table_name   = 'profiles'
+        and column_name  = 'birth_date'
+        and privilege_type = 'SELECT'
+        and grantee in ('anon', 'authenticated')
+    `);
+    expect(result.rows[0].n).toBe(0);
+  });
+
+  it('keeps SELECT on birth_date for the owner, which the definer functions need', async () => {
+    // If this ever hits zero, `export_my_data()` and `my_birth_date()` break.
+    const result = await db.query<{ n: number }>(`
+      select count(*)::int as n
+      from information_schema.column_privileges
+      where table_schema = 'public'
+        and table_name   = 'profiles'
+        and column_name  = 'birth_date'
+        and privilege_type = 'SELECT'
+        and grantee not in ('anon', 'authenticated')
+    `);
+    expect(result.rows[0].n).toBeGreaterThan(0);
+  });
+
+  it('keeps table-wide SELECT away from anon on profiles', async () => {
+    // The denial is structural, not merely an RLS filter.
+    const result = await db.query<{ n: number }>(`
+      select count(*)::int as n
+      from pg_class c
+      join pg_namespace n on n.oid = c.relnamespace
+      where n.nspname = 'public' and c.relname = 'profiles'
+        and has_table_privilege('anon', c.oid, 'SELECT')
+    `);
+    expect(result.rows[0].n).toBe(0);
+  });
+
+  it('refuses an authenticated member reading any birth_date', async () => {
+    // A table-wide REVOKE plus a column re-GRANT is the only form that works:
+    // a bare `revoke select (col)` is a no-op while a table grant exists.
+    await expect(
+      asUser(db, USER_B, async () => {
+        await db.query(`select birth_date from public.profiles where id = '${USER_A}'`);
+      })
+    ).rejects.toThrow(/permission denied/i);
+  });
+
+  it('still lets a member read every other column of another member', async () => {
+    // Proof the fix did not over-lock: discovery-style reads keep working.
+    const rows = await asUser(db, USER_B, async () => {
+      const r = await db.query<{ display_name: string; age: number }>(
+        `select display_name, age from public.profiles where id = '${USER_A}'`
+      );
+      return r.rows;
+    });
+    expect(rows).toHaveLength(1);
+  });
+
+  it('returns only the caller’s own birth date through my_birth_date()', async () => {
+    // Normalise before comparing: PGlite hands back a `Date` (whose String()
+    // renders in the machine's local zone), while PostgREST sends a
+    // 'YYYY-MM-DD' string. Both describe the same day.
+    const isoDay = (value: unknown): string =>
+      value instanceof Date ? value.toISOString().slice(0, 10) : String(value).slice(0, 10);
+
+    const mine = await asUser(db, USER_A, async () => {
+      const r = await db.query<{ d: unknown }>(`select public.my_birth_date() as d`);
+      return r.rows[0].d;
+    });
+    expect(isoDay(mine)).toBe('1998-05-04');
+
+    // USER_B has no birth date set, and the function cannot be pointed at A.
+    const theirs = await asUser(db, USER_B, async () => {
+      const r = await db.query<{ d: unknown }>(`select public.my_birth_date() as d`);
+      return r.rows[0].d;
+    });
+    expect(theirs).toBeNull();
+  });
+
+  it('refuses my_birth_date() to an anonymous caller', async () => {
+    await expect(asAnon(db, () => db.query(`select public.my_birth_date()`))).rejects.toThrow();
   });
 });

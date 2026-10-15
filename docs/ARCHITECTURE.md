@@ -134,25 +134,21 @@ These are recorded so no future change assumes they are solved.
    `uuid_generate_v4()` without the `uuid-ossp` extension, and `FOR INSERT ...
    USING` (must be `WITH CHECK`). It now carries a `DO NOT APPLY` header and is
    superseded by migration 11 / the M6 pair.
-2. **`src/app/people/page.tsx` is a placeholder** and is linked from the matches screen.
-3. **`birth_date` is still readable by any signed-in member** via `profiles`.
-   `M15` tracks revoking it (`revoke select (birth_date) ...`) once
-   `profile/dashboard` renders the stored `age` instead of the raw date.
-4. **Suspension only hides a member from discovery.** `discover_profiles()`
+2. **Suspension only hides a member from discovery.** `discover_profiles()`
    excludes suspended members; whether they should also disappear from the chat
    list and moments is the open product question `PRD_V1.md` Q1.
-5. **Alerting is not wired.** Structured, PII-redacted logging, route/global error
+3. **Alerting is not wired.** Structured, PII-redacted logging, route/global error
    boundaries and a `/api/observability` sink now exist (R-08), so a failure
    leaves durable forensic evidence — but nobody is paged. Closing that needs a
    log-drain threshold or a service such as Sentry, plus a retention decision.
-6. **No migration runner.** Migrations are applied by hand in the SQL Editor.
+4. **No migration runner.** Migrations are applied by hand in the SQL Editor.
    `scripts/check-schema-drift.sh` derives the expected schema from the migration
    files and diffs it against the live project, and runs in CI.
-7. **The data half of the restore rehearsal is unrun.** The rebuild path is
+5. **The data half of the restore rehearsal is unrun.** The rebuild path is
    proven and automated (`tests/database/restore_rehearsal.test.ts`,
    `scripts/restore-rehearsal.sh`); restoring an actual dump needs a scratch
    project. See `RISK_REGISTER.md` `R-14`.
-8. **No full-stack end-to-end journey.** The Playwright suite runs real browser
+6. **No full-stack end-to-end journey.** The Playwright suite runs real browser
    journeys with Supabase intercepted, deliberately never touching production.
    The signup → chat → reload path needs a staging backend.
 
@@ -197,5 +193,15 @@ These are recorded so no future change assumes they are solved.
 - ~~`follows` had no primary key and four foreign keys were unindexed~~ — found
   by `tests/database/schema.test.ts` (M4) and fixed in
   `20261015195000_m4_schema_consolidation.sql`.
-- ~~No tests, no CI, no deployment procedure~~ — 179 tests across 11 suites, a
-  five-step CI gate, and `docs/DEPLOYMENT.md`.
+- ~~`src/app/people/page.tsx` was a placeholder~~ — it shipped as a full-height
+  dark div containing only the bottom navigation, with the author's empty JSX
+  comment markers still in the source, while being one of the six protected nav
+  destinations. It now lists mutual matches with an explicit column allow-list,
+  and two E2E tests guard it: one asserts it renders content, and a general one
+  fails any protected route that paints only the navigation shell.
+- ~~`birth_date` was readable by any signed-in member~~ — revoked at the column
+  level (`20261015260000_m15_revoke_birth_date.sql`). Note the naively obvious
+  `revoke select (birth_date)` is a **no-op** while a table-wide grant exists; see
+  `RISK_REGISTER.md` `R-04`.
+- ~~No tests, no CI, no deployment procedure~~ — 274 tests across 18 suites,
+  20 browser journeys, a five-step CI gate, and `docs/DEPLOYMENT.md`.

@@ -23,11 +23,25 @@ interface Profile {
   politics: string;
   drinking: string;
   smoking: string;
-  birth_date: string;
   followers?: number;
   following?: number;
   friends?: number;
 }
+
+/**
+ * Columns this page may read.
+ *
+ * An explicit allow-list, not `select *`: `birth_date` carries a column-level
+ * revoke (`20261015260000_m15_revoke_birth_date.sql`), so `select *` would fail
+ * outright — and the page must render the derived `age` in any case
+ * (`CONSTITUTION.md` Article 1.4).
+ *
+ * Written as a single string literal on purpose: supabase-js parses the column
+ * list at the TYPE level, and a value built with `.join()` is just `string`, so
+ * inference collapses to an error type.
+ */
+const PROFILE_COLUMNS =
+  'id, display_name, age, gender, city, country, avatar_url, photos, intention, looking_for, hobbies, pets, personality, religion, politics, drinking, smoking' as const;
 
 export default function ProfileDashboardPage() {
   const router = useRouter();
@@ -55,7 +69,7 @@ export default function ProfileDashboardPage() {
         // onboarded yet, not a failed load.
         const { data, error } = await supabase
           .from('profiles')
-          .select('*')
+          .select(PROFILE_COLUMNS)
           .eq('id', user.id)
           .maybeSingle();
 
@@ -223,7 +237,7 @@ export default function ProfileDashboardPage() {
           <div style={styles.section}>
             <div style={styles.sectionHeader}><div style={styles.sectionIcon}>👤</div><div style={styles.sectionTitle}>About Me</div></div>
             <div style={styles.infoRow}><div style={styles.infoLabel}>📝 Bio</div><div style={styles.infoValue}>{profile.intention || 'No bio added yet.'}</div></div>
-            <div style={{ ...styles.infoRow, borderBottom: 'none' }}><div style={styles.infoLabel}>🎂 Birthday</div><div style={styles.infoValue}>{profile.birth_date ? new Date(profile.birth_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Not set'} ({profile.age} years)</div></div>
+            <div style={{ ...styles.infoRow, borderBottom: 'none' }}><div style={styles.infoLabel}>🎂 Age</div><div style={styles.infoValue}>{profile.age ? `${profile.age} years` : 'Not set'}</div></div>
             <div style={{ ...styles.infoRow, borderBottom: 'none' }}><div style={styles.infoLabel}>👥 Gender</div><div style={styles.infoValue}>{profile.gender || 'Not set'}</div></div>
             <div style={{ ...styles.infoRow, borderBottom: 'none' }}><div style={styles.infoLabel}>❤️ Looking for</div><div style={styles.infoValue}>{profile.looking_for?.join(', ') || 'Not set'}</div></div>
           </div>

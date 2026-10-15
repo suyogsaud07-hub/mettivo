@@ -27,7 +27,7 @@
 | `R-01` | RLS not enforced on the live project — personal data readable anonymously | 1 | 5 | 🟡 5 | **CLOSED 2026-10-15** |
 | `R-02` | Migrations applied by hand; live schema drifts from the repository | 2 | 4 | 🟠 8 | **MITIGATED** — in sync, CI-monitored; still applied by hand |
 | `R-03` | Client is the UX layer, database is the only gate — one missing policy exposes a table | 3 | 5 | 🔴 15 | Open · mitigated |
-| `R-04` | `birth_date` exposed on a public surface | 3 | 4 | 🟠 12 | Open · partly mitigated |
+| `R-04` | `birth_date` exposed on a public surface | 1 | 4 | 🟡 4 | **CLOSED 2026-10-15** — revoked at the column level |
 | `R-05` | Minors can register; age gate is self-attested and clamped | 1 | 5 | 🟡 5 | **MITIGATED** — gate can no longer be bypassed; policy Q1 open |
 | `R-06` | Blocking stored but not enforced server-side | 1 | 3 | 🟢 3 | **CLOSED 2026-10-15** (M12) |
 | `R-07` | Suspended members remain discoverable | 1 | 3 | 🟢 3 | **CLOSED 2026-10-15** (M12) |
@@ -178,18 +178,52 @@ migration adds a table.
 
 ---
 
-### `R-04` — `birth_date` on a public surface 🟠
+### `R-04` — `birth_date` on a public surface 🟡
 
-**Description.** Article 1.4 forbids exposing dates of birth. `birth_date` is
-readable by any signed-in member through `profiles`, and is part of `R-01`'s
-anonymous leak.
+**Description.** Article 1.4 forbids exposing dates of birth. RLS on `profiles`
+lets ANY signed-in member read ANY other member's row — deliberate, because
+discovery depends on it — so `birth_date` was readable by every member.
 
-**Mitigation.**
-- `public_profiles` (M6) is an allow-list that excludes `birth_date`; discovery
-  now reads it, with `tests/security` §5 pinning that.
-- `profile/dashboard` still renders the raw date, so the column-level revoke
-  (`revoke select (birth_date) on public.profiles from authenticated, anon`) is
-  sequenced after that page renders stored `age` instead. Tracked in M15/M7.
+**CLOSED 2026-10-15.**
+
+The previously recorded fix — `revoke select (birth_date) on public.profiles
+from authenticated, anon` — **does not work**, and this was discovered by testing
+it rather than trusting it:
+
+```
+create role app_user; create table t (a int, b int);
+grant select on t to app_user;
+revoke select (b) on t from app_user;
+-- as app_user:  select b from t   ->   ALLOWED
+```
+
+A table-wide SELECT grant covers every column and a column-level REVOKE cannot
+subtract from it. Supabase grants table-wide SELECT to `anon` and
+`authenticated` by default, so M15's commented-out statement would have shipped a
+security control that protected nothing.
+
+The working form is a table-wide revoke followed by a column re-grant, in
+`20261015260000_m15_revoke_birth_date.sql`:
+
+- `revoke select on public.profiles from anon, authenticated`
+- `grant select (<every column except birth_date>) on public.profiles to authenticated`
+  — the list is generated from the catalogue, so a future column is readable by
+  default rather than silently locking the app out of it
+- `revoke select on public.profiles from anon` — anonymous access is now denied
+  **structurally**, not merely by an RLS filter
+- `my_birth_date()` — a SECURITY DEFINER function returning only the caller's own
+  date of birth, so the onboarding wizard can still prefill the field
+
+Verified by `tests/security` §6 (6 tests): no column-level SELECT for anon or
+authenticated · anon has no table-wide SELECT · an authenticated member reading
+a `birth_date` is refused with *permission denied* · every other column is still
+readable · `my_birth_date()` returns only the caller's own value and refuses
+anonymous callers · the owner keeps SELECT, which `export_my_data()` needs.
+
+Two client reads were the prerequisite and were fixed first: `profile/dashboard`
+now renders the derived `age` and selects an explicit allow-list, and the wizard
+does the same while fetching its date of birth through `my_birth_date()`.
+`loadOwnProfile()` (`select('*')`, imported by nothing) was deleted.
 
 ---
 

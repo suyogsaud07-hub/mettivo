@@ -49,6 +49,7 @@ same state and no error.
 | 14 | `20261015230000_m11_messaging.sql` | Participant-only message policy, read state, unread counts | M11 |
 | 15 | `20261015240000_m13_moderation_workflow.sql` | Evidence snapshots, moderator triage queue, resolution | M13 |
 | 16 | `20261015250000_m7_profile_validation.sql` | 18+ age guard and profile field constraints | M7 |
+| 17 | `20261015260000_m15_revoke_birth_date.sql` | Column-level revoke of `profiles.birth_date` + `my_birth_date()` | M15 |
 
 > **Applying to a live project.** Migrations 1–3 are the security boundary: on a
 > project where they have not been applied, `profiles` is readable by anyone
