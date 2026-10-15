@@ -13,14 +13,7 @@ import {
   PROFILE_PETS_OPTIONS,
   PROFILE_SMOKING_OPTIONS,
 } from '@/lib/profile-options';
-import {
-  MomentError,
-  addMomentComment,
-  fetchUserMoments,
-  likeMoment,
-  shareMoment,
-  unlikeMoment,
-} from '@/lib/moments';
+import { MomentError, fetchUserMoments, likeMoment, unlikeMoment } from '@/lib/moments';
 import type { MomentAuthor, MomentFeedRow } from '@/lib/types';
 import MobileNav from '../../components/layout/MobileNav';
 import ProfileHeader from '../../components/profile/ProfileHeader';
@@ -552,43 +545,8 @@ export default function ProfileDashboardPage() {
     }
   };
 
-  const handleCommentPost = async (post: MomentFeedRow) => {
-    const comment = window.prompt('Write a comment:');
-    if (!comment || !comment.trim()) return;
-
-    try {
-      await addMomentComment(post.id, comment);
-      setPosts((prev) =>
-        prev.map((item) =>
-          item.id === post.id ? { ...item, comment_count: item.comment_count + 1 } : item
-        )
-      );
-      showToast('Comment posted');
-    } catch (err) {
-      console.error('Comment failed:', err);
-      showToast('Could not post your comment.', 'error');
-    }
-  };
-
-  const handleSharePost = async (post: MomentFeedRow) => {
-    try {
-      const total = await shareMoment(post.id);
-      setPosts((prev) =>
-        prev.map((item) => (item.id === post.id ? { ...item, shares: total } : item))
-      );
-
-      const shareText = post.caption?.trim() || 'Check out this Moment on Mettivo.';
-      try {
-        await navigator.clipboard.writeText(shareText);
-        showToast('Copied to your clipboard');
-      } catch {
-        showToast('Share count updated');
-      }
-    } catch (err) {
-      console.error('Share failed:', err);
-      showToast('Could not share this Moment.', 'error');
-    }
-  };
+  // Comments and shares are owned by MomentCard itself; the dashboard only owns
+  // the optimistic like state shared across the list.
 
   const calculateCompletion = () => {
     if (!profile) return 0;
@@ -975,6 +933,7 @@ export default function ProfileDashboardPage() {
           posts={posts}
           author={author}
           isOwn
+          currentUserId={profile.id}
           loading={postsLoading}
           error={postsError}
           title="Your Posts"
@@ -986,8 +945,6 @@ export default function ProfileDashboardPage() {
           emptyTitle="No posts yet"
           emptyBody="Share photos, videos and updates in Moments and they will appear here."
           onLike={(item) => void handleLikePost(item)}
-          onComment={(item) => void handleCommentPost(item)}
-          onShare={(item) => void handleSharePost(item)}
         />
       )}
 

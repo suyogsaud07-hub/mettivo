@@ -8,15 +8,17 @@ import MomentCard from '../moments/MomentCard';
  * The "User Feed" tab body: a member's Moments rendered with the shared
  * `MomentCard`.
  *
- * Presentational — the parent owns the data and the like/comment/share
- * handlers, so the own-profile feed and the public-profile feed cannot behave
- * differently.
+ * Presentational — the parent owns the data and the like handler, so the
+ * own-profile feed and the public-profile feed cannot behave differently.
+ * Comments, shares and views are owned by `MomentCard` itself.
  */
 export interface ProfileMomentsProps {
   posts: MomentFeedRow[];
   author: MomentAuthor;
   /** Your own feed: hides the per-card Follow button. */
   isOwn: boolean;
+  /** The signed-in viewer, so comments know who is writing. */
+  currentUserId: string | null;
   loading: boolean;
   error: string | null;
   title: string;
@@ -25,14 +27,13 @@ export interface ProfileMomentsProps {
   emptyTitle: string;
   emptyBody: string;
   onLike: (post: MomentFeedRow) => void;
-  onComment: (post: MomentFeedRow) => void;
-  onShare: (post: MomentFeedRow) => void;
 }
 
 export default function ProfileMoments({
   posts,
   author,
   isOwn,
+  currentUserId,
   loading,
   error,
   title,
@@ -40,8 +41,6 @@ export default function ProfileMoments({
   emptyTitle,
   emptyBody,
   onLike,
-  onComment,
-  onShare,
 }: ProfileMomentsProps) {
   return (
     <div>
@@ -70,10 +69,8 @@ export default function ProfileMoments({
             post={post}
             author={author}
             isOwn={isOwn}
-            currentUserId={author.id}
+            currentUserId={currentUserId}
             onLike={onLike}
-            onComment={onComment}
-            onShare={onShare}
           />
         ))
       )}

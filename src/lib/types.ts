@@ -116,20 +116,29 @@ export interface NotificationActor {
   gender: string;
 }
 
+/** The kinds of media a Moment can carry. `null` means a legacy inline image. */
+export type MomentMediaType = 'image' | 'video';
+
 /** A row from the `moments` table. */
 export interface MomentRow {
   id: string;
   author_id: string;
   caption: string | null;
   media: string[];
+  /** `image` | `video`; null on rows stored before media_type existed. */
+  media_type: MomentMediaType | null;
   tags: string[];
   shares: number;
+  /** Total views, maintained server-side by `record_moment_view()`. */
+  views_count: number;
   created_at: string;
   updated_at: string;
 }
 
 /** A row from the `moment_feed` view — a moment plus aggregated engagement. */
 export interface MomentFeedRow extends MomentRow {
+  /** Distinct members who have viewed the post. */
+  unique_views: number;
   like_count: number;
   comment_count: number;
   liked_by_me: boolean;

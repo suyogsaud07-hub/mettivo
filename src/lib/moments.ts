@@ -1,5 +1,10 @@
 import { supabase } from '@/lib/supabase';
-import type { MomentAuthor, MomentCommentRow, MomentFeedRow } from '@/lib/types';
+import type {
+  MomentAuthor,
+  MomentCommentRow,
+  MomentFeedRow,
+  MomentMediaType,
+} from '@/lib/types';
 
 /**
  * Moments data access.
@@ -32,6 +37,38 @@ export const MOMENT_TAGS = [
   'Music',
   'Travel',
 ] as const;
+
+/** Quick-insert emoji for a status caption. */
+export const MOMENT_EMOJI = [
+  '❤️', '🔥', '😂', '😍', '👏', '🥳',
+  '😮', '💯', '🌹', '✨', '😎', '🙌',
+] as const;
+
+/** The maximum number of tags a moment may carry (mirrors the SQL constraint). */
+export const MAX_MOMENT_TAGS = 6;
+
+/**
+ * Pulls `#hashtags` out of a caption, de-duplicated and bounded.
+ *
+ * Captions and tags are two different columns, but a member typing
+ * "#LateNight" expects it to behave like the picker chip. This folds the
+ * hashtags into the tag list so both routes reach the same filter.
+ */
+export function extractHashtags(text: string): string[] {
+  const matches = text.match(/#[\p{L}\p{N}_]+/gu) ?? [];
+  return matches.map((match) => match.slice(1));
+}
+
+/** Merges picker tags with caption hashtags, capped at the SQL limit. */
+export function mergeMomentTags(tags: string[], caption: string): string[] {
+  const seen = new Set<string>();
+  for (const tag of [...tags, ...extractHashtags(caption)]) {
+    const clean = tag.trim();
+    if (clean) seen.add(clean);
+    if (seen.size >= MAX_MOMENT_TAGS) break;
+  }
+  return Array.from(seen);
+}
 
 /** Reject oversized inline media before it reaches the database. */
 const MAX_MEDIA_BYTES = 1024 * 1024; // 1 MB
@@ -96,7 +133,7 @@ export async function fetchMomentFeed(
   let query = supabase
     .from('moment_feed')
     .select(
-      'id, author_id, caption, media, tags, shares, created_at, updated_at, like_count, comment_count, liked_by_me'
+      'id, author_id, caption, media, media_type, tags, shares, views_count, unique_views, created_at, updated_at, like_count, comment_count, liked_by_me'
     );
 
   if (tag) {
@@ -150,7 +187,7 @@ export async function fetchUserMoments(
   const { data, error } = await supabase
     .from('moment_feed')
     .select(
-      'id, author_id, caption, media, tags, shares, created_at, updated_at, like_count, comment_count, liked_by_me'
+      'id, author_id, caption, media, media_type, tags, shares, views_count, unique_views, created_at, updated_at, like_count, comment_count, liked_by_me'
     )
     .eq('author_id', userId)
     .order('created_at', { ascending: false })
@@ -200,11 +237,18 @@ export async function fetchMomentAuthors(
   return authors;
 }
 
-/** Publishes a moment authored by the signed-in member. */
+/**
+ * Publishes a moment authored by the signed-in member.
+ *
+ * `media` holds Storage URLs (see `@/lib/media`); `mediaType` labels them so the
+ * feed knows to autoplay a video. Legacy rows written before `media_type`
+ * existed simply pass `null` and are treated as images.
+ */
 export async function createMoment(
   caption: string,
   media: string[] = [],
-  tags: string[] = []
+  tags: string[] = [],
+  mediaType: MomentMediaType | null = null
 ): Promise<void> {
   const text = caption.trim();
 
@@ -212,8 +256,8 @@ export async function createMoment(
     throw new MomentError('Please add a caption or media.');
   }
 
-  // Inline data URLs are stored as text; keep them small until media moves to
-  // Supabase Storage. Measured in bytes, not characters.
+  // Inline data URLs are stored as text; keep any that sneak through small.
+  // Uploaded Storage URLs are short, so this only guards legacy/base64 input.
   for (const item of media) {
     if (new Blob([item]).size > MAX_MEDIA_BYTES) {
       throw new MomentError('That file is too large. Please choose an image under 1 MB.');
@@ -232,13 +276,46 @@ export async function createMoment(
     author_id: user.id,
     caption: text || null,
     media,
-    tags,
+    media_type: mediaType,
+    tags: tags.slice(0, MAX_MOMENT_TAGS),
   });
 
   if (error) {
     console.error('[moments] create failed:', error.message);
     throw new MomentError(error.message, error.code);
   }
+}
+
+/** View totals returned by `record_moment_view()`. */
+export interface MomentViewCounts {
+  views_count: number;
+  unique_views: number;
+}
+
+/**
+ * Records that the signed-in member viewed a moment.
+ *
+ * Best-effort: counting a view must never break the feed, so a failure resolves
+ * to `null` (the caller simply keeps showing the count it already had) rather
+ * than throwing. The counter itself lives in a SECURITY DEFINER function, so a
+ * client can request a view but cannot set the number.
+ */
+export async function recordMomentView(momentId: string): Promise<MomentViewCounts | null> {
+  const { data, error } = await supabase.rpc('record_moment_view', { p_moment_id: momentId });
+
+  if (error) {
+    console.error('[moments] record view failed:', error.message);
+    return null;
+  }
+
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row || typeof row !== 'object') return null;
+
+  const values = row as { views_count?: unknown; unique_views?: unknown };
+  return {
+    views_count: typeof values.views_count === 'number' ? values.views_count : 0,
+    unique_views: typeof values.unique_views === 'number' ? values.unique_views : 0,
+  };
 }
 
 /** Likes a moment. The composite primary key makes a repeat a no-op conflict. */
@@ -349,6 +426,32 @@ export function subscribeToMoments(onInsert: () => void): () => void {
       'postgres_changes',
       { event: 'INSERT', schema: 'public', table: 'moments' },
       () => onInsert()
+    )
+    .subscribe();
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}
+
+/**
+ * Streams comment changes for one open post.
+ *
+ * Scoped to a moment id so an open comment drawer refreshes the instant someone
+ * replies, while the main feed does not re-render on unrelated comments.
+ */
+export function subscribeToMomentComments(momentId: string, onChange: () => void): () => void {
+  const channel = supabase
+    .channel(`moment:${momentId}:comments`)
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'moment_comments',
+        filter: `moment_id=eq.${momentId}`,
+      },
+      () => onChange()
     )
     .subscribe();
 

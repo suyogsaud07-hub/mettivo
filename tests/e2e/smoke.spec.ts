@@ -61,6 +61,27 @@ test.describe('§3.3 — public surfaces', () => {
   });
 });
 
+test.describe('§3.3 — the founder welcome letter', () => {
+  test('the dedicated letter route is public and renders the letter', async ({ page }) => {
+    const response = await page.goto('/letter');
+    expect(response?.status()).toBe(200);
+    // The copy comes from `src/lib/welcome-letter.ts`.
+    await expect(page.getByText('Welcome to Mettivo. Explore and enjoy!')).toBeVisible();
+    await expect(page.getByText('Suyog Saund.')).toBeVisible();
+  });
+
+  test('both landing triggers open the letter', async ({ page }) => {
+    await page.goto('/');
+
+    await page.getByTestId('founder-letter-header').click();
+    await expect.poll(() => new URL(page.url()).pathname).toBe('/letter');
+
+    await page.goBack();
+    await page.getByTestId('founder-letter-corner').click();
+    await expect.poll(() => new URL(page.url()).pathname).toBe('/letter');
+  });
+});
+
 test.describe('§3.3 — protected navigation and routes (R-12)', () => {
   test.beforeEach(async ({ page }) => {
     await signedIn(page);

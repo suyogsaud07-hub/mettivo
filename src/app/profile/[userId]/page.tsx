@@ -1,9 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useState, use } from 'react';
+import { useEffect, useState, use } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
-import { fetchUserMoments, likeMoment, addMomentComment, shareMoment, unlikeMoment } from '@/lib/moments';
+import { fetchUserMoments, likeMoment, unlikeMoment } from '@/lib/moments';
 import { isFollowing } from '@/lib/follows';
 import { fetchPublicProfile, PublicProfileError, type PublicProfile } from '@/lib/public-profiles';
 import type { MomentAuthor, MomentFeedRow } from '@/lib/types';
@@ -42,7 +42,6 @@ export default function PublicProfilePage({ params }: { params: Promise<{ userId
   const [posts, setPosts] = useState<MomentFeedRow[]>([]);
   const [postsLoading, setPostsLoading] = useState(true);
   const [postsError, setPostsError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -117,11 +116,6 @@ export default function PublicProfilePage({ params }: { params: Promise<{ userId
 
   const isOwn = currentUserId !== null && currentUserId === userId;
 
-  const showNotice = useCallback((message: string) => {
-    setNotice(message);
-    window.setTimeout(() => setNotice(null), 2000);
-  }, []);
-
   const handleLike = async (post: MomentFeedRow) => {
     const wasLiked = post.liked_by_me;
     setPosts((prev) =>
@@ -152,40 +146,6 @@ export default function PublicProfilePage({ params }: { params: Promise<{ userId
             : item
         )
       );
-    }
-  };
-
-  const handleComment = async (post: MomentFeedRow) => {
-    const comment = window.prompt('Write a comment:');
-    if (!comment || !comment.trim()) return;
-
-    try {
-      await addMomentComment(post.id, comment);
-      setPosts((prev) =>
-        prev.map((item) =>
-          item.id === post.id ? { ...item, comment_count: item.comment_count + 1 } : item
-        )
-      );
-      showNotice('Comment posted');
-    } catch (err) {
-      console.error('[public-profile] comment failed:', err);
-    }
-  };
-
-  const handleShare = async (post: MomentFeedRow) => {
-    try {
-      const total = await shareMoment(post.id);
-      setPosts((prev) => prev.map((item) => (item.id === post.id ? { ...item, shares: total } : item)));
-
-      const shareText = post.caption?.trim() || 'Check out this Moment on Mettivo.';
-      try {
-        await navigator.clipboard.writeText(shareText);
-        showNotice('Copied to your clipboard');
-      } catch {
-        showNotice('Share count updated');
-      }
-    } catch (err) {
-      console.error('[public-profile] share failed:', err);
     }
   };
 
@@ -288,6 +248,7 @@ export default function PublicProfilePage({ params }: { params: Promise<{ userId
           posts={posts}
           author={author}
           isOwn={isOwn}
+          currentUserId={currentUserId}
           loading={postsLoading}
           error={postsError}
           title={isOwn ? 'Your Posts' : `${displayName}'s Posts`}
@@ -298,8 +259,6 @@ export default function PublicProfilePage({ params }: { params: Promise<{ userId
               : `${displayName} has not shared any Moments yet.`
           }
           onLike={(item) => void handleLike(item)}
-          onComment={(item) => void handleComment(item)}
-          onShare={(item) => void handleShare(item)}
         />
       ) : (
         <ProfileDetails
@@ -319,8 +278,6 @@ export default function PublicProfilePage({ params }: { params: Promise<{ userId
           }}
         />
       )}
-
-      {notice && <div style={styles.toast}>{notice}</div>}
 
       <MobileNav />
     </div>
@@ -407,19 +364,5 @@ const styles = {
     fontWeight: 700,
     border: 'none',
     cursor: 'pointer',
-  },
-  toast: {
-    position: 'fixed' as const,
-    left: '50%',
-    bottom: '96px',
-    transform: 'translateX(-50%)',
-    zIndex: 110,
-    padding: '12px 20px',
-    borderRadius: '999px',
-    fontSize: '13px',
-    fontWeight: 600,
-    backgroundColor: '#D8B38A',
-    color: '#131017',
-    boxShadow: '0 10px 30px rgba(0,0,0,0.4)',
   },
 };

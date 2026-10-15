@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import InstallButton from '@/app/components/InstallButton';
+import FounderLetterLink from '@/app/components/FounderLetterLink';
 import Logo from '@/components/Logo';
 import LanguagePicker from '@/app/components/LanguagePicker';
 import { useLanguage } from '../context/LanguageContext';
@@ -77,7 +78,10 @@ export default function LandingPage() {
 
   const styles = {
     container: { minHeight: '100vh', backgroundColor: mr.page, color: mr.heading, fontFamily: 'system-ui', display: 'flex', flexDirection: 'column' as const },
-    topBar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '24px 30px', zIndex: 50 },
+    // `flexWrap` lets the header's right-hand group (language picker + letter
+    // pill) drop below the logo on a narrow phone instead of overflowing.
+    topBar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap' as const, rowGap: '12px', padding: '24px 30px', zIndex: 50 },
+    topBarActions: { display: 'flex', alignItems: 'center', gap: '10px' },
     logoWrapper: { display: 'flex', alignItems: 'center', gap: '12px' },
     logoText: { display: 'flex', flexDirection: 'column' as const, gap: '2px' },
     logoTitle: { fontSize: '16px', fontWeight: '800', color: mr.heading, letterSpacing: '4px', lineHeight: '1' },
@@ -105,12 +109,20 @@ export default function LandingPage() {
           </div>
         </div>
 
-        {/*
-          The global language picker. Choosing a language writes the preference
-          and re-renders every `useLanguage()` consumer, so the copy around it
-          changes immediately — it is not a decorative menu.
-        */}
-        <LanguagePicker />
+        <div style={styles.topBarActions}>
+          {/*
+            The global language picker. Choosing a language writes the preference
+            and re-renders every `useLanguage()` consumer, so the copy around it
+            changes immediately — it is not a decorative menu.
+          */}
+          <LanguagePicker />
+
+          {/*
+            The founder's Welcome Letter, reachable from the header. The footer
+            corner pill below points at the same `/letter` route.
+          */}
+          <FounderLetterLink variant="header" label="Letter" />
+        </div>
       </div>
 
       <div style={styles.main}>
@@ -159,6 +171,12 @@ export default function LandingPage() {
         <p>{t('footer_text')}</p>
         <p style={{ fontSize: '11px', marginTop: '8px', opacity: 0.7 }}>© 2026 Mettivo. All rights reserved.</p>
       </div>
+
+      {/*
+        The second entry point to the letter: a floating pill in the bottom-left
+        corner, so it stays visible wherever the visitor has scrolled to.
+      */}
+      <FounderLetterLink variant="corner" />
     </div>
   );
 }
