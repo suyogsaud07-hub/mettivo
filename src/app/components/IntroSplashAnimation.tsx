@@ -249,36 +249,47 @@ export default function IntroSplashAnimation({
     // the first paint is always "undecided".
     if (typeof window === 'undefined') return;
 
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      // Reveal immediately, and do NOT record it: a member who later turns
-      // reduced motion off should still get the intro once.
-      setIsVisible(false);
-      return;
-    }
+    // The decision is made inside a frame callback rather than synchronously in
+    // the effect body. `react-hooks/set-state-in-effect` rejects a direct
+    // `setState` here because it triggers a cascading render; deferring by one
+    // frame is imperceptible — the curtain is the first thing painted either
+    // way — and keeps the first client render (`null`, undecided) identical to
+    // the server's.
+    const decide = () => {
+      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        // Reveal immediately, and do NOT record it: a member who later turns
+        // reduced motion off should still get the intro once.
+        setIsVisible(false);
+        return;
+      }
 
-    let alreadyPlayed = false;
-    try {
-      alreadyPlayed = window.sessionStorage.getItem(SESSION_KEY) === '1';
-    } catch {
-      alreadyPlayed = false;
-    }
+      let alreadyPlayed = false;
+      try {
+        alreadyPlayed = window.sessionStorage.getItem(SESSION_KEY) === '1';
+      } catch {
+        alreadyPlayed = false;
+      }
 
-    if (alreadyPlayed && !forcePlay) {
-      setIsVisible(false);
-      return;
-    }
+      if (alreadyPlayed && !forcePlay) {
+        setIsVisible(false);
+        return;
+      }
 
-    setIsVisible(true);
+      setIsVisible(true);
 
-    // Scene cues as timers rather than an animation-complete chain, so the whole
-    // story is readable in one place and skipping can clear everything.
-    timers.current = [
-      window.setTimeout(() => setMorphed(true), T.morph * 1000),
-      window.setTimeout(() => setShowLockup(true), T.lockup * 1000),
-      window.setTimeout(() => finish(), T.end * 1000),
-    ];
+      // Scene cues as timers rather than an animation-complete chain, so the
+      // whole story is readable in one place and skipping can clear everything.
+      timers.current = [
+        window.setTimeout(() => setMorphed(true), T.morph * 1000),
+        window.setTimeout(() => setShowLockup(true), T.lockup * 1000),
+        window.setTimeout(() => finish(), T.end * 1000),
+      ];
+    };
+
+    const frame = window.requestAnimationFrame(decide);
 
     return () => {
+      window.cancelAnimationFrame(frame);
       timers.current.forEach(window.clearTimeout);
       timers.current = [];
     };
