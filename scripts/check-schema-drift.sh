@@ -184,6 +184,10 @@ RPC_SPECS=(
   "export_my_data|{}"
   "delete_my_account|{}"
   "is_moderator|{}"
+  # M15 revokes profiles.birth_date at the column level and exposes the caller's
+  # own value through this accessor. It creates no table or column, so without a
+  # probe here an unapplied privilege migration would be invisible to this check.
+  "my_birth_date|{}"
   "block_member|{\"p_target\":\"${RPC_ZERO}\"}"
   "unblock_member|{\"p_target\":\"${RPC_ZERO}\"}"
   "unmatch_member|{\"p_target\":\"${RPC_ZERO}\"}"
