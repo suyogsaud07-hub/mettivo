@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import InstallButton from '@/app/components/InstallButton';
+import Logo from '@/components/Logo';
 import { useLanguage } from '../context/LanguageContext';
 import { Language } from '@/lib/translations';
 import { supabase } from '@/lib/supabase';
@@ -16,10 +17,45 @@ import { supabase } from '@/lib/supabase';
  * straight out again — and it was one half of a redirect cycle with the auth
  * screen, which redirected an authenticated visitor back into the app.
  *
- * The session is now read for exactly one purpose: choosing the call to action.
  * There is NO automatic navigation here. A signed-in member can read the landing
- * page and decides for themselves whether to open their dashboard.
+ * page and decides for themselves what to open.
+ *
+ * THE CALL TO ACTION
+ *   The primary sandy-gold button is "Let's get started" and it ALWAYS points at
+ *   the signup/auth surface (`/signup`), for a signed-out visitor and for a
+ *   member with a live session alike. It deliberately does NOT send anyone
+ *   straight into onboarding or the dashboard:
+ *
+ *     - a brand-new visitor must meet the full signup/login surface first
+ *       (email, Google, Facebook, Twitter, Discord, phone) — see `AuthPanel`;
+ *     - a member who is half-onboarded must be able to sign out or keep a route
+ *       back to the public pages instead of being churned through `/profile`;
+ *     - the decision "dashboard or finish onboarding" belongs to exactly one
+ *       place, the gate at `/profile`, and only after an explicit choice.
+ *
+ *   A signed-in member therefore gets a SECOND, clearly-labelled link into the
+ *   app below the primary button. It is a deliberate click, never automatic, so
+ *   the landing page stays reachable and Back keeps working.
  */
+
+/**
+ * The one destination of the primary call to action.
+ *
+ * `/signup` renders the same `AuthPanel` as `/auth` (one component, both
+ * routes), so this is also the login surface: the panel opens in Sign Up mode
+ * with a Log In toggle. Pointing at `/signup` rather than bouncing to `/profile`
+ * is the fix — a new account meets the auth screen, not the onboarding wizard.
+ */
+const SIGNUP_HREF = '/signup';
+
+/**
+ * The signed-in member's explicit route into the app.
+ *
+ * `/profile` is the onboarding gate: it reads `onboarding_completed` and routes
+ * to `/profile/dashboard` or `/profile/edit`. Keeping the decision there means
+ * the landing page cannot drift from the gate.
+ */
+const DASHBOARD_HREF = '/profile';
 
 const LANGUAGES: { code: Language; name: string }[] = [
   { code: 'en', name: 'English' },
@@ -33,7 +69,10 @@ export default function LandingPage() {
   const { language, changeLanguage, t } = useLanguage();
   const [langMenuOpen, setLangMenuOpen] = useState(false);
   /**
-   * Whether a member has a live session. Only ever used to pick the CTA.
+   * Whether a member has a live session.
+   *
+   * Used for exactly one thing: whether to offer the secondary, explicit link
+   * into the app. It never changes where the primary CTA goes.
    *
    * Starts `false` so the server and first client render agree (the signed-out
    * state), and is corrected in an effect. Deciding this during render would be
@@ -73,13 +112,14 @@ export default function LandingPage() {
   }, []);
 
   /**
-   * Signed-in members go to the onboarding gate at `/profile`, which routes on
-   * `onboarding_completed` (finished -> /profile/dashboard, unfinished ->
-   * /profile/edit). Letting the gate decide keeps that decision in one place
-   * instead of duplicating the rule here, which is what drifted before.
+   * The primary CTA never changes target. It is the signup/auth surface for
+   * everyone, which is what makes "Let's get started" mean the same thing to a
+   * logged-out visitor and to a brand-new account that has not finished
+   * onboarding: both meet the full set of sign-in options rather than being
+   * pushed into an app they have not chosen to enter.
    */
-  const primaryHref = isSignedIn ? '/profile' : '/auth';
-  const primaryLabel = isSignedIn ? 'Go to Dashboard' : t('get_started');
+  const primaryHref = SIGNUP_HREF;
+  const primaryLabel = t('get_started');
 
   const styles = {
     container: { minHeight: '100vh', backgroundColor: '#0D0A10', color: '#F2E9E4', fontFamily: 'system-ui', display: 'flex', flexDirection: 'column' as const },
@@ -98,6 +138,11 @@ export default function LandingPage() {
     description: { fontSize: '15px', color: '#B58A83', maxWidth: '320px', marginBottom: '40px', lineHeight: '1.5' },
     buttonContainer: { width: '100%', maxWidth: '280px', display: 'flex', flexDirection: 'column' as const, gap: '12px' },
     primaryBtn: { backgroundColor: '#D4B18A', color: '#17121C', padding: '16px', borderRadius: '30px', fontSize: '16px', fontWeight: '700', border: 'none', cursor: 'pointer', textDecoration: 'none', display: 'block', textAlign: 'center' as const },
+    /**
+     * The signed-in member's way into the app. Outlined, not gold: the gold
+     * button belongs to "Let's get started" and only to it.
+     */
+    secondaryBtn: { backgroundColor: 'transparent', color: '#D4B18A', padding: '14px', borderRadius: '30px', fontSize: '14px', fontWeight: '600', border: '1px solid #4A1828', cursor: 'pointer', textDecoration: 'none', display: 'block', textAlign: 'center' as const },
     footer: { padding: '24px', textAlign: 'center' as const, fontSize: '13px', color: '#B58A83' }
   };
 
@@ -105,9 +150,7 @@ export default function LandingPage() {
     <div style={styles.container}>
       <div style={styles.topBar}>
         <div style={styles.logoWrapper}>
-          <svg viewBox="0 0 100 100" style={{ width: '36px', height: '36px', fill: 'none', stroke: '#D4B18A', strokeWidth: 9, strokeLinecap: 'round', strokeLinejoin: 'round' }}>
-            <path d="M 25,30 C 15,30 15,70 25,70 C 40,70 60,30 75,30 C 85,30 85,70 75,70 C 60,70 40,30 25,30 Z" />
-          </svg>
+          <Logo variant="mark" width={44} alt="" />
           <div style={styles.logoText}>
             <span style={styles.logoTitle}>METTIVO</span>
             <span style={styles.logoSubtitle}>YOUR NEXT CONNECTION</span>
@@ -136,6 +179,18 @@ export default function LandingPage() {
       </div>
 
       <div style={styles.main}>
+        {/*
+          The full brand lockup — mark, wordmark and tagline as one piece of
+          artwork — is the page's brand statement. It is a single component that
+          scales from a 220px phone to a full-width desktop, so there is no
+          breakpoint-specific markup to keep in sync.
+        */}
+        <Logo
+          variant="lockup"
+          width="min(78vw, 300px)"
+          alt="Mettivo — Your Next Connection"
+          style={{ marginBottom: '24px' }}
+        />
         <h1 style={styles.title}>
           {t('welcome')}
         </h1>
@@ -147,12 +202,31 @@ export default function LandingPage() {
         </p>
 
         <div style={styles.buttonContainer}>
-          {/* No automatic redirect: the member chooses. Signed in -> the
-              onboarding gate decides between dashboard and setup; signed out ->
-              the auth screen. */}
+          {/*
+            The primary CTA always opens the signup/auth surface. No automatic
+            redirect: a signed-out visitor and a half-onboarded member both get
+            the full choice of sign-in methods here.
+          */}
           <Link href={primaryHref} style={styles.primaryBtn} data-testid="landing-primary-cta">
             {primaryLabel}
           </Link>
+
+          {/*
+            Signed in: an explicit, clearly-labelled way into the app. This is
+            the ONLY route from this page to `/profile`, and it exists so a
+            member is never trapped on the landing page and never bounced off it
+            either. The gate at `/profile` then decides dashboard vs onboarding.
+          */}
+          {isSignedIn && (
+            <Link
+              href={DASHBOARD_HREF}
+              style={styles.secondaryBtn}
+              data-testid="landing-dashboard-link"
+            >
+              {t('go_to_dashboard')}
+            </Link>
+          )}
+
           <InstallButton />
         </div>
       </div>

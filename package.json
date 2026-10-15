@@ -17,6 +17,7 @@
     "test:e2e:install": "PLAYWRIGHT_BROWSERS_PATH=\"$PWD/.playwright-browsers\" playwright install chromium",
     "audit": "npm audit --omit=dev --audit-level=high",
     "build:apply-all": "./scripts/build-apply-all.sh",
+    "generate:icons": "node scripts/generate-icons.mjs",
     "verify": "npm run typecheck && npm run lint && npm run test && npm run audit && npm run build"
   },
   "dependencies": {

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { OAuthProviderIcon } from '@/app/components/OAuthIcons';
+import Logo from '@/components/Logo';
 import {
   OAUTH_PROVIDER_BRANDS,
   OAUTH_PROVIDER_IDS,
@@ -697,21 +698,9 @@ export default function AuthPanel() {
   return (
     <div style={styles.page} data-testid="auth-panel">
       <div style={styles.logo}>
-        <svg
-          viewBox="0 0 100 100"
-          aria-hidden="true"
-          style={{
-            width: '48px',
-            height: '48px',
-            fill: 'none',
-            stroke: mr.gold,
-            strokeWidth: 9,
-            strokeLinecap: 'round',
-            strokeLinejoin: 'round',
-          }}
-        >
-          <path d="M 25,30 C 15,30 15,70 25,70 C 40,70 60,30 75,30 C 85,30 85,70 75,70 C 60,70 40,30 25,30 Z" />
-        </svg>
+        {/* The brand mark. Decorative here: the heading immediately below is the
+            accessible name for this screen. */}
+        <Logo variant="mark" width={56} alt="" />
       </div>
 
       <h1 style={styles.heading}>{isSignup ? 'Create account' : 'Welcome back'}</h1>

@@ -19,20 +19,49 @@ import { E2E_EMAIL, signedIn, stubSupabase } from './fixtures';
  */
 
 test.describe('§3.3 — the landing page never redirects', () => {
-  test('a signed-out visitor stays on / and gets the Get Started CTA', async ({ page }) => {
+  test('a signed-out visitor stays on / and gets the "Let\'s get started" CTA', async ({ page }) => {
     await stubSupabase(page, { user: null });
 
     await page.goto('/');
     await expect(page.getByTestId('landing-primary-cta')).toBeVisible();
-    await expect(page.getByTestId('landing-primary-cta')).toHaveAttribute('href', '/auth');
-    await expect(page.getByTestId('landing-primary-cta')).toHaveText(/get started/i);
+    // The primary CTA is the signup surface — never the app, never onboarding.
+    await expect(page.getByTestId('landing-primary-cta')).toHaveAttribute('href', '/signup');
+    await expect(page.getByTestId('landing-primary-cta')).toHaveText(/let'?s get started/i);
+    // Nobody is signed in, so there is no route into the app from here.
+    await expect(page.getByTestId('landing-dashboard-link')).toHaveCount(0);
 
     // Stay put: give any redirect a chance to fire.
     await page.waitForTimeout(1200);
     expect(new URL(page.url()).pathname).toBe('/');
   });
 
-  test('a signed-in member stays on / and gets a Dashboard CTA', async ({ page }) => {
+  test('the CTA opens every signup/login method on an explicit click', async ({ page }) => {
+    await stubSupabase(page, { user: null });
+
+    await page.goto('/');
+    await page.getByTestId('landing-primary-cta').click();
+
+    // The auth surface, with the full method list: email, phone and the four
+    // social providers. A new visitor must meet this screen, not onboarding.
+    await expect.poll(() => new URL(page.url()).pathname).toBe('/signup');
+    await expect(page.getByTestId('auth-panel')).toBeVisible();
+    await expect(page.getByLabel('Email')).toBeVisible();
+    await expect(page.getByRole('button', { name: /sign up with email/i })).toBeVisible();
+    await expect(page.getByRole('button', { name: /sign up with phone/i })).toBeVisible();
+    for (const provider of ['Google', 'Facebook', 'Twitter', 'Discord']) {
+      await expect(
+        page.getByRole('button', { name: new RegExp(`sign up with ${provider}`, 'i') })
+      ).toBeVisible();
+    }
+
+    // No bounce onward: the member is on the auth surface until they choose.
+    await page.waitForTimeout(1200);
+    expect(new URL(page.url()).pathname).toBe('/signup');
+  });
+
+  test('a signed-in member stays on /, keeps the signup CTA and gains a deliberate way in', async ({
+    page,
+  }) => {
     await signedIn(page);
     await stubSupabase(page, {
       tables: {
@@ -44,14 +73,39 @@ test.describe('§3.3 — the landing page never redirects', () => {
 
     // The landing page is REACHABLE while signed in — no bounce to /discover.
     await expect(page.getByTestId('landing-primary-cta')).toBeVisible();
-    await expect(page.getByTestId('landing-primary-cta')).toHaveText(/dashboard/i);
-    await expect(page.getByTestId('landing-primary-cta')).toHaveAttribute('href', '/profile');
+    // The primary CTA is unchanged for a member: it still opens the auth
+    // surface (where the session choice and sign-out live), not the dashboard.
+    await expect(page.getByTestId('landing-primary-cta')).toHaveText(/let'?s get started/i);
+    await expect(page.getByTestId('landing-primary-cta')).toHaveAttribute('href', '/signup');
+
+    // The route into the app exists, but it is a separate, explicit link.
+    await expect(page.getByTestId('landing-dashboard-link')).toBeVisible();
+    await expect(page.getByTestId('landing-dashboard-link')).toHaveAttribute('href', '/profile');
 
     await page.waitForTimeout(1200);
     expect(new URL(page.url()).pathname).toBe('/');
   });
 
-  test('the signed-in CTA opens the app on an explicit click', async ({ page }) => {
+  test('clicking the primary CTA while signed in offers the session choice, not a bounce', async ({
+    page,
+  }) => {
+    await signedIn(page);
+    await stubSupabase(page, { user: null });
+
+    await page.goto('/');
+    await page.getByTestId('landing-primary-cta').click();
+
+    // The auth surface renders, and because a session exists it asks first.
+    await expect.poll(() => new URL(page.url()).pathname).toBe('/signup');
+    await expect(page.getByTestId('session-choice')).toBeVisible();
+    await expect(page.getByTestId('sign-out-here')).toBeVisible();
+
+    // Nothing navigates on its own.
+    await page.waitForTimeout(1500);
+    expect(new URL(page.url()).pathname).toBe('/signup');
+  });
+
+  test('the explicit dashboard link opens the app', async ({ page }) => {
     await signedIn(page);
     await stubSupabase(page, {
       tables: {
@@ -60,8 +114,8 @@ test.describe('§3.3 — the landing page never redirects', () => {
     });
 
     await page.goto('/');
-    await expect(page.getByTestId('landing-primary-cta')).toHaveText(/dashboard/i);
-    await page.getByTestId('landing-primary-cta').click();
+    await expect(page.getByTestId('landing-dashboard-link')).toBeVisible();
+    await page.getByTestId('landing-dashboard-link').click();
 
     // `/profile` is the onboarding gate; an onboarded member lands on the
     // dashboard. Explicit click only — this never happens on its own.
@@ -77,7 +131,7 @@ test.describe('§3.3 — the landing page never redirects', () => {
     });
 
     await page.goto('/');
-    await page.getByTestId('landing-primary-cta').click();
+    await page.getByTestId('landing-dashboard-link').click();
     await expect.poll(() => new URL(page.url()).pathname).toBe('/profile/dashboard');
 
     await page.goBack();
@@ -87,6 +141,44 @@ test.describe('§3.3 — the landing page never redirects', () => {
     await expect.poll(() => new URL(page.url()).pathname).toBe('/');
     await page.waitForTimeout(1200);
     expect(new URL(page.url()).pathname).toBe('/');
+  });
+});
+
+test.describe('§3.3 — an unfinished profile is never trapped in onboarding', () => {
+  test('the wizard links back to the landing page, and it stays there', async ({ page }) => {
+    await signedIn(page);
+    await stubSupabase(page, {
+      // The state that used to be a holding cell: signed in, not onboarded.
+      tables: { profiles: { onboarding_completed: false } },
+    });
+
+    await page.goto('/profile/edit');
+    await expect(page.getByText("Let's start with the basics")).toBeVisible();
+
+    await page.getByTestId('back-to-landing').click();
+
+    await expect.poll(() => new URL(page.url()).pathname).toBe('/');
+    await expect(page.getByTestId('landing-primary-cta')).toBeVisible();
+    // Public page, public behaviour: no bounce back into onboarding.
+    await page.waitForTimeout(1200);
+    expect(new URL(page.url()).pathname).toBe('/');
+  });
+
+  test('the wizard can sign the member out, and they land signed out', async ({ page }) => {
+    await signedIn(page);
+    await stubSupabase(page, {
+      tables: { profiles: { onboarding_completed: false } },
+    });
+
+    await page.goto('/profile/edit');
+    await expect(page.getByText("Let's start with the basics")).toBeVisible();
+
+    await page.getByTestId('wizard-sign-out').click();
+
+    await expect.poll(() => new URL(page.url()).pathname).toBe('/');
+    // The session is gone, so this is the signed-out landing page.
+    await expect(page.getByTestId('landing-dashboard-link')).toHaveCount(0);
+    await expect(page.getByTestId('landing-primary-cta')).toHaveAttribute('href', '/signup');
   });
 });
 

@@ -49,6 +49,7 @@ src/
       layout/               MobileNav (used), Header + AppShell (unused)
       InstallButton.tsx     PWA install (native prompt + iOS fallback)
       ServiceWorkerRegistrar.tsx
+  components/Logo.tsx         The brand mark + full lockup (see §7)
   context/LanguageContext.tsx   useSyncExternalStore-backed i18n
   lib/
     supabase.ts             Browser client (module-level env assertion)
@@ -66,7 +67,7 @@ docs/                       This documentation
 
 | Route | Type | Auth required |
 | --- | --- | --- |
-| `/` | static | no (redirects if signed in) |
+| `/` | static | no — public for everyone, never auto-redirects; its primary CTA opens `/signup` |
 | `/auth`, `/signup` | static | no |
 | `/auth/callback` | **dynamic** (route handler) | no |
 | `/discover`, `/discover/mettivo_live` | static shell, client-fetched | yes |
@@ -219,5 +220,38 @@ These are recorded so no future change assumes they are solved.
   level (`20261015260000_m15_revoke_birth_date.sql`). Note the naively obvious
   `revoke select (birth_date)` is a **no-op** while a table-wide grant exists; see
   `RISK_REGISTER.md` `R-04`.
-- ~~No tests, no CI, no deployment procedure~~ — 274 tests across 18 suites,
-  20 browser journeys, a five-step CI gate, and `docs/DEPLOYMENT.md`.
+- ~~No tests, no CI, no deployment procedure~~ — 339 tests across 20 suites,
+  66 browser journeys, a five-step CI gate, and `docs/DEPLOYMENT.md`.
+
+## 7. Brand assets
+
+The logo exists in exactly one React implementation and a small set of derived
+binaries. Nothing draws the mark inline except `/offline`, which is deliberate.
+
+| Artefact | Role |
+| --- | --- |
+| `src/components/Logo.tsx` | The single source of truth in the app. `variant="mark"` for navigation and tight spaces; `variant="lockup"` for the landing hero and any brand statement. |
+| `public/logo-mark.svg` | The standalone mark, for anything outside the app (integration assets). Generated icons rasterise from it. |
+| `public/icons/*.png` | Manifest icons, the Apple touch icon and the notification badge. |
+| `src/app/favicon.ico` | Multi-resolution (16/32/48) tab icon, served by Next from the app directory. |
+
+```bash
+npm run generate:icons    # re-rasterise every icon from public/logo-mark.svg
+```
+
+Two traps this generator exists to avoid, both of which cost a debugging cycle
+the first time:
+
+1. **The favicon must be RGBA.** Next's `.ico` decoder rejects an RGB PNG with
+   *"The PNG is not in RGBA format"* and turns every route into a 500 at build
+   time. The favicon bitmaps are therefore rasterised with `omitBackground`
+   (transparent), while the app icons keep the opaque brand background.
+2. **A nested `<svg>` inside the lockup is subject to `preserveAspectRatio`.**
+   When the nested viewport did not fit its parent frame, the browser scaled the
+   mark down while the sibling `<text>` elements stayed put — the artwork
+   silently overlapped the wordmark. The lockup places the mark with an explicit
+   `<g transform>` instead, which has no fitting behaviour.
+
+`/offline` inlines the mark rather than importing the component, because that
+page is precached and must render with no network and no extra chunk fetch. It
+is the one intentional copy; both move together when the brand changes.

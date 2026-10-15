@@ -3,6 +3,7 @@
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
+import Logo from '@/components/Logo';
 
 /**
  * Entry point for `/profile`.
@@ -103,22 +104,7 @@ export default function ProfileEntryPage() {
         gap: '20px',
       }}
     >
-      <svg
-        viewBox="0 0 100 100"
-        aria-hidden="true"
-        style={{
-          width: '48px',
-          height: '48px',
-          fill: 'none',
-          stroke: '#D4B18A',
-          strokeWidth: 8,
-          strokeLinecap: 'round',
-          strokeLinejoin: 'round',
-          opacity: 0.9,
-        }}
-      >
-        <path d="M 25,30 C 15,30 15,70 25,70 C 40,70 60,30 75,30 C 85,30 85,70 75,70 C 60,70 40,30 25,30 Z" />
-      </svg>
+      <Logo variant="mark" width={64} alt="" />
       <span
         style={{
           fontSize: '12px',

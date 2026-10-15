@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import {
@@ -123,6 +124,15 @@ export default function EditProfileWizardPage() {
   const [currentStep, setCurrentStep] = useState(1);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  /**
+   * True while the explicit sign-out below is in flight.
+   *
+   * The wizard is where an authenticated member with an incomplete profile is
+   * held, so it must offer a way OUT — both back to the public landing page and
+   * out of the account entirely. Without this, "finish onboarding" was the only
+   * screen such a member could reach.
+   */
+  const [signingOut, setSigningOut] = useState(false);
   const [userId, setUserId] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
 
@@ -462,6 +472,34 @@ export default function EditProfileWizardPage() {
     }
   };
 
+  /**
+   * Sign out from the wizard itself.
+   *
+   * The counterpart to the "Back to landing page" link: a member who does not
+   * want to finish onboarding right now is not stuck here. `scope: 'local'`
+   * clears this browser's session only, which is the right default — the other
+   * devices the member is signed in on are untouched. The landing page is a
+   * deliberate destination afterwards (it never auto-redirects), so the member
+   * can immediately start over with a different account.
+   */
+  const handleSignOut = async (): Promise<void> => {
+    setSigningOut(true);
+    setError(null);
+    try {
+      const { error: signOutError } = await supabase.auth.signOut({ scope: 'local' });
+      if (signOutError) throw signOutError;
+      router.replace('/');
+    } catch (err) {
+      console.error('[onboarding] sign-out failed:', err);
+      setError(
+        err instanceof Error ? err.message : 'Could not sign you out. Please try again.'
+      );
+    } finally {
+      // CONSTITUTION Article 2.8: a loading state must always terminate.
+      setSigningOut(false);
+    }
+  };
+
   if (loading) {
     return (
       <div style={{ minHeight: '100vh', backgroundColor: '#0D0A10', display: 'flex', justifyContent: 'center', alignItems: 'center', color: '#D4B18A' }}>
@@ -504,6 +542,10 @@ export default function EditProfileWizardPage() {
     errorBox: { backgroundColor: '#3B1220', border: '1px solid #7F1D2E', color: '#FCA5B5', padding: '12px 16px', borderRadius: '12px', fontSize: '13px' },
     recommendedBox: { backgroundColor: '#1C1822', border: '1px dashed #4A1828', color: '#B58A83', padding: '10px 14px', borderRadius: '12px', fontSize: '12px', marginTop: '8px' },
     summaryRow: { display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #29202D', padding: '10px 0', fontSize: '13px' },
+    /** Escape hatch: the wizard is a holding screen, never a trap. */
+    escapeRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', marginTop: '16px' },
+    escapeLink: { color: '#B58A83', fontSize: '13px', textDecoration: 'underline' },
+    escapeButton: { background: 'none', border: '1px solid #4A1828', borderRadius: '20px', padding: '8px 16px', color: '#D4B18A', fontSize: '13px', fontWeight: 600, cursor: 'pointer' },
   };
 
   return (
@@ -1071,6 +1113,27 @@ export default function EditProfileWizardPage() {
             {saving ? 'Saving Profile...' : 'Complete & Launch 🚀'}
           </button>
         )}
+      </div>
+
+      {/*
+        The escape hatch. Onboarding is a holding screen for a member with an
+        incomplete profile, and holding screens must never be traps: the public
+        landing page stays one click away, and so does leaving the account. Both
+        are explicit choices — neither navigates on its own.
+      */}
+      <div style={styles.escapeRow}>
+        <Link href="/" style={styles.escapeLink} data-testid="back-to-landing">
+          ← Back to landing page
+        </Link>
+        <button
+          type="button"
+          style={{ ...styles.escapeButton, opacity: signingOut ? 0.6 : 1 }}
+          onClick={() => void handleSignOut()}
+          disabled={signingOut || saving}
+          data-testid="wizard-sign-out"
+        >
+          {signingOut ? 'Signing out…' : 'Sign out'}
+        </button>
       </div>
     </div>
   );

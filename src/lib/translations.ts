@@ -13,7 +13,10 @@ export const translations = {
     welcome: 'Mettivo',
     subtitle: 'Meet your kind of people.',
     description: 'An intimate space to find meaningful connections wrapped in luxury.',
-    get_started: 'Get started →',
+    // The primary landing CTA. It always opens `/signup`; see `src/app/page.tsx`.
+    get_started: 'Let\'s get started',
+    // The secondary link a signed-in member sees below it.
+    go_to_dashboard: 'Go to your dashboard',
     get_app: 'Get the app',
     footer_text: 'Someone on Mettivo might give you butterflies.',
     // Settings
@@ -36,7 +39,8 @@ export const translations = {
     welcome: 'मेटिभो',
     subtitle: 'तपाईंको प्रकारका मानिसहरूलाई भेट्नुहोस्।',
     description: 'विलासितामा लिप्त अर्थपूर्ण जडानहरू फेला पार्ने एक घनिष्ठ स्थान।',
-    get_started: 'सुरु गर्नुहोस् →',
+    get_started: 'सुरु गरौं',
+    go_to_dashboard: 'तपाईंको ड्यासबोर्डमा जानुहोस्',
     get_app: 'एप प्राप्त गर्नुहोस्',
     footer_text: 'मेटिभोमा कसैले तपाईंलाई पुतली दिन सक्छ।',
     // Settings
@@ -58,7 +62,8 @@ export const translations = {
     welcome: 'Mettivo',
     subtitle: 'Conoce a tu tipo de gente.',
     description: 'Un espacio íntimo para encontrar conexiones significativas envueltas en lujo.',
-    get_started: 'Empezar →',
+    get_started: 'Empecemos',
+    go_to_dashboard: 'Ir a tu panel',
     get_app: 'Obtener la aplicación',
     footer_text: 'Alguien en Mettivo podría darte mariposas.',
     // Settings
@@ -80,7 +85,8 @@ export const translations = {
     welcome: 'मेट्टिवो',
     subtitle: 'अपने जैसे लोगों से मिलें।',
     description: 'विलासिता में लिपटे सार्थक संबंध खोजने के लिए एक अंतरंग स्थान।',
-    get_started: 'शुरू करें →',
+    get_started: 'चलिए शुरू करें',
+    go_to_dashboard: 'अपने डैशबोर्ड पर जाएं',
     get_app: 'ऐप प्राप्त करें',
     footer_text: 'मेट्टिवो पर कोई आपको तितलियाँ दे सकता है।',
     // Settings
@@ -102,7 +108,8 @@ export const translations = {
     welcome: 'Mettivo',
     subtitle: 'Rencontrez votre genre de personnes.',
     description: 'Un espace intime pour trouver des connexions significatives enveloppées de luxe.',
-    get_started: 'Commencer →',
+    get_started: 'Commençons',
+    go_to_dashboard: 'Aller à votre tableau de bord',
     get_app: 'Obtenir l\'application',
     footer_text: 'Quelqu\'un sur Mettivo pourrait vous donner des papillons.',
     // Settings
