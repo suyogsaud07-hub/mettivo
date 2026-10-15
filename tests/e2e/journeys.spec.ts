@@ -29,22 +29,72 @@ test.describe('§3.3 — the 18+ gate', () => {
   });
 
   test('refuses a forced click that bypasses the pointer-events guard', async ({ page }) => {
-    // A determined visitor can always dispatch a click. The handler must still
-    // refuse, so the gate is not merely cosmetic.
-    const dialogPromise = page.waitForEvent('dialog');
-
-    // Deliberately NOT awaited: the handler calls `alert()`, which blocks the
-    // renderer, so awaiting the dispatch would deadlock against the dialog that
-    // is waiting to be dismissed.
-    void page
+    // A determined visitor can always dispatch a click, so the handler must
+    // refuse too — the gate is not merely cosmetic.
+    //
+    // `dispatchEvent` rather than `click({ force: true })`: forcing only skips
+    // Playwright's actionability checks, the event is still hit-tested by the
+    // browser and `pointer-events: none` on the container swallows it. This
+    // dispatches straight onto the element, which is the actual bypass.
+    await page
       .getByRole('button', { name: /Sign up with Google|Log in with Google/ })
       .dispatchEvent('click');
 
-    const dialog = await dialogPromise;
-    expect(dialog.message()).toMatch(/18 or older/i);
-    await dialog.dismiss();
+    // The refusal is now an inline message rather than a browser `alert()`.
+    await expect(page.getByTestId('auth-error')).toHaveText(/18 or older/i);
 
     // Still on the sign-in screen: no session was attempted.
+    expect(new URL(page.url()).pathname).toBe('/auth');
+  });
+
+  test('renders an inline email form instead of a browser prompt', async ({ page }) => {
+    // The email flow used `prompt()` and `alert()`; both are gone. The fields
+    // sit directly below the Sign Up / Log In toggle.
+    await expect(page.getByLabel('Email')).toBeVisible();
+    await expect(page.getByLabel('Password')).toBeVisible();
+    await expect(page.getByRole('button', { name: /sign up with email/i })).toBeVisible();
+
+    // …and above the Google button it replaces.
+    const emailTop = (await page.getByLabel('Email').boundingBox())?.y ?? 0;
+    const googleTop =
+      (await page.getByRole('button', { name: /Sign up with Google/ }).boundingBox())?.y ?? 0;
+    expect(emailTop).toBeLessThan(googleTop);
+
+    const toggleTop = (await page.getByRole('button', { name: 'Sign Up', exact: true }).boundingBox())?.y ?? 0;
+    expect(toggleTop).toBeLessThan(emailTop);
+  });
+
+  test('validates the inline email form without a dialog', async ({ page }) => {
+    let dialogOpened = false;
+    page.on('dialog', (dialog) => {
+      dialogOpened = true;
+      void dialog.dismiss();
+    });
+
+    const submit = page.getByRole('button', { name: /sign up with email/i });
+
+    // Age not confirmed.
+    await page.getByLabel('Email').fill('sujata@example.com');
+    await page.getByLabel('Password').fill('correct-horse');
+    await submit.click();
+    await expect(page.getByTestId('auth-error')).toHaveText(/18 or older/i);
+
+    // Confirm age, then an invalid address.
+    await page.getByText('I confirm I am 18 years or older').click();
+    await page.getByLabel('Email').fill('not-an-email');
+    await submit.click();
+    await expect(page.getByTestId('auth-error')).toHaveText(/email address/i);
+
+    // Then a too-short password.
+    await page.getByLabel('Email').fill('sujata@example.com');
+    await page.getByLabel('Password').fill('short');
+    await submit.click();
+    await expect(page.getByTestId('auth-error')).toHaveText(/at least 6 characters/i);
+
+    // Nothing was ever a browser dialog.
+    expect(dialogOpened, 'the email flow must not open a browser dialog').toBe(false);
+
+    // And nothing was submitted: no auth request left the page.
     expect(new URL(page.url()).pathname).toBe('/auth');
   });
 

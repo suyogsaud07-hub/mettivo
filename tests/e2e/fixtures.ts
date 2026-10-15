@@ -39,13 +39,29 @@ const session = {
 /**
  * Seeds a signed-in session before any script runs.
  *
- * supabase-js derives its storage key from the project ref, which for
+ * Cookies, NOT localStorage: the browser client is `createBrowserClient` from
+ * `@supabase/ssr`, which stores the session in cookies so that it shares one
+ * session with `/auth/callback` and the refresh middleware. Seeding
+ * localStorage would leave every guard seeing "no user" — the exact failure
+ * this suite exists to catch.
+ *
+ * The value format is the library's own: `base64-` + base64url(JSON).
+ * supabase-js derives the key from the project ref, which for
  * `https://e2e.invalid.supabase.co` is `e2e`.
  */
 export async function signedIn(page: Page): Promise<void> {
-  await page.addInitScript((value) => {
-    window.localStorage.setItem('sb-e2e-auth-token', JSON.stringify(value));
-  }, session);
+  const value = `base64-${Buffer.from(JSON.stringify(session)).toString('base64url')}`;
+
+  await page.context().addCookies([
+    {
+      // Playwright wants either `url` or `domain` + `path` — not both.
+      name: 'sb-e2e-auth-token',
+      value,
+      url: 'http://localhost:3100',
+      httpOnly: false,
+      sameSite: 'Lax',
+    },
+  ]);
 }
 
 export interface RecordedWrite {
