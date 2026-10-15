@@ -3,7 +3,7 @@
 > **Current state (M18 + launch checklist).** Every layer of the pyramid exists
 > and runs in CI.
 >
-> `npm test` — **339 tests in ~12 seconds**, no external services, no secrets:
+> `npm test` — **355 tests in ~12 seconds**, no external services, no secrets:
 >
 > | Suite | Tests | Covers |
 > | --- | --- | --- |
@@ -16,6 +16,7 @@
 > | `src/app/api/observability/route.test.ts` | 7 | R-08: ingestion, re-redaction, size cap, malformed input |
 > | `src/lib/translation.test.ts` | 13 | language-code normalisation/validation; picker options mirror the DB check constraint |
 > | `src/lib/translation-service.test.ts` | 24 | the translation chain offline: DeepL success/quota, fallback to MyMemory on any DeepL failure, no-key path, both-fail keeps the last error, empty/quota responses, pre-flight rejects, multi-byte chunking |
+> | `src/lib/locales.test.ts` | 16 | the language catalogue: one option per code, English + endonym resolved, search by English name / native name / alias, and the invariant that every offered language has strings for every key |
 > | `tests/database/migrations.test.ts` | 53 | every migration: RLS, matching, notifications, moments, games (incl. the M16 catalogue), moderation, erasure, onboarding-wizard columns |
 > | `tests/database/schema.test.ts` | 8 | M4: RLS coverage, primary keys, FK targets, FK indexes, erasure-safe FKs, no `uuid-ossp` |
 > | `tests/database/blocking.test.ts` | 10 | M12: symmetric blocks, like/message refusal, discovery exclusion, unmatch |
@@ -28,7 +29,7 @@
 > | `tests/integration/data-access.test.ts` | 33 | §3.2: every data-access module's error branches surface a message |
 > | `tests/security/security.test.ts` | 26 | M17: anonymous bypass, privilege escalation, `SECURITY DEFINER` hardening, secrets hygiene, public-surface hygiene, column-level `birth_date` denial |
 >
-> `npm run test:e2e` — **62 Chromium journeys in ~20 seconds** (§3.3). The app
+> `npm run test:e2e` — **72 Chromium journeys in ~45 seconds** (§3.3). The app
 > under test points at `e2e.invalid` and every Supabase call is intercepted, so
 > they need no secrets and cannot touch real data.
 >
