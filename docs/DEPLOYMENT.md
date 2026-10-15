@@ -6,6 +6,109 @@
 
 ---
 
+## Quick start — a live link friends can install, for $0
+
+Total cost: **$0**. Vercel Hobby + Supabase Free. No app stores, no paid tiers,
+no credit card.
+
+| # | Step | Where | Time |
+| --- | --- | --- | --- |
+| 1 | Database is migrated and verified | Supabase SQL Editor | if not done: §3 |
+| 2 | Import the repo and deploy | vercel.com → Add New → Project | ~3 min |
+| 3 | Set `NEXT_PUBLIC_SUPABASE_URL` + `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Vercel → Settings → Environment Variables | ~1 min |
+| 4 | **Allow the deployment URL in Supabase Auth** | Supabase → Authentication → URL Configuration | ~2 min |
+| 5 | Redeploy so the new variables take effect | Vercel → Deployments → Redeploy | ~2 min |
+| 6 | Smoke test, then share | browser | ~2 min |
+
+### 1. Deploy to Vercel
+
+1. Push this repository to GitHub (already the case if you are reading this from CI).
+2. <https://vercel.com/new> → **Import Git Repository** → pick the repo.
+3. Framework preset is detected as **Next.js**. Leave Build Command, Output
+   Directory and Install Command at their defaults.
+4. **Before** pressing Deploy, expand *Environment Variables* and add both:
+
+   | Name | Value |
+   | --- | --- |
+   | `NEXT_PUBLIC_SUPABASE_URL` | `https://<ref>.supabase.co` |
+   | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | the `anon` / `public` key |
+
+   Tick **Production, Preview and Development** for both. (Or skip this and set
+   them in Settings afterwards — then you must redeploy, because
+   `NEXT_PUBLIC_*` values are baked in at build time.)
+5. Deploy. You get `https://<project>.vercel.app`.
+
+> Do **not** add a `service_role` key. It bypasses RLS, and RLS is the entire
+> authorisation model. See `CONSTITUTION.md` Article 1.5.
+
+### 2. Allow the URL in Supabase Auth — the step that is always forgotten
+
+Without this, every sign-up link fails with `redirect_uri_mismatch` and it looks
+like a broken app rather than a configuration gap.
+
+Supabase dashboard → **Authentication** → **URL Configuration**:
+
+| Field | Value |
+| --- | --- |
+| **Site URL** | `https://<project>.vercel.app` |
+| **Redirect URLs** | `https://<project>.vercel.app/auth/callback` |
+| | `https://<project>-*.vercel.app/auth/callback` (preview deploys) |
+| | `http://localhost:3000/auth/callback` (local development) |
+
+The app builds its callback as `${window.location.origin}/auth/callback`, so the
+host must match exactly — including `https` and no trailing slash.
+
+OAuth providers (Google / Facebook / X) also need their own console configured
+with that callback URL. **Email OTP works with no third-party setup at all** and
+is the fastest path for friends to test.
+
+### 3. Smoke test before you share
+
+```bash
+curl -s https://<project>.vercel.app/api/health
+# -> {"status":"ok","checks":{"environment":{"configured":true,...}}}
+```
+
+| Check | Expected |
+| --- | --- |
+| `/api/health` | `200`, `status: "ok"` |
+| `/auth` → email OTP | you receive the mail |
+| `/profile/edit` | the wizard opens and saves |
+| `/discover` | opens after onboarding |
+| Browser install prompt | Chrome/Edge show the install icon in the address bar |
+| iOS Safari → Share | "Add to Home Screen" appears |
+
+### 4. What to send your friends
+
+> **Mettivo** — install it like an app: <https://<project>.vercel.app>
+
+| Platform | How to install |
+| --- | --- |
+| **Android (Chrome)** | An **Install app** banner appears, or ⋮ menu → *Add to Home screen* |
+| **iOS / iPadOS (Safari)** | **Share** → **Add to Home Screen**. Must be Safari; Chrome on iOS cannot install PWAs. |
+| **macOS (Chrome / Edge)** | Install icon in the address bar |
+| **Windows (Chrome / Edge)** | Install icon in the address bar |
+| Desktop Safari / Firefox | No install prompt; the site works normally in a tab |
+
+The landing page carries an install button that detects the platform and shows
+the right instruction (including the iOS Share path, where no prompt exists).
+
+### 5. Free-tier limits you should actually know
+
+| Limit | Reality | Mitigation |
+| --- | --- | --- |
+| **Supabase pauses a Free project after 7 days of low activity** ([docs](https://supabase.com/docs/guides/platform/free-project-pausing)) | Friends hitting a paused link see an error, not the app | "A few user requests to the database each day" prevents it — so simply using the shared link with a friend or two each week is enough. Resume is one click in the dashboard, data intact, within a 1-year window. |
+| **Vercel Hobby is for personal, non-commercial use** ([plan](https://vercel.com/docs/plans/hobby)) | Fine for sharing with friends to test; a commercial launch needs a paid plan | Revisit before charging money |
+| 100 GB/month bandwidth (Hobby) | Far above what a test group will use | — |
+| 500 MB database (Supabase Free) | Ample for testing; photos are stored inline, so monitor `profiles.photos` | Move media to Supabase Storage if it grows |
+
+No cron keep-alive is shipped on purpose: a scheduled ping would need a key in
+CI to touch the database, and an unauthenticated ping cannot generate the
+"user database activity" that resets the pause timer. Using the app is the
+honest mechanism.
+
+---
+
 ## 0. The one thing to understand first
 
 Mettivo has **no application server**. The browser talks directly to Supabase.

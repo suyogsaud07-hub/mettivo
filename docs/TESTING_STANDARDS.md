@@ -26,7 +26,7 @@
 > | `tests/integration/data-access.test.ts` | 33 | §3.2: every data-access module's error branches surface a message |
 > | `tests/security/security.test.ts` | 20 | M17: anonymous bypass, privilege escalation, `SECURITY DEFINER` hardening, secrets hygiene, public-surface hygiene |
 >
-> `npm run test:e2e` — **11 Chromium journeys in ~4 seconds** (§3.3). The app
+> `npm run test:e2e` — **17 Chromium journeys in ~6 seconds** (§3.3). The app
 > under test points at `e2e.invalid` and every Supabase call is intercepted, so
 > they need no secrets and cannot touch real data.
 >
@@ -136,7 +136,7 @@ and pinned by a test.
 
 ### 3.3 End-to-end — Playwright (Chromium)
 
-**Implemented** — `tests/e2e/`, 11 journeys, `npm run test:e2e`.
+**Implemented** — `tests/e2e/`, 17 journeys, `npm run test:e2e`.
 
 ```bash
 npm run test:e2e:install   # once: downloads Chromium into .playwright-browsers/
@@ -172,6 +172,11 @@ If an interception is ever missed, the request fails harmlessly against
 | Offline fallback, legal pages | public surfaces |
 | `/api/health` returns `ok` | M18 configuration probe |
 | Manifest + `no-store` service worker | `R-10` |
+| Manifest meets the install criteria | zero-cost distribution: name, `start_url`, `display: standalone`, 192 + 512 icons, maskable |
+| Every icon exists at the size it claims | PNG dimensions are **decoded from the bytes**, because a mislabelled icon is the most common reason no install prompt appears |
+| Manifest, theme colour and iOS touch icon are linked | `apple-mobile-web-app-capable` + `apple-touch-icon` are what make iOS "Add to Home Screen" produce a standalone app |
+| A service worker registers and takes control | `NEXT_PUBLIC_ENABLE_SW=true` in the E2E web server, since `next dev` disables it by default |
+| The offline page and manifest are precached | offline support is a claim until the cache is inspected |
 
 The full browser signup → chat → reload journey in the original plan needs a
 real backend to create an account and persist a message; it is deliberately not

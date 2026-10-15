@@ -48,6 +48,10 @@ export default defineConfig({
       // Reserved TLD: guaranteed not to resolve to a real backend.
       NEXT_PUBLIC_SUPABASE_URL: 'https://e2e.invalid.supabase.co',
       NEXT_PUBLIC_SUPABASE_ANON_KEY: 'e2e-anon-key-not-a-real-secret-xxxxxxxxxxxxxxxxxxxx',
+      // The service worker is off in `next dev` by default (a caching worker
+      // serves stale chunks over HMR). Enabling it here is the only way to
+      // assert real PWA installability in a browser.
+      NEXT_PUBLIC_ENABLE_SW: 'true',
     },
   },
 });
