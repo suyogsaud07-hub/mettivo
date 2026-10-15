@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
@@ -13,13 +13,23 @@ import {
 } from '@/lib/locales';
 import {
   PrivacyError,
-  deleteMyAccount,
   downloadDataExport,
   exportMyData,
 } from '@/lib/privacy';
 import { PreferencesError } from '@/lib/preferences';
 import { TRANSLATION_LANGUAGE_OPTIONS } from '@/lib/translation';
 import { usePreferredTranslationLanguage } from '@/app/components/chat/usePreferredTranslationLanguage';
+import { AvatarError, saveAvatar } from '@/lib/avatar';
+import { LEGAL_DOC_TITLES, type LegalDocId } from '@/lib/legal-content';
+import BottomSheet from './components/BottomSheet';
+import Toast, { type ToastMessage } from './components/Toast';
+import EditProfileSheet from './components/EditProfileSheet';
+import AccountSheet from './components/AccountSheet';
+import DeleteAccountSheet from './components/DeleteAccountSheet';
+import NotificationsSheet from './components/NotificationsSheet';
+import PrivacySheet from './components/PrivacySheet';
+import BlockListSheet from './components/BlockListSheet';
+import LegalSheet from './components/LegalSheet';
 
 /**
  * Every language with strings is offered, so choosing one has a real effect on
@@ -29,6 +39,41 @@ import { usePreferredTranslationLanguage } from '@/app/components/chat/usePrefer
  */
 const LANGUAGES = LOCALE_OPTIONS;
 
+/** Sheets that share the generic `BottomSheet` shell. */
+type SheetId =
+  | 'edit'
+  | 'account'
+  | 'delete'
+  | 'notifications'
+  | 'privacy'
+  | 'blocklist'
+  | LegalDocId;
+
+const LEGAL_IDS: readonly LegalDocId[] = ['help', 'guidelines', 'safety', 'terms', 'about'];
+
+function isLegalId(id: SheetId): id is LegalDocId {
+  return (LEGAL_IDS as readonly string[]).includes(id);
+}
+
+function sheetTitle(id: SheetId): string {
+  switch (id) {
+    case 'edit':
+      return 'Edit Profile';
+    case 'account':
+      return 'Account';
+    case 'delete':
+      return 'Delete Account';
+    case 'notifications':
+      return 'Notifications';
+    case 'privacy':
+      return 'Privacy Control';
+    case 'blocklist':
+      return 'Block List';
+    default:
+      return LEGAL_DOC_TITLES[id];
+  }
+}
+
 export default function SettingsPage() {
   const router = useRouter();
   const { language, changeLanguage } = useLanguage();
@@ -36,10 +81,8 @@ export default function SettingsPage() {
   /** Filters the language sheet; 51 rows is too many to scroll blindly. */
   const [langQuery, setLangQuery] = useState('');
   const [isSigningOut, setIsSigningOut] = useState(false);
-  // M15: data-subject rights (export / erasure)
+  // M15: data-subject rights (export)
   const [isExporting, setIsExporting] = useState(false);
-  const [isDeleting, setIsDeleting] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(false);
   const [privacyError, setPrivacyError] = useState<string | null>(null);
 
   /**
@@ -58,6 +101,28 @@ export default function SettingsPage() {
   const [isSavingTranslation, setIsSavingTranslation] = useState(false);
   const [translationError, setTranslationError] = useState<string | null>(null);
 
+  /** The open settings sheet, or null. */
+  const [sheet, setSheet] = useState<SheetId | null>(null);
+  const [isAvatarBusy, setIsAvatarBusy] = useState(false);
+
+  // Toast is page-owned so a sheet closing cannot cancel the confirmation.
+  const [toast, setToast] = useState<ToastMessage | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showToast = useCallback((message: string, tone: ToastMessage['tone'] = 'success') => {
+    setToast({ message, tone });
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 2800);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimer.current) clearTimeout(toastTimer.current);
+    };
+  }, []);
+
+  const closeSheet = useCallback(() => setSheet(null), []);
+
   const translationLanguageLabel =
     TRANSLATION_LANGUAGE_OPTIONS.find((entry) => entry.code === translationLanguage)?.label ??
     translationLanguage;
@@ -68,6 +133,7 @@ export default function SettingsPage() {
     try {
       await saveTranslationLanguage(code);
       setIsTranslateModalOpen(false);
+      showToast('Translation preference saved');
     } catch (err) {
       // Surfaced inline rather than in an `alert()` (CODING_STANDARDS §4).
       setTranslationError(
@@ -84,56 +150,67 @@ export default function SettingsPage() {
   const selectedLang = localeNativeName(language);
   /** Filtered rows for the open sheet. */
   const visibleLanguages = searchLocales(langQuery);
-  
+
   // Ref for the avatar upload
   const avatarInputRef = useRef<HTMLInputElement>(null);
 
   const handleSignOut = async () => {
     setIsSigningOut(true);
-    await supabase.auth.signOut();
-    router.push('/auth');
+    try {
+      await supabase.auth.signOut();
+      router.push('/auth');
+    } finally {
+      // Loading states must always terminate (AGENTS.md hard constraint 7).
+      setIsSigningOut(false);
+    }
   };
 
   const handleClearCache = async () => {
     try {
-      // Only clear cached network responses. `localStorage.clear()` would also
-      // delete the Supabase auth token (sb-<ref>-auth-token), silently signing
-      // the user out on the next refresh.
+      // Clear caches and storage, but PRESERVE the Supabase auth keys
+      // (`sb-*`, `supabase*`): a blind `localStorage.clear()` deletes
+      // `sb-<ref>-auth-token` and silently signs the member out on reload.
+      const preserved = new Map<string, string>();
+      for (let i = 0; i < localStorage.length; i += 1) {
+        const key = localStorage.key(i);
+        if (key && (key.startsWith('sb-') || key.startsWith('supabase'))) {
+          preserved.set(key, localStorage.getItem(key) ?? '');
+        }
+      }
+      localStorage.clear();
+      preserved.forEach((value, key) => localStorage.setItem(key, value));
+
+      sessionStorage.clear();
+
       if ('caches' in window) {
         const keys = await caches.keys();
         await Promise.all(keys.map((key) => caches.delete(key)));
       }
-      // Legacy key left behind by older builds; the live key is `mettivo_language`.
-      localStorage.removeItem('mettivo_preferred_lang');
-      alert('Cached data cleared.');
+
+      showToast('App cache cleared successfully.');
     } catch {
-      alert('Could not clear cached data.');
+      showToast('Could not clear cached data.', 'error');
     }
   };
 
-  const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = async () => {
-        const base64String = reader.result as string;
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
-          // Upsert, not a bare update: `update()` silently changes nothing when
-          // the row does not exist yet, which is a data-loss bug
-          // (AGENTS.md hard constraint 6). Only the supplied columns are
-          // written, so the rest of the profile is untouched.
-          const { error } = await supabase
-            .from('profiles')
-            .upsert({ id: user.id, avatar_url: base64String }, { onConflict: 'id' });
-          if (error) {
-            alert(`Error updating avatar: ${error.message}`);
-          } else {
-            alert('Avatar updated successfully!');
-          }
-        }
-      };
-      reader.readAsDataURL(file);
+  const handleAvatarUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    // Reset so re-selecting the same file fires `change` again.
+    event.target.value = '';
+    if (!file) return;
+
+    setIsAvatarBusy(true);
+    try {
+      await saveAvatar(file);
+      showToast('Avatar updated');
+    } catch (err) {
+      console.error('[settings] avatar upload failed:', err);
+      showToast(
+        err instanceof AvatarError ? err.message : 'Could not update your avatar. Please try again.',
+        'error'
+      );
+    } finally {
+      setIsAvatarBusy(false);
     }
   };
 
@@ -153,6 +230,7 @@ export default function SettingsPage() {
     try {
       const payload = await exportMyData();
       downloadDataExport(payload);
+      showToast('Your data export is downloading.');
     } catch (err) {
       console.error('Data export failed:', err);
       setPrivacyError(
@@ -163,42 +241,13 @@ export default function SettingsPage() {
     }
   };
 
-  /** Erasure: irreversible, so it takes two deliberate taps. */
-  const handleDeleteAccount = async () => {
-    if (isDeleting) return;
-
-    if (!confirmDelete) {
-      setConfirmDelete(true);
-      setPrivacyError(null);
-      return;
-    }
-
-    setIsDeleting(true);
-    setPrivacyError(null);
-    try {
-      await deleteMyAccount();
-      // The session no longer exists; send the user to the landing page.
-      router.replace('/');
-    } catch (err) {
-      console.error('Account deletion failed:', err);
-      setPrivacyError(
-        err instanceof PrivacyError
-          ? err.message
-          : 'Could not delete your account. Please try again.'
-      );
-      setConfirmDelete(false);
-    } finally {
-      setIsDeleting(false);
-    }
-  };
-
   // Reusable styles for the menu items
   const styles = {
     container: { minHeight: '100vh', backgroundColor: '#0D0A10', color: '#F2E9E4', fontFamily: 'system-ui', paddingBottom: '40px' },
     header: { display: 'flex', alignItems: 'center', padding: '20px', borderBottom: '1px solid #29202D' },
     backBtn: { background: 'none', border: 'none', color: '#F2E9E4', cursor: 'pointer', marginRight: '16px' },
     headerTitle: { fontSize: '20px', fontWeight: '700', color: '#F2E9E4' },
-    
+
     // Menu Groups
     group: { backgroundColor: '#1C1822', marginTop: '16px', borderTop: '1px solid #29202D', borderBottom: '1px solid #29202D' },
     row: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '18px 20px', borderBottom: '1px solid #29202D', cursor: 'pointer' },
@@ -207,7 +256,7 @@ export default function SettingsPage() {
     rowValue: { fontSize: '13px', color: '#B58A83', marginLeft: 'auto', marginRight: '10px' },
     chevron: { color: '#B58A83', fontSize: '18px' },
     signOutText: { color: '#EF4444', fontWeight: '700' },
-    
+
     // Language Modal
     modalOverlay: { position: 'fixed' as const, inset: 0, backgroundColor: 'rgba(13, 10, 16, 0.8)', backdropFilter: 'blur(4px)', display: 'flex', justifyContent: 'flex-end', flexDirection: 'column' as const, zIndex: 2000 },
     modalBox: { backgroundColor: '#1C1822', borderTopLeftRadius: '30px', borderTopRightRadius: '30px', padding: '30px 24px', borderTop: '1px solid #4A1828', maxHeight: '80vh', overflowY: 'auto' as const },
@@ -230,9 +279,16 @@ export default function SettingsPage() {
 
   return (
     <div style={styles.container}>
-      
+
       {/* Hidden Avatar Input */}
-      <input type="file" accept="image/*" ref={avatarInputRef} style={{ display: 'none' }} onChange={handleAvatarUpload} />
+      <input
+        type="file"
+        accept="image/*"
+        ref={avatarInputRef}
+        data-testid="avatar-input"
+        style={{ display: 'none' }}
+        onChange={handleAvatarUpload}
+      />
 
       {/* Header */}
       <div style={styles.header}>
@@ -248,19 +304,19 @@ export default function SettingsPage() {
           <span style={styles.rowLabel}>Switch Mode</span>
           <span style={styles.chevron}>›</span>
         </div>
-        <div style={styles.row} onClick={() => router.push('/profile/edit')}>
+        <div style={styles.row} data-testid="settings-edit-profile" onClick={() => setSheet('edit')}>
           <span style={styles.rowLabel}>Edit Profile</span>
           <span style={styles.chevron}>›</span>
         </div>
-        <div style={styles.row} onClick={() => avatarInputRef.current?.click()}>
-          <span style={styles.rowLabel}>Change Avatar</span>
+        <div style={styles.row} data-testid="settings-change-avatar" onClick={() => avatarInputRef.current?.click()}>
+          <span style={styles.rowLabel}>{isAvatarBusy ? 'Uploading…' : 'Change Avatar'}</span>
           <span style={{ ...styles.chevron, fontSize: '24px' }}>👤</span>
         </div>
       </div>
 
       {/* Middle Group */}
       <div style={styles.group}>
-        <div style={styles.row} onClick={() => alert('Notification settings coming soon!')}>
+        <div style={styles.row} data-testid="settings-notifications" onClick={() => setSheet('notifications')}>
           <span style={styles.rowLabel}>Notifications</span>
           <span style={styles.chevron}>›</span>
         </div>
@@ -280,7 +336,7 @@ export default function SettingsPage() {
           </span>
           <span style={styles.chevron}>›</span>
         </div>
-        <div style={{ ...styles.row, ...styles.rowLast }} onClick={() => alert('Help Center coming soon!')}>
+        <div style={{ ...styles.row, ...styles.rowLast }} data-testid="settings-help" onClick={() => setSheet('help')}>
           <span style={styles.rowLabel}>Help Center</span>
           <span style={styles.chevron}>›</span>
         </div>
@@ -288,12 +344,12 @@ export default function SettingsPage() {
 
       {/* Bottom Group */}
       <div style={styles.group}>
-        <div style={styles.row} onClick={() => alert('Community Guidelines coming soon!')}><span style={styles.rowLabel}>Community Guidelines</span><span style={styles.chevron}>›</span></div>
-        <div style={styles.row} onClick={() => alert('Safety Center coming soon!')}><span style={styles.rowLabel}>Safety Center</span><span style={styles.chevron}>›</span></div>
-        <div style={styles.row} onClick={() => alert('Terms of Use coming soon!')}><span style={styles.rowLabel}>Terms of Use</span><span style={styles.chevron}>›</span></div>
-        <div style={styles.row} onClick={() => alert('About Us coming soon!')}><span style={styles.rowLabel}>About Us</span><span style={styles.chevron}>›</span></div>
-        <div style={styles.row} onClick={() => router.push('/report')}><span style={styles.rowLabel}>Block List</span><span style={styles.chevron}>›</span></div>
-        <div style={styles.row} onClick={() => void handleClearCache()}><span style={styles.rowLabel}>Clear Cache</span><span style={styles.chevron}>›</span></div>
+        <div style={styles.row} data-testid="settings-guidelines" onClick={() => setSheet('guidelines')}><span style={styles.rowLabel}>Community Guidelines</span><span style={styles.chevron}>›</span></div>
+        <div style={styles.row} data-testid="settings-safety" onClick={() => setSheet('safety')}><span style={styles.rowLabel}>Safety Center</span><span style={styles.chevron}>›</span></div>
+        <div style={styles.row} data-testid="settings-terms" onClick={() => setSheet('terms')}><span style={styles.rowLabel}>Terms of Use</span><span style={styles.chevron}>›</span></div>
+        <div style={styles.row} data-testid="settings-about" onClick={() => setSheet('about')}><span style={styles.rowLabel}>About Us</span><span style={styles.chevron}>›</span></div>
+        <div style={styles.row} data-testid="settings-blocklist" onClick={() => setSheet('blocklist')}><span style={styles.rowLabel}>Block List</span><span style={styles.chevron}>›</span></div>
+        <div style={styles.row} data-testid="settings-clear-cache" onClick={() => void handleClearCache()}><span style={styles.rowLabel}>Clear Cache</span><span style={styles.chevron}>›</span></div>
 
         {/* M15: data-subject rights. Additive rows — existing rows untouched. */}
         {privacyError && (
@@ -314,7 +370,7 @@ export default function SettingsPage() {
           </div>
         )}
 
-        <div style={styles.row} onClick={() => void handleExportData()}>
+        <div style={styles.row} data-testid="settings-export" onClick={() => void handleExportData()}>
           <span style={styles.rowLabel}>
             {isExporting ? 'Preparing your data...' : 'Download my data'}
           </span>
@@ -326,26 +382,11 @@ export default function SettingsPage() {
           <span style={styles.chevron}>›</span>
         </Link>
 
-        <div
-          style={{ ...styles.row, ...(confirmDelete ? { backgroundColor: '#3B1220' } : {}) }}
-          onClick={() => void handleDeleteAccount()}
-        >
-          <span
-            style={{
-              ...styles.rowLabel,
-              color: confirmDelete ? '#FCA5B5' : '#EF4444',
-            }}
-          >
-            {isDeleting
-              ? 'Deleting your account...'
-              : confirmDelete
-                ? 'Tap again to permanently delete'
-                : 'Delete Account'}
-          </span>
+        <div style={styles.row} data-testid="settings-account" onClick={() => setSheet('account')}>
+          <span style={styles.rowLabel}>Account</span>
           <span style={styles.chevron}>›</span>
         </div>
-        <div style={styles.row} onClick={() => alert('Account settings coming soon!')}><span style={styles.rowLabel}>Account</span><span style={styles.chevron}>›</span></div>
-        <div style={{ ...styles.row, ...styles.rowLast }} onClick={() => alert('Privacy Control coming soon!')}>
+        <div style={{ ...styles.row, ...styles.rowLast }} data-testid="settings-privacy" onClick={() => setSheet('privacy')}>
           <span style={styles.rowLabel}>Privacy Control</span>
           <span style={styles.chevron}>›</span>
         </div>
@@ -353,12 +394,56 @@ export default function SettingsPage() {
 
       {/* Sign Out */}
       <div style={styles.group}>
-        <div style={{ ...styles.row, ...styles.rowLast }} onClick={handleSignOut}>
+        <div style={{ ...styles.row, ...styles.rowLast }} onClick={() => void handleSignOut()}>
           <span style={{ ...styles.rowLabel, ...styles.signOutText }}>
             {isSigningOut ? 'Signing Out...' : 'Sign Out'}
           </span>
         </div>
       </div>
+
+      {/* Danger zone — deletion now lives behind a typed confirmation sheet. */}
+      <div style={styles.group}>
+        <div style={{ ...styles.row, ...styles.rowLast }} data-testid="settings-delete" onClick={() => setSheet('delete')}>
+          <span style={{ ...styles.rowLabel, color: '#EF4444' }}>Delete Account</span>
+          <span style={styles.chevron}>›</span>
+        </div>
+      </div>
+
+      {/* Shared sheets (Edit / Account / Delete / Notifications / Privacy /
+          Block List / the five legal documents). */}
+      {sheet && (
+        <BottomSheet
+          title={sheetTitle(sheet)}
+          testId={`settings-sheet-${sheet}`}
+          onClose={closeSheet}
+          busy={false}
+        >
+          {sheet === 'edit' && (
+            <EditProfileSheet
+              onClose={closeSheet}
+              onSaved={() => undefined}
+              onToast={showToast}
+            />
+          )}
+          {sheet === 'account' && <AccountSheet onToast={showToast} />}
+          {sheet === 'delete' && (
+            <DeleteAccountSheet
+              onClose={closeSheet}
+              onToast={showToast}
+              onDeleted={() => {
+                // The session no longer exists; send the member to the landing page.
+                router.replace('/');
+              }}
+            />
+          )}
+          {sheet === 'notifications' && (
+            <NotificationsSheet onToast={showToast} />
+          )}
+          {sheet === 'privacy' && <PrivacySheet onToast={showToast} />}
+          {sheet === 'blocklist' && <BlockListSheet onToast={showToast} />}
+          {isLegalId(sheet) && <LegalSheet docId={sheet} />}
+        </BottomSheet>
+      )}
 
       {/* Interface language sheet. Searchable, because the catalogue is ~50
           languages rather than the four this screen used to hard-code. */}
@@ -506,6 +591,8 @@ export default function SettingsPage() {
           </div>
         </div>
       )}
+
+      <Toast toast={toast} />
 
     </div>
   );
