@@ -39,6 +39,9 @@ const PERSONAL_TABLES = [
   'match_read_state',
   'user_roles',
   'reports',
+  // M17: member-scoped settings. RLS must be on and enforced like any other row
+  // that belongs to exactly one member.
+  'user_preferences',
 ];
 
 describe('apply_all.sql — the operator bootstrap', () => {

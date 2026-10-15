@@ -12,6 +12,9 @@ import {
   downloadDataExport,
   exportMyData,
 } from '@/lib/privacy';
+import { PreferencesError } from '@/lib/preferences';
+import { TRANSLATION_LANGUAGE_OPTIONS } from '@/lib/translation';
+import { usePreferredTranslationLanguage } from '@/app/components/chat/usePreferredTranslationLanguage';
 
 /**
  * Only languages that actually have translations are offered, so choosing one
@@ -36,6 +39,44 @@ export default function SettingsPage() {
   const [isDeleting, setIsDeleting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [privacyError, setPrivacyError] = useState<string | null>(null);
+
+  /**
+   * Chat translation target language (M17).
+   *
+   * Separate from the interface `Language` above on purpose: the UI locale and
+   * the language you want *other people's messages* translated into are
+   * different choices — a member may read the app in English while wanting
+   * incoming Nepali translated to English.
+   */
+  const {
+    language: translationLanguage,
+    save: saveTranslationLanguage,
+  } = usePreferredTranslationLanguage();
+  const [isTranslateModalOpen, setIsTranslateModalOpen] = useState(false);
+  const [isSavingTranslation, setIsSavingTranslation] = useState(false);
+  const [translationError, setTranslationError] = useState<string | null>(null);
+
+  const translationLanguageLabel =
+    TRANSLATION_LANGUAGE_OPTIONS.find((entry) => entry.code === translationLanguage)?.label ??
+    translationLanguage;
+
+  const handleTranslationLanguageSelect = async (code: string) => {
+    setIsSavingTranslation(true);
+    setTranslationError(null);
+    try {
+      await saveTranslationLanguage(code);
+      setIsTranslateModalOpen(false);
+    } catch (err) {
+      // Surfaced inline rather than in an `alert()` (CODING_STANDARDS §4).
+      setTranslationError(
+        err instanceof PreferencesError
+          ? err.message
+          : 'Could not save your translation preference. Please try again.'
+      );
+    } finally {
+      setIsSavingTranslation(false);
+    }
+  };
 
   const selectedLang =
     LANGUAGES.find((entry) => entry.code === language)?.label ?? 'English';
@@ -169,7 +210,10 @@ export default function SettingsPage() {
     modalTitle: { fontSize: '20px', fontWeight: '700', color: '#F2E9E4' },
     closeBtn: { background: 'none', border: 'none', color: '#B58A83', fontSize: '24px', cursor: 'pointer' },
     langItem: { padding: '16px', fontSize: '15px', color: '#F2E9E4', cursor: 'pointer', borderRadius: '12px', borderBottom: '1px solid #29202D', textAlign: 'center' as const },
-    langItemActive: { backgroundColor: '#4A1828', color: '#D4B18A', fontWeight: '700' }
+    langItemActive: { backgroundColor: '#4A1828', color: '#D4B18A', fontWeight: '700' },
+    modalHint: { fontSize: '12px', color: '#B58A83', lineHeight: '1.5', margin: '0 0 12px' },
+    modalError: { fontSize: '12px', color: '#FCA5A5', margin: '0 0 12px' },
+    modalCheck: { color: '#D4B18A', fontWeight: '700' }
   };
 
   return (
@@ -211,6 +255,17 @@ export default function SettingsPage() {
         <div style={styles.row} onClick={() => setIsLangModalOpen(true)}>
           <span style={styles.rowLabel}>Language</span>
           <span style={styles.rowValue}>{selectedLang}</span>
+          <span style={styles.chevron}>›</span>
+        </div>
+        <div
+          style={styles.row}
+          onClick={() => setIsTranslateModalOpen(true)}
+          data-testid="translate-language-row"
+        >
+          <span style={styles.rowLabel}>Translate chats to</span>
+          <span style={styles.rowValue} data-testid="translate-language-value">
+            {translationLanguageLabel}
+          </span>
           <span style={styles.chevron}>›</span>
         </div>
         <div style={{ ...styles.row, ...styles.rowLast }} onClick={() => alert('Help Center coming soon!')}>
@@ -310,6 +365,81 @@ export default function SettingsPage() {
                 {entry.label}
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Chat translation target language (M17) */}
+      {isTranslateModalOpen && (
+        <div
+          style={styles.modalOverlay}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Translate chats to"
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') setIsTranslateModalOpen(false);
+          }}
+        >
+          <div style={styles.modalBox}>
+            <div style={styles.modalHeader}>
+              <div style={styles.modalTitle}>Translate chats to</div>
+              <button
+                style={styles.closeBtn}
+                onClick={() => setIsTranslateModalOpen(false)}
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
+
+            <p style={styles.modalHint}>
+              Incoming messages keep their original text. Tap Translate on a message to
+              reveal it in this language.
+            </p>
+
+            {translationError && (
+              <p role="alert" data-testid="translate-language-error" style={styles.modalError}>
+                {translationError}
+              </p>
+            )}
+
+            <div
+              role="radiogroup"
+              aria-label="Translation language"
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter') return;
+                const target = event.target as HTMLElement;
+                const code = target.getAttribute('data-language-code');
+                if (code) void handleTranslationLanguageSelect(code);
+              }}
+            >
+              {TRANSLATION_LANGUAGE_OPTIONS.map((entry) => {
+                const isActive = entry.code === translationLanguage;
+                return (
+                  <div
+                    key={entry.code}
+                    role="radio"
+                    tabIndex={0}
+                    aria-checked={isActive}
+                    data-language-code={entry.code}
+                    data-testid={`translate-language-option-${entry.code}`}
+                    style={{ ...styles.langItem, ...(isActive ? styles.langItemActive : {}) }}
+                    onClick={() => {
+                      if (!isSavingTranslation) void handleTranslationLanguageSelect(entry.code);
+                    }}
+                  >
+                    {entry.label}
+                    {isActive && <span style={styles.modalCheck}> ✓</span>}
+                  </div>
+                );
+              })}
+            </div>
+
+            {isSavingTranslation && (
+              <p role="status" style={styles.modalHint}>
+                Saving…
+              </p>
+            )}
           </div>
         </div>
       )}

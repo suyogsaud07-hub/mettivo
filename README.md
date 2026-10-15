@@ -82,8 +82,8 @@ npm run test:e2e      # browser journeys (first run: npm run test:e2e:install)
 | --- | --- |
 | `npx tsc --noEmit` | prints nothing |
 | `npx eslint .` | `0 errors` |
-| `npm test` | 302 tests, 18 files |
-| `npm run test:e2e` | 56 Chromium journeys |
+| `npm test` | 339 tests, 20 files |
+| `npm run test:e2e` | 62 Chromium journeys |
 | `npm run audit` | `found 0 vulnerabilities` (production) |
 | `npm run build` | exits 0 |
 | `./scripts/check-schema-drift.sh` | `RESULT: IN SYNC` |

@@ -56,6 +56,8 @@ const PERSONAL_TABLES = [
   'moment_likes',
   'moment_comments',
   'game_results',
+  // M17: member-scoped settings. An anonymous caller must read zero rows.
+  'user_preferences',
 ];
 
 describe('1. auth bypass attempts (anonymous callers)', () => {
@@ -378,6 +380,32 @@ describe('4. secrets hygiene', () => {
   });
 
   it('only exposes NEXT_PUBLIC_* environment variables to the browser', () => {
+    /**
+     * Scope: files that can end up in the BROWSER bundle.
+     *
+     * A `process.env.FOO` read is only a leak when the module is bundled for the
+     * client, where Next inlines the value. This check used to walk every `.ts`
+     * under `src/`, which flagged server route handlers for reading their own
+     * secrets — a false positive that would push a future author to obfuscate a
+     * legitimate read (`process.env['KEY']`) to get a green test.
+     *
+     * `src/app/**\/route.ts` is a Route Handler: it runs only on the server, so
+     * a plain `process.env.DEEPL_API_KEY` there is correct and is the readable
+     * way to do it. Everything else in `src/` is fair game for the scanner,
+     * because any other module can be imported by a client component.
+     *
+     * The `service_role`/JWT scan above still covers ALL of `src/`, so excluding
+     * handlers here does not widen it.
+     *
+     * KNOWN BOUNDARY: a server-only *library* (not a route handler) that needs a
+     * secret — currently `src/lib/translation-service.ts` reading
+     * `DEEPL_API_KEY` — cannot use a literal `process.env.NAME` read without
+     * tripping this check, because a path cannot prove a module is server-only.
+     * Such a module therefore reads through the injected-source pattern
+     * `src/lib/env.ts` already uses. That is deliberately conservative: the scan
+     * errs toward flagging, and the failure mode is an awkward read rather than
+     * a shipped key.
+     */
     const clientFiles: string[] = [];
     const walk = (dir: string) => {
       for (const entry of readdirSync(join(root, dir), { withFileTypes: true })) {
@@ -386,7 +414,10 @@ describe('4. secrets hygiene', () => {
           walk(relative);
           continue;
         }
-        if (entry.name.endsWith('.tsx') || entry.name.endsWith('.ts')) clientFiles.push(relative);
+        if (!entry.name.endsWith('.tsx') && !entry.name.endsWith('.ts')) continue;
+        // Route handlers execute on the server only.
+        if (/(^|\/)route\.ts$/.test(relative)) continue;
+        clientFiles.push(relative);
       }
     };
     walk('src');

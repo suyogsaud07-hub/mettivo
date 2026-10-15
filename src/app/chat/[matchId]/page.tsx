@@ -1,11 +1,30 @@
 'use client';
 
-import { useEffect, useState, use } from 'react';
+import { useEffect, useState, use, useSyncExternalStore } from 'react';
 import type { RealtimePostgresChangesPayload } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { markConversationRead } from '@/lib/messages';
 import { type MessageRow } from '@/lib/types';
 import { type ReportRow, type BlockedUserRow, type BlockedUserWithProfile } from '@/lib/types';
+import TranslatableMessage from '@/app/components/chat/TranslatableMessage';
+import { usePreferredTranslationLanguage } from '@/app/components/chat/usePreferredTranslationLanguage';
+
+/**
+ * The browser's language, as an external store.
+ *
+ * Declared at module scope so the function identities are stable across
+ * renders — `useSyncExternalStore` re-subscribes whenever `subscribe` changes
+ * identity. No subscription is actually needed: `navigator.language` cannot
+ * change without a page reload, so the only risk would be subscribing and never
+ * unsubscribing, which this deliberately avoids.
+ */
+function subscribeToBrowserLanguage(): () => void {
+  return () => {};
+}
+
+function getBrowserLanguageSnapshot(): string | null {
+  return typeof navigator !== 'undefined' && navigator.language ? navigator.language : null;
+}
 
 export default function ChatPage({
   params,
@@ -29,6 +48,35 @@ export default function ChatPage({
   const [reportReason, setReportReason] = useState('');
   const [reportDetails, setReportDetails] = useState('');
   const [showReportModal, setShowReportModal] = useState(false);
+
+  /**
+   * The language this member wants incoming messages translated into.
+   *
+   * Only incoming bubbles get a translate control, so this is read here and
+   * passed down rather than being fetched per message.
+   */
+  const { language: preferredTranslationLanguage } =
+    usePreferredTranslationLanguage();
+
+  /**
+   * Best-effort hint for the language a message is written in.
+   *
+   * External, non-React state, so it is read with `useSyncExternalStore` rather
+   * than `useEffect` + `setState` — the pattern CODING_STANDARDS §2 mandates,
+   * and the only one that is hydration-safe here: the SERVER snapshot is `null`
+   * ("let the provider detect it") while the client snapshot is the browser's
+   * language. Reading `navigator` during render would produce different markup
+   * on the server and the client.
+   *
+   * The value feeds an on-demand request only — it is never part of the first
+   * paint — so no subscription is needed for it to stay correct; the language
+   * cannot change without a reload.
+   */
+  const sourceLanguageHint = useSyncExternalStore(
+    subscribeToBrowserLanguage,
+    getBrowserLanguageSnapshot,
+    () => null
+  );
 
   useEffect(() => {
     let isMounted = true;
@@ -278,7 +326,15 @@ export default function ChatPage({
                   isMe ? 'bg-rose-500 text-white' : 'bg-neutral-800 text-neutral-200'
                 }`}
               >
-                {msg.content}
+                {/* Translation is on-demand and per message: nothing is sent to
+                    the provider until the member taps the control, and the
+                    original text is never replaced. */}
+                <TranslatableMessage
+                  content={msg.content}
+                  isOwnMessage={isMe}
+                  targetLanguage={preferredTranslationLanguage}
+                  sourceLanguage={sourceLanguageHint}
+                />
               </div>
             </div>
           );

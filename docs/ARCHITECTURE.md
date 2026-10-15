@@ -100,18 +100,33 @@ Session persistence is handled by `supabase-js` in the browser
 Verified by probing the live project read-only on **2026-10-15**, after the
 migration set was applied.
 
-> ✅ **In sync.** `./scripts/check-schema-drift.sh` reports
-> `RESULT: IN SYNC — 42 expectations verified, 0 missing` (18 tables, 24 added
-> columns), and `./scripts/verify-rls.sh` reports
+> ⚠️ **TWO MIGRATIONS ARE UNAPPLIED AND THE DRIFT CHECK FAILS.**
+> `./scripts/check-schema-drift.sh` currently reports
+> `user_preferences MISSING — table does not exist on the live project`
+> (19 tables expected). The repository is ahead of the live database by:
+>
+> | Migration | Needs applying for |
+> | --- | --- |
+> | `20261015270000_m16_game_catalog_expansion.sql` | the seven playable mini-games. Until it runs, `record_game_result()` rejects every new game id, so the games render and play but their scores are not saved. |
+> | `20261015280000_m17_user_preferences.sql` | chat translation. Until it runs, `/api/translate` cannot read a member's preferred language and the settings row has no table to write to. |
+>
+> Apply them by pasting `supabase/apply_all.sql` into the Supabase SQL Editor
+> twice (the second pass proves idempotency). There is no migration runner
+> (§6.4). Everything below marked ✅ was true of the **pre-M16** snapshot.
+
+> ✅ **In sync at the last verified snapshot.** `./scripts/check-schema-drift.sh`
+> reported `RESULT: IN SYNC — 42 expectations verified, 0 missing` (18 tables, 24
+> added columns), and `./scripts/verify-rls.sh` reports
 > `RESULT: PASS - 7 table(s) verified, 0 skipped, 0 leaks`.
 >
 > The project previously exposed `profiles` to anonymous callers and was missing
 > 16 migrations. See `RISK_REGISTER.md` `R-01`/`R-02` for the incident record.
 
-**18 tables exist**, including `likes`, `matches`, `notifications`, `moments`,
-`moment_likes`, `moment_comments`, `game_catalog`, `game_results`, `user_roles`,
-`admin_audit_log`, `rate_limit_counters`, `rate_limit_rules`,
-`match_read_state`, `interest_categories`, `interests` and `prompt_catalogue`.
+**19 tables exist in the migration set**, including `likes`, `matches`,
+`notifications`, `moments`, `moment_likes`, `moment_comments`, `game_catalog`,
+`game_results`, `user_preferences`, `user_roles`, `admin_audit_log`,
+`rate_limit_counters`, `rate_limit_rules`, `match_read_state`,
+`interest_categories`, `interests` and `prompt_catalogue`.
 
 | Table | Status | Key columns |
 | --- | --- | --- |
@@ -121,6 +136,7 @@ migration set was applied.
 | `matches` | exists (0 rows, unused by code — **columns not yet introspected**) | — |
 | `reports` | exists | `id`, `reporter_id`, `reported_user_id`, `reason`, `details`, `status`, `created_at`, `updated_at` |
 | `blocked_users` | exists | `id`, `blocker_id`, `blocked_user_id`, `created_at` |
+| `user_preferences` | ⚠️ **created by M17, not yet applied** | `user_id`, `preferred_translation_language`, `created_at`, `updated_at` — one row per member, RLS `auth.uid() = user_id` |
 | `likes` | ❌ **missing on live** | created by migration 4 (M10) |
 | `interests` / `prompts` | ❌ **missing as tables** | currently columns on `profiles` + fixtures in `mockData.ts` |
 
