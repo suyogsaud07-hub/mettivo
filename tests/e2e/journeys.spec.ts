@@ -47,6 +47,22 @@ test.describe('§3.3 — the 18+ gate', () => {
     expect(new URL(page.url()).pathname).toBe('/auth');
   });
 
+  test('offers Discord, branded and wired to the discord provider', async ({ page }) => {
+    const discord = page.getByRole('button', { name: /Discord/ });
+    await expect(discord).toBeVisible();
+
+    // Discord blurple is #5865F2. Asserting the computed colour proves the brand
+    // style is actually applied rather than merely present in a style object.
+    await page.getByText('I confirm I am 18 years or older').click();
+    await expect
+      .poll(async () => discord.evaluate((el) => getComputedStyle(el).backgroundColor))
+      .toBe('rgb(88, 101, 242)');
+
+    // And it launches the Discord provider, not a neighbour's.
+    await discord.click();
+    await expect.poll(() => page.url()).toContain('provider=discord');
+  });
+
   test('renders an inline email form instead of a browser prompt', async ({ page }) => {
     // The email flow used `prompt()` and `alert()`; both are gone. The fields
     // sit directly below the Sign Up / Log In toggle.

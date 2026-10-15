@@ -58,9 +58,31 @@ Supabase dashboard → **Authentication** → **URL Configuration**:
 The app builds its callback as `${window.location.origin}/auth/callback`, so the
 host must match exactly — including `https` and no trailing slash.
 
-OAuth providers (Google / Facebook / X) also need their own console configured
+OAuth providers (Google / Facebook / X / Discord) also need their own console configured
 with that callback URL. **Email OTP works with no third-party setup at all** and
 is the fastest path for friends to test.
+
+#### Enabling a provider (Discord example)
+
+The button ships either way; the provider has to exist behind it. A provider that
+is not enabled fails at click time with
+`Unsupported provider: provider is not enabled` — it does not fail at build time,
+so nothing in CI catches it.
+
+Three steps, once per provider:
+
+| # | Where | What |
+| --- | --- | --- |
+| 1 | Supabase → **Authentication → Providers → Discord** | toggle **Enable**, paste the Client ID and Client Secret from step 2 |
+| 2 | <https://discord.com/developers/applications> → your app → **OAuth2** | add the redirect URI shown on the Supabase Discord panel (it is `https://<project-ref>.supabase.co/auth/v1/callback`, **not** your own domain) |
+| 3 | Redeploy is **not** needed | provider config lives in Supabase, not in this repo |
+
+The redirect URI is the most common mistake: Discord must send the member back to
+**Supabase's** callback, and Supabase then forwards to
+`https://<your-domain>/auth/callback`. Configuring your own domain at Discord
+produces a provider-side error before the app is ever reached.
+
+The same pattern applies to Google, Facebook and X.
 
 ### 3. Smoke test before you share
 

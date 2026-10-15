@@ -98,7 +98,7 @@ by test suites.
 
 | ID | Requirement | Priority |
 | --- | --- | --- |
-| `FR-A1` | A visitor can sign up with OAuth (Google, Facebook, X) or email/phone OTP. | Must |
+| `FR-A1` | A visitor can sign up with OAuth (Google, Facebook, X, Discord) or email/phone OTP. | Must |
 | `FR-A2` | A visitor must affirmatively confirm they are 18 or older before an account is created. | Must |
 | `FR-A3` | After first sign-in, a member must complete a **15-step onboarding wizard** before reaching discovery. | Must |
 | `FR-A4` | The wizard captures: display name, avatar, gender, pronouns, date of birth, location, height/build, intention, orientation/preferences, personality, hobbies, pets, lifestyle, education/profession, spoken languages, and bio. | Must |
