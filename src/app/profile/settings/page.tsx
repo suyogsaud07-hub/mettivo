@@ -2,20 +2,31 @@
 
 import { useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { supabase } from '@/lib/supabase'; 
+import { supabase } from '@/lib/supabase';
+import { useLanguage } from '@/context/LanguageContext';
+import { type Language } from '@/lib/translations';
 
-
-const LANGUAGES = [
-  'English (United Kingdom)', 'English (United States)', 'Mandarin Chinese (中文)', 'Hindi (हिन्दी)',
-  'Spanish (Español)', 'French (Français)', 'Arabic (العربية)', 'Bengali (বাংলা)', 'Portuguese (Português)',
-  'Russian (Русский)', 'Urdu (اردو)', 'Nepali (नेपाली)', 'Japanese (日本語)', 'Korean (한국어)'
+/**
+ * Only languages that actually have translations are offered, so choosing one
+ * has a real effect on the UI. Previously this list wrote a key
+ * (`mettivo_preferred_lang`) that nothing in the app ever read.
+ */
+const LANGUAGES: { code: Language; label: string }[] = [
+  { code: 'en', label: 'English' },
+  { code: 'ne', label: 'Nepali (नेपाली)' },
+  { code: 'hi', label: 'Hindi (हिन्दी)' },
+  { code: 'es', label: 'Spanish (Español)' },
+  { code: 'fr', label: 'French (Français)' },
 ];
 
 export default function SettingsPage() {
   const router = useRouter();
+  const { language, changeLanguage } = useLanguage();
   const [isLangModalOpen, setIsLangModalOpen] = useState(false);
-  const [selectedLang, setSelectedLang] = useState('English (United Kingdom)');
   const [isSigningOut, setIsSigningOut] = useState(false);
+
+  const selectedLang =
+    LANGUAGES.find((entry) => entry.code === language)?.label ?? 'English';
   
   // Ref for the avatar upload
   const avatarInputRef = useRef<HTMLInputElement>(null);
@@ -26,9 +37,21 @@ export default function SettingsPage() {
     router.push('/auth');
   };
 
-  const handleClearCache = () => {
-    localStorage.clear();
-    alert('Cache cleared successfully!');
+  const handleClearCache = async () => {
+    try {
+      // Only clear cached network responses. `localStorage.clear()` would also
+      // delete the Supabase auth token (sb-<ref>-auth-token), silently signing
+      // the user out on the next refresh.
+      if ('caches' in window) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map((key) => caches.delete(key)));
+      }
+      // Legacy key left behind by older builds; the live key is `mettivo_language`.
+      localStorage.removeItem('mettivo_preferred_lang');
+      alert('Cached data cleared.');
+    } catch {
+      alert('Could not clear cached data.');
+    }
   };
 
   const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -52,9 +75,8 @@ export default function SettingsPage() {
     }
   };
 
-  const handleLanguageSelect = (lang: string) => {
-    setSelectedLang(lang);
-    localStorage.setItem('mettivo_preferred_lang', lang);
+  const handleLanguageSelect = (code: Language) => {
+    changeLanguage(code);
     setIsLangModalOpen(false);
   };
 
@@ -138,9 +160,8 @@ export default function SettingsPage() {
         <div style={styles.row} onClick={() => alert('Terms of Use coming soon!')}><span style={styles.rowLabel}>Terms of Use</span><span style={styles.chevron}>›</span></div>
         <div style={styles.row} onClick={() => alert('About Us coming soon!')}><span style={styles.rowLabel}>About Us</span><span style={styles.chevron}>›</span></div>
         <div style={styles.row} onClick={() => alert('Block List coming soon!')}><span style={styles.rowLabel}>Block List</span><span style={styles.chevron}>›</span></div>
-        <div style={styles.row} onClick={handleClearCache}><span style={styles.rowLabel}>Clear Cache</span><span style={styles.chevron}>›</span></div>
+        <div style={styles.row} onClick={() => void handleClearCache()}><span style={styles.rowLabel}>Clear Cache</span><span style={styles.chevron}>›</span></div>
         <div style={styles.row} onClick={() => alert('Account settings coming soon!')}><span style={styles.rowLabel}>Account</span><span style={styles.chevron}>›</span></div>
-        <div style={styles.row} onClick={() => alert('Privacy Control coming soon!')}><span style={styles.rowLabel}>Privacy Control</span><span style={styles.chevron}>›</span></div>
         <div style={{ ...styles.row, ...styles.rowLast }} onClick={() => alert('Privacy Control coming soon!')}>
           <span style={styles.rowLabel}>Privacy Control</span>
           <span style={styles.chevron}>›</span>
@@ -164,13 +185,13 @@ export default function SettingsPage() {
               <div style={styles.modalTitle}>Select Language</div>
               <button style={styles.closeBtn} onClick={() => setIsLangModalOpen(false)}>×</button>
             </div>
-            {LANGUAGES.map((lang) => (
-              <div 
-                key={lang} 
-                style={{ ...styles.langItem, ...(selectedLang === lang ? styles.langItemActive : {}) }} 
-                onClick={() => handleLanguageSelect(lang)}
+            {LANGUAGES.map((entry) => (
+              <div
+                key={entry.code}
+                style={{ ...styles.langItem, ...(language === entry.code ? styles.langItemActive : {}) }}
+                onClick={() => handleLanguageSelect(entry.code)}
               >
-                {lang}
+                {entry.label}
               </div>
             ))}
           </div>

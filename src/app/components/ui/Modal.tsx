@@ -1,5 +1,6 @@
-import React from "react";
-import { useEffect } from "react";
+"use client";
+
+import React, { useEffect } from "react";
 
 interface ModalProps {
   isOpen: boolean;
@@ -16,30 +17,52 @@ export const Modal: React.FC<ModalProps> = ({
   children,
   width = "md",
 }) => {
-  if (!isOpen) return null;
-
+  // NOTE: every hook must run before any early return, otherwise React throws
+  // "Rendered fewer hooks than expected" as soon as `isOpen` flips to false.
   useEffect(() => {
+    if (!isOpen) return;
+
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
 
-  const widthMap = {
+    document.addEventListener("keydown", handleKeyDown);
+
+    // Lock background scrolling while the dialog is open.
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [isOpen, onClose]);
+
+  if (!isOpen) return null;
+
+  const widthMap: Record<NonNullable<ModalProps["width"]>, string> = {
     sm: "max-w-sm",
     md: "max-w-md",
     lg: "max-w-lg",
-    full: "w-full max-w-[90vh]",
+    full: "max-w-3xl",
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
+      onClick={onClose}
+      role="presentation"
+    >
       <div
-        className={`${widthMap[width]} relative rounded-3xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 shadow-2xl w-full max-w-md mx-4`}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        onClick={(e) => e.stopPropagation()}
+        className={`relative w-full ${widthMap[width]} max-h-[90vh] overflow-y-auto rounded-3xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 shadow-2xl`}
       >
         {/* Close button */}
         <button
+          type="button"
           onClick={onClose}
           className="absolute top-3 right-3 rounded-full bg-neutral-200 dark:bg-neutral-800 p-1.5 hover:bg-neutral-300 dark:hover:bg-neutral-700 transition-colors"
           aria-label="Close"

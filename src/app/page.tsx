@@ -2,13 +2,14 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import InstallButton from '@/app/components/InstallButton';
 import { useRouter } from 'next/navigation';
 import { useLanguage } from '../context/LanguageContext';
 import { Language } from '@/lib/translations';
 import { supabase } from '@/lib/supabase';
+
 const LANGUAGES: { code: Language; name: string }[] = [
-  { code: 'en', name: 'English (UK)' },
-  { code: 'en', name: 'English (US)' },
+  { code: 'en', name: 'English' },
   { code: 'ne', name: 'Nepali (नेपाली)' },
   { code: 'hi', name: 'Hindi (हिन्दी)' },
   { code: 'es', name: 'Spanish (Español)' },
@@ -20,8 +21,6 @@ export default function LandingPage() {
   const { language, changeLanguage, t } = useLanguage();
   const [langMenuOpen, setLangMenuOpen] = useState(false);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
-
-  
 
   useEffect(() => {
     let isMounted = true;
@@ -62,7 +61,7 @@ export default function LandingPage() {
     return () => {
       isMounted = false;
     };
-  }, [router, supabase]);
+  }, [router]);
 
   const styles = {
     container: { minHeight: '100vh', backgroundColor: '#0D0A10', color: '#F2E9E4', fontFamily: 'system-ui', display: 'flex', flexDirection: 'column' as const },
@@ -81,11 +80,9 @@ export default function LandingPage() {
     description: { fontSize: '15px', color: '#B58A83', maxWidth: '320px', marginBottom: '40px', lineHeight: '1.5' },
     buttonContainer: { width: '100%', maxWidth: '280px', display: 'flex', flexDirection: 'column' as const, gap: '12px' },
     primaryBtn: { backgroundColor: '#D4B18A', color: '#17121C', padding: '16px', borderRadius: '30px', fontSize: '16px', fontWeight: '700', border: 'none', cursor: 'pointer', textDecoration: 'none', display: 'block', textAlign: 'center' as const },
-    secondaryBtn: { backgroundColor: '#29202D', color: '#F2E9E4', padding: '16px', borderRadius: '30px', fontSize: '16px', fontWeight: '600', border: '1px solid #4A1828', cursor: 'pointer', textDecoration: 'none', display: 'block', textAlign: 'center' as const },
     footer: { padding: '24px', textAlign: 'center' as const, fontSize: '13px', color: '#B58A83' }
   };
 
-  // Render a polished branded loading state while verifying auth & profile to eliminate flicker
   if (isCheckingAuth) {
     return (
       <div style={styles.loaderContainer}>
@@ -112,7 +109,7 @@ export default function LandingPage() {
 
         <div style={{ position: 'relative' }}>
           <button style={styles.langBtn} onClick={() => setLangMenuOpen(!langMenuOpen)}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"></circle><path d="M2 12h20"></path><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"></circle><path d="M2 12h20"></path><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1 4-10z"></path></svg>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
           </button>
           {langMenuOpen && (
@@ -146,9 +143,7 @@ export default function LandingPage() {
           <Link href="/auth" style={styles.primaryBtn}>
             {t('get_started')}
           </Link>
-          <Link href="/auth" style={styles.secondaryBtn}>
-            {t('get_app')}
-          </Link>
+          <InstallButton />
         </div>
       </div>
 

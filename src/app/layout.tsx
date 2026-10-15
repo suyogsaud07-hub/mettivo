@@ -1,9 +1,61 @@
+import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import { LanguageProvider } from '@/context/LanguageContext';
+import ServiceWorkerRegistrar from '@/app/components/ServiceWorkerRegistrar';
 
-export const metadata = {
-  title: 'Mettivo - Meet Your Kind of People',
-  description: 'Premium International Dating & Connections Platform',
+const APP_NAME = 'Mettivo';
+const APP_DESCRIPTION =
+  'An intimate space to find meaningful connections wrapped in luxury.';
+
+export const metadata: Metadata = {
+  applicationName: APP_NAME,
+  title: {
+    default: 'Mettivo',
+    template: '%s | Mettivo',
+  },
+  description: APP_DESCRIPTION,
+  manifest: '/manifest.json',
+  // Enables the native "Add to Home Screen" behaviour on iOS/iPadOS.
+  appleWebApp: {
+    capable: true,
+    title: APP_NAME,
+    // 'black' keeps an opaque status bar so app content is never hidden
+    // underneath it (which is what 'black-translucent' would do).
+    statusBarStyle: 'black',
+  },
+  formatDetection: {
+    telephone: false,
+  },
+  // Next.js 16 emits the modern `mobile-web-app-capable` tag for
+  // appleWebApp.capable. iOS Safari below 17 only honours the Apple-prefixed
+  // variant, so emit it explicitly as well.
+  other: {
+    'apple-mobile-web-app-capable': 'yes',
+  },
+  icons: {
+    icon: [
+      { url: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
+      { url: '/icons/icon-512.png', sizes: '512x512', type: 'image/png' },
+    ],
+    apple: [
+      {
+        url: '/icons/apple-touch-icon.png',
+        sizes: '180x180',
+        type: 'image/png',
+      },
+    ],
+  },
+};
+
+export const viewport: Viewport = {
+  themeColor: '#0D0A10',
+  colorScheme: 'dark',
+  width: 'device-width',
+  initialScale: 1,
+  // Deliberately not 1: capping zoom breaks accessibility.
+  maximumScale: 5,
+  // Let the app paint into the notch / home-indicator area when installed.
+  viewportFit: 'cover',
 };
 
 export default function RootLayout({
@@ -13,9 +65,10 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body style={{ backgroundColor: '#0D0A10', color: '#F2E9E4', minHeight: '100vh', margin: 0 }}>
+      <body className="bg-[#0D0A10] text-[#F2E9E4] antialiased">
         <LanguageProvider>
           {children}
+          <ServiceWorkerRegistrar />
         </LanguageProvider>
       </body>
     </html>

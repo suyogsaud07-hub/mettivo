@@ -1,4 +1,4 @@
-import { type UserProfile, INTERESTS, PROMPTS } from "@/app/lib/mockData";
+import { type UserProfile, PROMPTS } from "@/lib/mockData";
 
 /**
  * Simple rule-based matching engine for the MVP.

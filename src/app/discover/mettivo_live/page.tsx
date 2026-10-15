@@ -20,14 +20,28 @@ const getGenderIcon = (gender: string) => {
   return '⚧';
 };
 
-const getRandomTag = () => {
-  const tags = ['Soft', 'Mysterious', 'Chill', 'Energetic', 'Sweet'];
-  return tags[Math.floor(Math.random() * tags.length)];
+const VOICE_TAGS = ['Soft', 'Mysterious', 'Chill', 'Energetic', 'Sweet'];
+
+/**
+ * Deterministic bucket derived from a seed string.
+ *
+ * These values render on the server and again on the client, so they must NOT
+ * come from Math.random(): that causes a hydration mismatch and makes the
+ * labels change on every re-render.
+ */
+const seedIndex = (seed: string, buckets: number): number => {
+  let hash = 0;
+  for (let i = 0; i < seed.length; i += 1) {
+    hash = (hash * 31 + seed.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash) % buckets;
 };
 
-const getRandomDuration = () => {
-  return Math.floor(Math.random() * 8) + 3; // Random between 3 and 10 seconds
-};
+const tagFor = (id: string): string =>
+  VOICE_TAGS[seedIndex(`${id}:tag`, VOICE_TAGS.length)];
+
+// Stable "voice card" length between 3 and 10 seconds.
+const durationFor = (id: string): number => 3 + seedIndex(`${id}:duration`, 8);
 
 export default function MettivoLivePage() {
   const router = useRouter();
@@ -47,7 +61,7 @@ export default function MettivoLivePage() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.push('/auth'); return; }
 
-      let query = supabase
+      const query = supabase
         .from('profiles')
         .select('*')
         .neq('id', user.id)
@@ -189,7 +203,7 @@ export default function MettivoLivePage() {
 
               <div style={styles.cardInfo}>
                 <div style={styles.tagRow}>
-                  <span style={styles.tagSoft}>{getRandomTag()}</span>
+                  <span style={styles.tagSoft}>{tagFor(profile.id)}</span>
                   <span style={styles.tagChatting}>{activeTab}</span>
                 </div>
                 <div style={styles.nameRow}>
@@ -200,7 +214,7 @@ export default function MettivoLivePage() {
                 
                 <button style={styles.voiceCardBtn} onClick={() => alert('Playing voice card...')}>
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
-                  {getRandomDuration()}"
+                  {`${durationFor(profile.id)}"`}
                 </button>
               </div>
 

@@ -48,8 +48,9 @@ export default function DiscoverPage() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
 
+  // NOTE: `loading` already defaults to true, so this must not set it
+  // synchronously — doing so inside the mount effect causes a cascading render.
   const loadOnlineProfiles = async () => {
-    setLoading(true);
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) { router.push('/auth'); return; }
 
@@ -84,7 +85,10 @@ export default function DiscoverPage() {
     setLoading(false);
   };
 
-  useEffect(() => { loadOnlineProfiles(); }, []);
+  // `loadOnlineProfiles` only calls setState after an `await`, so this is a
+  // one-shot mount fetch, not a synchronous setState that cascades renders.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { void loadOnlineProfiles(); }, []);
 
   const toggleGender = (gender: string) => {
     setSelectedGenders(prev => prev.includes(gender) ? prev.filter(g => g !== gender) : [...prev, gender]);
@@ -92,7 +96,8 @@ export default function DiscoverPage() {
 
   const handleApplyFilters = () => {
     setIsFilterOpen(false);
-    loadOnlineProfiles();
+    setLoading(true);
+    void loadOnlineProfiles();
   };
 
   const startRecording = async () => {

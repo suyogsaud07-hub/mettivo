@@ -31,7 +31,7 @@ export default function CameraModal({ onCapture, onClose }: CameraModalProps) {
         if (videoRef.current) {
           videoRef.current.srcObject = mediaStream;
         }
-      } catch (err: any) {
+      } catch (err) {
         console.error("Error accessing camera:", err);
         setError("Camera access denied. Please check your browser permissions.");
       }

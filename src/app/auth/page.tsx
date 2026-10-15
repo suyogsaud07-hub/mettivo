@@ -2,8 +2,10 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { supabase } from '@/lib/supabase'; 
+import { supabase } from '@/lib/supabase';
 
+/** OAuth providers offered on this screen. */
+type OAuthProvider = 'google' | 'facebook' | 'twitter';
 
 export default function AuthPage() {
   const router = useRouter();
@@ -16,7 +18,7 @@ export default function AuthPage() {
     setLoading(true);
     try {
       if (provider === 'Google' || provider === 'Facebook' || provider === 'Twitter') {
-        const { error } = await supabase.auth.signInWithOAuth({ provider: provider.toLowerCase() as any, options: { redirectTo: `${window.location.origin}/auth/callback` } });
+        const { error } = await supabase.auth.signInWithOAuth({ provider: provider.toLowerCase() as OAuthProvider, options: { redirectTo: `${window.location.origin}/auth/callback` } });
         if (error) throw error;
       } else if (provider === 'Email') {
         const email = prompt("Enter your email address:");
@@ -38,8 +40,10 @@ export default function AuthPage() {
         }
         setLoading(false);
       }
-    } catch (error: any) {
-      alert(`Authentication error: ${error.message}`);
+    } catch (error) {
+      alert(
+        `Authentication error: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
       setLoading(false);
     }
   };

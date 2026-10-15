@@ -1,90 +1,191 @@
 'use client';
-import { useEffect, useState, use } from 'react';
+
+import { useEffect, useState } from 'react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
+import { type MessageRow } from '@/lib/types';
+import MobileNav from '../components/layout/MobileNav';
 
-export default function ChatPage({ params }: { params: Promise<{ matchId: string }> }) {
-  const resolvedParams = use(params);
-  const matchId = resolvedParams.matchId;
+interface ConversationSummary {
+  matchId: string;
+  lastMessage: string;
+  lastMessageAt: string;
+  isMine: boolean;
+}
 
-  const [messages, setMessages] = useState<any[]>([]);
-  const [newMessage, setNewMessage] = useState('');
-  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+/** `YYYY-MM-DD HH:mm` — deterministic, so it cannot differ between renders. */
+function formatTimestamp(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(
+    date.getHours()
+  )}:${pad(date.getMinutes())}`;
+}
+
+/**
+ * `/chat` — conversation list.
+ *
+ * This route previously rendered a copy of the individual chat room, but it has
+ * no `[matchId]` segment, so every query ran with `match_id = undefined` and
+ * the room was permanently empty.
+ *
+ * Rows are grouped from the `messages` table; RLS decides which conversations
+ * are visible to the signed-in user.
+ */
+export default function ChatListPage() {
+  const router = useRouter();
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const init = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) setCurrentUserId(user.id);
+    let isMounted = true;
 
-      const { data } = await supabase
+    const loadConversations = async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!isMounted) return;
+
+      if (!user) {
+        router.replace('/auth');
+        return;
+      }
+
+      const { data, error } = await supabase
         .from('messages')
-        .select('*')
-        .eq('match_id', matchId)
-        .order('created_at', { ascending: true });
-      if (data) setMessages(data);
+        .select('id, match_id, sender_id, content, created_at')
+        .order('created_at', { ascending: false })
+        .limit(200);
+
+      if (!isMounted) return;
+
+      if (error) {
+        console.error('Failed to load conversations:', error.message);
+        setLoading(false);
+        return;
+      }
+
+      // Rows arrive newest-first, so the first row seen per match is the latest.
+      const seen = new Set<string>();
+      const summaries: ConversationSummary[] = [];
+
+      for (const row of (data ?? []) as MessageRow[]) {
+        if (seen.has(row.match_id)) continue;
+        seen.add(row.match_id);
+        summaries.push({
+          matchId: row.match_id,
+          lastMessage: row.content,
+          lastMessageAt: row.created_at,
+          isMine: row.sender_id === user.id,
+        });
+      }
+
+      setConversations(summaries);
+      setLoading(false);
     };
 
-    init();
-
-    const channel = supabase
-      .channel(`chat:${matchId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'messages',
-          filter: `match_id=eq.${matchId}`,
-        },
-        (payload: any) => {
-          setMessages((prev) => [...prev, payload.new]);
-        }
-      )
-      .subscribe();
+    void loadConversations();
 
     return () => {
-      supabase.removeChannel(channel);
+      isMounted = false;
     };
-  }, [matchId]);
-
-  const sendMessage = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newMessage.trim() || !currentUserId) return;
-
-    await supabase.from('messages').insert({
-      match_id: matchId,
-      sender_id: currentUserId,
-      content: newMessage.trim(),
-    });
-
-    setNewMessage('');
-  };
+  }, [router]);
 
   return (
-    <div className="flex flex-col h-screen max-w-md mx-auto p-4 bg-neutral-950 text-white">
-      <div className="flex-1 overflow-y-auto space-y-3 mb-4 pr-2">
-        {messages.map((msg) => {
-          const isMe = msg.sender_id === currentUserId;
-          return (
-            <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
-              <div className={`p-3 rounded-2xl max-w-[75%] ${isMe ? 'bg-rose-500 text-white' : 'bg-neutral-800 text-neutral-200'}`}>
-                {msg.content}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      <form onSubmit={sendMessage} className="flex gap-2">
-        <input
-          type="text"
-          value={newMessage}
-          onChange={(e) => setNewMessage(e.target.value)}
-          placeholder="Type a message..."
-          className="flex-1 p-3 rounded-xl bg-neutral-900 border border-neutral-800 text-white focus:outline-none"
-        />
-        <button type="submit" className="px-5 py-3 bg-rose-500 font-semibold rounded-xl text-white">
-          Send
-        </button>
-      </form>
+    <div
+      style={{
+        minHeight: '100vh',
+        backgroundColor: '#0D0A10',
+        color: '#F2E9E4',
+        paddingBottom: '100px',
+      }}
+    >
+      <header style={{ padding: '20px', borderBottom: '1px solid #29202D' }}>
+        <h1 style={{ fontSize: '20px', fontWeight: 700, margin: 0 }}>Messages</h1>
+      </header>
+
+      {loading ? (
+        <p style={{ padding: '24px 20px', color: '#B58A83', fontSize: '14px' }}>
+          Loading conversations...
+        </p>
+      ) : conversations.length === 0 ? (
+        <div style={{ padding: '48px 24px', textAlign: 'center' }}>
+          <p style={{ color: '#B58A83', fontSize: '14px', marginBottom: '20px' }}>
+            No conversations yet. Find someone you connect with to start one.
+          </p>
+          <Link
+            href="/discover"
+            style={{
+              display: 'inline-block',
+              backgroundColor: '#D4B18A',
+              color: '#17121C',
+              padding: '12px 28px',
+              borderRadius: '30px',
+              fontSize: '14px',
+              fontWeight: 700,
+              textDecoration: 'none',
+            }}
+          >
+            Start discovering
+          </Link>
+        </div>
+      ) : (
+        <ul
+          style={{
+            listStyle: 'none',
+            margin: 0,
+            padding: '20px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '12px',
+          }}
+        >
+          {conversations.map((conversation) => (
+            <li key={conversation.matchId}>
+              <Link
+                href={`/chat/${conversation.matchId}`}
+                style={{
+                  display: 'block',
+                  backgroundColor: '#1C1822',
+                  border: '1px solid #29202D',
+                  borderRadius: '16px',
+                  padding: '16px',
+                  textDecoration: 'none',
+                  color: '#F2E9E4',
+                }}
+              >
+                <p
+                  style={{
+                    margin: 0,
+                    fontSize: '14px',
+                    color: '#F2E9E4',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {conversation.isMine ? `You: ${conversation.lastMessage}` : conversation.lastMessage}
+                </p>
+                <p
+                  style={{
+                    margin: '6px 0 0 0',
+                    fontSize: '11px',
+                    color: '#B58A83',
+                  }}
+                >
+                  {formatTimestamp(conversation.lastMessageAt)}
+                </p>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <MobileNav />
     </div>
   );
 }

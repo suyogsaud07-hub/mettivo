@@ -3,8 +3,10 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 // FIXED IMPORT PATH: Go up two levels from app/signup to src/lib
-import { supabase } from '@/lib/supabase'; 
+import { supabase } from '@/lib/supabase';
 
+/** OAuth providers offered on this screen. */
+type OAuthProvider = 'google' | 'facebook' | 'twitter';
 
 export default function SignUpPage() {
   const router = useRouter();
@@ -25,7 +27,7 @@ export default function SignUpPage() {
       if (provider === 'Google' || provider === 'Facebook' || provider === 'Twitter') {
         // OAuth Login (Google, Facebook, Twitter)
         const { error } = await supabase.auth.signInWithOAuth({
-          provider: provider.toLowerCase() as any,
+          provider: provider.toLowerCase() as OAuthProvider,
           options: {
             redirectTo: `${window.location.origin}/auth/callback`,
           },
@@ -74,8 +76,10 @@ export default function SignUpPage() {
         }
         setLoading(false);
       }
-    } catch (error: any) {
-      alert(`Authentication error: ${error.message}`);
+    } catch (error) {
+      alert(
+        `Authentication error: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
       setLoading(false);
     }
   };
