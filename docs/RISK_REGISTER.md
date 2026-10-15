@@ -24,13 +24,13 @@
 
 | ID | Risk | L | I | Exposure | Status |
 | --- | --- | --- | --- | --- | --- |
-| `R-01` | RLS not enforced on the live project — personal data readable anonymously | 5 | 5 | 🔴 25 | **OPEN · MATERIALISED** |
-| `R-02` | Migrations applied by hand; live schema drifts from the repository | 5 | 4 | 🔴 20 | **OPEN · MATERIALISED** |
+| `R-01` | RLS not enforced on the live project — personal data readable anonymously | 1 | 5 | 🟡 5 | **CLOSED 2026-10-15** |
+| `R-02` | Migrations applied by hand; live schema drifts from the repository | 2 | 4 | 🟠 8 | **MITIGATED** — in sync, CI-monitored; still applied by hand |
 | `R-03` | Client is the UX layer, database is the only gate — one missing policy exposes a table | 3 | 5 | 🔴 15 | Open · mitigated |
 | `R-04` | `birth_date` exposed on a public surface | 3 | 4 | 🟠 12 | Open · partly mitigated |
-| `R-05` | Minors can register; age gate is self-attested and clamped | 3 | 5 | 🔴 15 | Open |
-| `R-06` | Blocking stored but not enforced server-side | 4 | 3 | 🟠 12 | Open, in progress (M12) |
-| `R-07` | Suspended members remain discoverable | 3 | 3 | 🟡 9 | Open — pending product decision `Q1` |
+| `R-05` | Minors can register; age gate is self-attested and clamped | 1 | 5 | 🟡 5 | **MITIGATED** — gate can no longer be bypassed; policy Q1 open |
+| `R-06` | Blocking stored but not enforced server-side | 1 | 3 | 🟢 3 | **CLOSED 2026-10-15** (M12) |
+| `R-07` | Suspended members remain discoverable | 1 | 3 | 🟢 3 | **CLOSED 2026-10-15** (M12) |
 | `R-08` | No observability — production failures are invisible | 4 | 3 | 🟠 12 | Open (M18) |
 | `R-09` | Dev-tooling advisories with no fix break a naive audit gate | 3 | 2 | 🟡 6 | Mitigated |
 | `R-10` | Service worker pins clients to a stale bundle | 2 | 3 | 🟡 6 | Mitigated |
@@ -85,37 +85,74 @@ forbids outright.
 20261015190000_onboarding_wizard_columns.sql
 ```
 
-Then `./scripts/verify-rls.sh` must exit 0. **Status stays OPEN until that
-command exits 0 and the output is quoted in the register.**
+Then `./scripts/verify-rls.sh` must exit 0.
 
-**Residual control.** `tests/database` proves the migrations produce zero-row
-anonymous access on a real PostgreSQL, so the fix is believed correct — but
-"believed" is not "verified" (`TESTING_STANDARDS.md` §5).
+**CLOSED 2026-10-15.** The operator applied `supabase/apply_all.sql` in the
+Supabase SQL Editor (0 errors). Verification, run immediately afterwards:
+
+```
+$ ./scripts/verify-rls.sh
+  profiles         PASS   no rows returned (*/0)
+  messages         PASS   no rows returned (*/0)
+  follows          PASS   no rows returned (*/0)
+  matches          PASS   HTTP 401 - access denied
+  reports          PASS   no rows returned (*/0)
+  blocked_users    PASS   no rows returned (*/0)
+  likes            PASS   HTTP 401 - access denied
+
+RESULT: PASS - 7 table(s) verified, 0 skipped, 0 leaks.
+(exit 0)
+```
+
+`profiles` previously reported `FAIL 1 row(s) readable WITHOUT authentication`;
+it now reports zero rows. The exposure was real and is now gone.
+
+**Residual control.** `tests/database` and `tests/database/live_shape.test.ts`
+pin the property on a real PostgreSQL so it cannot silently return.
 
 ---
 
-### `R-02` — Hand-applied migrations drift from the repository 🔴
+### `R-02` — Hand-applied migrations drift from the repository 🟠
 
 | | |
 | --- | --- |
-| **Likelihood** | 5 — already the case |
+| **Likelihood** | 2 — drift is now detected automatically |
 | **Impact** | 4 — features fail at runtime, schema is unknowable from the repo |
 
 **Description.** There is no migration runner. Files are pasted into the SQL
 Editor by hand, so the repository and the live database can disagree
 indefinitely, and half-applied state is likely.
 
-**Evidence.** `likes` returns HTTP 404 on the live project; all nine onboarding
-wizard columns return HTTP 400. Both exist in the repository.
+**Evidence of the original exposure.** Before remediation, the live project was
+missing 16 migrations: `likes` returned HTTP 404, all nine onboarding-wizard
+columns returned HTTP 400, and the M13 evidence columns did not exist.
 
-**Mitigation (M4/M18).**
-1. `scripts/check-schema-drift.sh` — probes the live PostgREST schema read-only
-   and diffs it against the tables/columns the migrations create. PII-free:
-   it uses `limit=0` column probes and never retrieves rows.
-2. Run it in CI on `main` (skipped when secrets are absent) so drift is visible
-   the day it appears.
-3. A documented single-pass apply procedure in `docs/DEPLOYMENT.md`, with an
-   idempotency re-run as step 2.
+**MITIGATED 2026-10-15.**
+
+```
+$ ./scripts/check-schema-drift.sh
+RESULT: IN SYNC — 42 expectations verified, 0 missing.
+(exit 0)
+```
+
+Additionally verified by probing, as an anonymous caller, all 13 RPCs the UI
+calls (`discover_profiles`, `block_member`, `unblock_member`, `unmatch_member`,
+`is_blocked_pair`, `record_like`, `unread_counts`, `mark_conversation_read`,
+`admin_report_queue`, `admin_resolve_report`, `export_my_data`,
+`delete_my_account`, `is_moderator`): every one is present and returns HTTP 401
+to an anonymous caller.
+
+**Status is MITIGATED rather than Closed** because the root cause — manual
+application — remains. The compensating controls are:
+1. `scripts/check-schema-drift.sh` derives the expected schema from the
+   migration files themselves and diffs it against the live project.
+2. It runs in CI on every push to `main` (skipped when secrets are absent), so
+   divergence is visible the day it appears.
+3. `supabase/apply_all.sql` is a generated, verified single-pass bundle.
+
+The residual risk is that a developer merges a migration and does not apply it
+until CI reports drift. Closing this properly requires a migration runner or a
+deployment step, which is not in v1 scope.
 
 ---
 
@@ -337,10 +374,15 @@ move media to Supabase Storage with a size cap. Not v1-blocking.
 
 | ID | Closed on | Evidence |
 | --- | --- | --- |
+| `R-01` | 2026-10-15 | `./scripts/verify-rls.sh` exits **0**: `RESULT: PASS - 7 table(s) verified, 0 skipped, 0 leaks.` `profiles` moved from `FAIL 1 row(s) readable` to `PASS no rows returned`. |
+| `R-06` | 2026-10-15 | M12 enforces blocking in the database (`is_blocked_pair`, `block_member`, `discover_profiles`, a message-delivery trigger). `tests/database/blocking.test.ts` — 10 tests, including refusal to like, to deliver, and to appear in discovery, in both directions. |
+| `R-07` | 2026-10-15 | `discover_profiles()` excludes suspended members; asserted in `tests/database/blocking.test.ts`. The product question (`PRD_V1` Q1) of whether to hide them anywhere else remains open, but discovery is closed. |
 | `R-18` | 2026-10-15 | Supabase default privileges were not mirrored in the test harness, so anonymous zero-row assertions on migration-created tables proved only that a GRANT was missing. Fixed; `tests/security` §1 pins the grant so the assertion cannot be vacuous again. |
 | `R-19` | 2026-10-15 | The 15-step wizard wrote nine columns that existed only in the legacy `migrations/` directory, so onboarding failed at step 15. Relocated to `supabase/migrations/20261015190000_onboarding_wizard_columns.sql` and pinned by `tests/database`. |
-| `R-20` | 2026-10-15 | Discovery read `profiles` with `select('*')`, shipping `birth_date`, `politics` and `religion` for every candidate. Now reads `public_profiles`; pinned by `tests/security` §5. |
+| `R-20` | 2026-10-15 | Discovery read `profiles` with `select('*')`, shipping `birth_date`, `politics` and `religion` for every candidate. Both feeds now go through the allow-listed `discover_profiles()`; pinned by `tests/security` §5. |
 | `R-21` | 2026-10-15 | Three M17 security tests were red and two were vacuous (a no-op write and an empty-table assertion). Fixed and falsification-tested. |
+| `R-22` | 2026-10-15 | Every signed-in member could read every private message and the whole follow graph — the M6 baseline used `auth.uid() is not null` as the SELECT policy, and the M6 tests only checked anonymous access. Replaced with participant-only policies (M11); pinned by `tests/database/messaging.test.ts`. |
+| `R-23` | 2026-10-15 | `supabase/apply_all.sql` failed on the live project with `operator does not exist: text = uuid`: the harness declared `messages.match_id` as `text`, the live project declares it `uuid`. All seven comparisons now cast both sides. Fixed under `R-02`'s new `createLiveLikeDb()` harness, which mirrors the live column types. |
 
 ---
 
@@ -348,7 +390,7 @@ move media to Supabase Storage with a size cap. Not v1-blocking.
 
 | Date | Incident | Blast radius | Remediation | Follow-up |
 | --- | --- | --- | --- | --- |
-| 2026-10-15 | Anonymous read of `profiles` on the live project (`R-01`) | At least 1 real profile row, including `birth_date` | **Not yet remediated** — migrations must be applied | Track `R-01` to closure; re-probe after applying |
+| 2026-10-15 | Anonymous read of `profiles` on the live project (`R-01`) | At least 1 real profile row, including `birth_date` | **RESOLVED 2026-10-15** — `supabase/apply_all.sql` applied in the Supabase SQL Editor (0 errors). `./scripts/verify-rls.sh` now exits 0 with `profiles PASS — no rows returned`. | `R-01` closed. `R-02` stays mitigated until a migration runner exists. |
 
 ---
 

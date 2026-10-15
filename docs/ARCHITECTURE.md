@@ -97,17 +97,21 @@ Session persistence is handled by `supabase-js` in the browser
 
 ## 5. Live database schema
 
-Verified by probing the live project read-only on **2026-10-15**.
+Verified by probing the live project read-only on **2026-10-15**, after the
+migration set was applied.
 
-> ⚠️ **The migrations in `supabase/migrations/` have not been applied to the live
-> project.** An unauthenticated `GET /rest/v1/profiles` returned a real row
-> (`content-range: 0-0/1`) and `/rest/v1/likes` returned **404**. Migrations are
-> applied by hand (§ `supabase/migrations/README.md`); until that is done, the
-> `likes`/`matches`/`notifications`/`moments`/`game-zone` features have no tables
-> to talk to and the 15-step onboarding wizard cannot save. See §6 gap 1 for the
-> remediation and re-run `./scripts/verify-rls.sh` to prove the fix.
+> ✅ **In sync.** `./scripts/check-schema-drift.sh` reports
+> `RESULT: IN SYNC — 42 expectations verified, 0 missing` (18 tables, 24 added
+> columns), and `./scripts/verify-rls.sh` reports
+> `RESULT: PASS - 7 table(s) verified, 0 skipped, 0 leaks`.
+>
+> The project previously exposed `profiles` to anonymous callers and was missing
+> 16 migrations. See `RISK_REGISTER.md` `R-01`/`R-02` for the incident record.
 
-**On the live project: 6 tables exist; `likes` is missing.**
+**18 tables exist**, including `likes`, `matches`, `notifications`, `moments`,
+`moment_likes`, `moment_comments`, `game_catalog`, `game_results`, `user_roles`,
+`admin_audit_log`, `rate_limit_counters`, `rate_limit_rules`,
+`match_read_state`, `interest_categories`, `interests` and `prompt_catalogue`.
 
 | Table | Status | Key columns |
 | --- | --- | --- |
@@ -126,44 +130,34 @@ These are recorded so no future change assumes they are solved.
 
 ### Open
 
-1. **🔴 `profiles` is still world-readable on the LIVE project.** Probed
-   2026-10-15 with the public anon key: an unauthenticated
-   `GET /rest/v1/profiles` returns a real row (`content-range: 0-0/1`), and the
-   leaked column set includes `birth_date`. This violates CONSTITUTION Article 1.
-   The fix is written and covered by tests but **has not been applied**.
-   Remediation, in the Supabase SQL Editor, in order:
-   `20261015120000_m6_profiles_rls_lockdown.sql`,
-   `20261015120100_m6_enable_rls_all_tables.sql`,
-   `20261015120200_m6_public_profiles_view.sql`, then every remaining file.
-   Prove it with `./scripts/verify-rls.sh` (must exit 0).
-2. **The rest of the migration set is unapplied on live**, so `likes`,
-   `matches`, `notifications`, `moments`, `game_results`, `user_roles` and the
-   15-step wizard's columns do not exist there. Any code path touching them
-   fails at runtime until the set is applied.
-3. **`migrations/reports_blocked_users.sql` is not executable** (0/22 statements):
+1. **`migrations/reports_blocked_users.sql` is not executable** (0/22 statements):
    `uuid_generate_v4()` without the `uuid-ossp` extension, and `FOR INSERT ...
-   USING` (must be `WITH CHECK`).
-4. **`src/lib/matching.ts` is imported by nothing but its own test** — the scoring
-   engine is dead product code.
-5. **Blocking is only partly enforced** — `blocked_users` is consulted by the
-   report page and the chat room, but not by discovery or the chat list.
-6. **`src/app/people/page.tsx` is a placeholder** and is linked from the matches screen.
-7. **Suspended members are still discoverable.** `discover_profiles()` excludes
-   them (M12), so this is resolved on the read path; the product decision in
-   `PRD_V1.md` Q1 is what remains.
-8. **`birth_date` is still readable by any signed-in member** via `profiles`.
+   USING` (must be `WITH CHECK`). It now carries a `DO NOT APPLY` header and is
+   superseded by migration 11 / the M6 pair.
+2. **`src/app/people/page.tsx` is a placeholder** and is linked from the matches screen.
+3. **`birth_date` is still readable by any signed-in member** via `profiles`.
    `M15` tracks revoking it (`revoke select (birth_date) ...`) once
    `profile/dashboard` renders the stored `age` instead of the raw date.
-9. **No observability.** No error reporting or structured logging. `/api/health`
+4. **Suspension only hides a member from discovery.** `discover_profiles()`
+   excludes suspended members; whether they should also disappear from the chat
+   list and moments is the open product question `PRD_V1.md` Q1.
+5. **No observability.** No error reporting or structured logging. `/api/health`
    reports configuration only.
-10. **No migration runner.** Migrations are applied by hand in the SQL Editor.
-    `scripts/check-schema-drift.sh` is the compensating control.
+6. **No migration runner.** Migrations are applied by hand in the SQL Editor.
+   `scripts/check-schema-drift.sh` derives the expected schema from the migration
+   files and diffs it against the live project, and runs in CI.
+7. **Integration and end-to-end test layers are missing.**
+   `TESTING_STANDARDS.md` §3.2 (mocked-Supabase client tests) and §3.3
+   (Playwright journeys) are still outstanding; the database layer is covered.
 
 ### Resolved
 
-- ~~`profiles` SELECT world-readable~~ — fixed in `supabase/migrations/` (M6);
-  blocked from regressing by `tests/database` + `tests/security`. Still needs
-  applying to live (gap 1).
+- ~~`profiles` SELECT world-readable~~ — fixed in `supabase/migrations/` (M6),
+  **applied to live on 2026-10-15**, and blocked from regressing by
+  `tests/database` + `tests/security`. `./scripts/verify-rls.sh` exits 0.
+- ~~16 migrations unapplied on the live project~~ — applied via
+  `supabase/apply_all.sql`; `./scripts/check-schema-drift.sh` reports
+  `IN SYNC — 42 expectations verified, 0 missing`.
 - ~~Every signed-in member could read every private message and the whole follow
   graph~~ — the M6 baseline used `auth.uid() is not null` as the SELECT policy on
   both `messages` and `follows`, and the M6 tests only ever checked *anonymous*

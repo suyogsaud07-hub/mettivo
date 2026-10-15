@@ -157,6 +157,76 @@ for entry in "${EXPECTED_COLUMNS[@]}"; do
   fi
 done
 
+# ---------------------------------------------------------------------------
+# 3. Functions the UI calls.
+# ---------------------------------------------------------------------------
+# A table existing proves nothing about the RPCs that operate on it. These are
+# probed as an anonymous caller with the argument names the client actually
+# sends. NOTE: PostgREST answers 404 both for "no such function" and for "no
+# overload matching these arguments", so the payloads below must carry every
+# REQUIRED argument name or a healthy function looks missing.
+RPC_ZERO="00000000-0000-0000-0000-000000000000"
+
+rpc_probe() {
+  # $1 = function name, $2 = JSON body
+  curl -s -o /dev/null -w '%{http_code}' -X POST \
+    "${SUPABASE_URL}/rest/v1/rpc/$1" \
+    -H "apikey: ${ANON_KEY}" \
+    -H "Authorization: Bearer ${ANON_KEY}" \
+    -H 'Content-Type: application/json' \
+    -d "$2" --max-time 20 2>/dev/null
+}
+
+RPC_SPECS=(
+  "discover_profiles|{}"
+  "unread_counts|{}"
+  "admin_report_queue|{}"
+  "export_my_data|{}"
+  "delete_my_account|{}"
+  "is_moderator|{}"
+  "block_member|{\"p_target\":\"${RPC_ZERO}\"}"
+  "unblock_member|{\"p_target\":\"${RPC_ZERO}\"}"
+  "unmatch_member|{\"p_target\":\"${RPC_ZERO}\"}"
+  "is_blocked_pair|{\"a\":\"${RPC_ZERO}\",\"b\":\"${RPC_ZERO}\"}"
+  "record_like|{\"target_user\":\"${RPC_ZERO}\",\"is_like_value\":true}"
+  "mark_conversation_read|{\"p_match_id\":\"${RPC_ZERO}\"}"
+  "admin_resolve_report|{\"p_report_id\":\"${RPC_ZERO}\",\"p_status\":\"dismissed\"}"
+)
+
+if [[ "$QUIET" -eq 0 ]]; then
+  echo
+  echo "RPCs the UI calls (${#RPC_SPECS[@]} expected)"
+fi
+
+for spec in "${RPC_SPECS[@]}"; do
+  fn="${spec%%|*}"
+  body="${spec#*|}"
+  code="$(rpc_probe "$fn" "$body")"
+  checked=$((checked + 1))
+  case "$code" in
+    404)
+      printf '  %-24s MISSING — function does not exist (or has different argument names)\n' "$fn"
+      drift=$((drift + 1))
+      ;;
+    401|403)
+      # Present and correctly refusing an anonymous caller.
+      [[ "$QUIET" -eq 0 ]] && printf '  %-24s OK (anon refused, HTTP %s)\n' "$fn" "$code"
+      ;;
+    000|"")
+      printf '  %-24s UNREACHABLE — no response from Supabase\n' "$fn"
+      drift=$((drift + 1))
+      ;;
+    200)
+      # A privileged RPC answering an anonymous caller is a security defect.
+      printf '  %-24s !! CALLABLE BY ANON — expected a refusal\n' "$fn"
+      drift=$((drift + 1))
+      ;;
+    *)
+      printf '  %-24s present (HTTP %s)\n' "$fn" "$code"
+      ;;
+  esac
+done
+
 echo
 if [[ "$drift" -gt 0 ]]; then
   echo "RESULT: DRIFT — ${drift} expectation(s) missing, ${checked} checked." >&2
