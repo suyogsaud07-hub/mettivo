@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { type MessageRow } from '@/lib/types';
+import { fetchUnreadCounts } from '@/lib/messages';
 import MobileNav from '../components/layout/MobileNav';
 
 interface ConversationSummary {
@@ -12,6 +13,8 @@ interface ConversationSummary {
   lastMessage: string;
   lastMessageAt: string;
   isMine: boolean;
+  /** M11: unread messages from the other member, computed by the database. */
+  unread: number;
 }
 
 /** `YYYY-MM-DD HH:mm` — deterministic, so it cannot differ between renders. */
@@ -81,10 +84,18 @@ export default function ChatListPage() {
           lastMessage: row.content,
           lastMessageAt: row.created_at,
           isMine: row.sender_id === user.id,
+          unread: 0,
         });
       }
 
-      setConversations(summaries);
+      // M11: the badge comes from `unread_counts()` in the database, so it
+      // agrees with the messages RLS actually lets this member see.
+      const counts = await fetchUnreadCounts();
+      if (!isMounted) return;
+
+      setConversations(
+        summaries.map((summary) => ({ ...summary, unread: counts[summary.matchId] ?? 0 }))
+      );
       setLoading(false);
     };
 
@@ -179,6 +190,22 @@ export default function ChatListPage() {
                 >
                   {formatTimestamp(conversation.lastMessageAt)}
                 </p>
+                {conversation.unread > 0 && (
+                  <span
+                    style={{
+                      display: 'inline-block',
+                      marginTop: '8px',
+                      backgroundColor: '#D4B18A',
+                      color: '#17121C',
+                      borderRadius: '10px',
+                      padding: '2px 10px',
+                      fontSize: '11px',
+                      fontWeight: 700,
+                    }}
+                  >
+                    {conversation.unread} new
+                  </span>
+                )}
               </Link>
             </li>
           ))}

@@ -4,6 +4,9 @@ import { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase'; 
 import { useRouter } from 'next/navigation';
 import MobileNav from '../components/layout/MobileNav';
+import { recordLike, LikeError } from '@/lib/likes';
+import { blockMember, BlockingError } from '@/lib/blocking';
+import { fetchDiscoveryCandidates, rankDiscovery } from '@/lib/discovery';
 
 interface Profile {
   id: string;
@@ -45,6 +48,11 @@ export default function DiscoverPage() {
   const [isRecording, setIsRecording] = useState(false);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [isCallModalOpen, setIsCallModalOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState<string | null>(null);
+  // M10: like/pass state
+  const [decisionPending, setDecisionPending] = useState<string | null>(null);
+  const [matchNotice, setMatchNotice] = useState<{ name: string } | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
 
@@ -54,10 +62,12 @@ export default function DiscoverPage() {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) { router.push('/auth'); return; }
 
-    // GATEKEEPER: Check if profile exists first
+    // GATEKEEPER: Check if profile exists first. This also loads the fields the
+    // ranking engine scores me on, so the feed is ordered for the actual member
+    // rather than for a generic one.
     const { data: profileCheck } = await supabase
       .from('profiles')
-      .select('onboarding_completed')
+      .select('onboarding_completed, intention, interests, prompts')
       .eq('id', user.id)
       .single();
 
@@ -66,23 +76,53 @@ export default function DiscoverPage() {
       return;
     }
 
-    let query = supabase
-      .from('profiles')
-      .select('*')
-      .neq('id', user.id)
-      .eq('onboarding_completed', true)
-      .eq('is_online', true)
-      .gte('age', minAge)
-      .lte('age', maxAge)
-      .order('display_name', { ascending: true });
+    try {
+      // M12: eligibility is decided by `discover_profiles()` in PostgreSQL --
+      // blocked pairs, suspended members, anyone already liked/passed and
+      // anyone already matched are removed before the browser sees them.
+      // M9: ordering is the deterministic rule-based score, applied here.
+      const candidates = await fetchDiscoveryCandidates({
+        minAge,
+        maxAge,
+        genders: selectedGenders,
+        onlineOnly: true,
+        limit: 50,
+      });
 
-    if (selectedGenders.length > 0 && selectedGenders.length < 3) {
-      query = query.in('gender', selectedGenders);
+      const me = {
+        id: user.id,
+        intention: typeof profileCheck.intention === 'string' ? profileCheck.intention : null,
+        interests: Array.isArray(profileCheck.interests) ? profileCheck.interests : [],
+        promptAnswers:
+          typeof profileCheck.prompts === 'object' && profileCheck.prompts !== null
+            ? (profileCheck.prompts as Record<string, string>)
+            : {},
+      };
+
+      const ranked = rankDiscovery(me, candidates, { limit: 50 });
+
+      setProfiles(
+        ranked.map(({ profile }) => ({
+          id: profile.id,
+          display_name: profile.displayName,
+          age: profile.age ?? 18,
+          gender: profile.gender ?? '',
+          city: profile.city ?? '',
+          country: profile.country ?? '',
+          avatar_url: profile.avatarUrl ?? '',
+          intention: profile.intention ?? '',
+          is_online: profile.online,
+        }))
+      );
+    } catch (err) {
+      console.error('[discover] failed to load candidates:', err);
+      setActionError(
+        err instanceof Error ? err.message : 'We could not load members right now. Please try again.'
+      );
+    } finally {
+      // CONSTITUTION Article 2.8: the loading state must always terminate.
+      setLoading(false);
     }
-
-    const { data, error } = await query.limit(50);
-    if (!error && data) setProfiles(data);
-    setLoading(false);
   };
 
   // `loadOnlineProfiles` only calls setState after an `await`, so this is a
@@ -92,6 +132,74 @@ export default function DiscoverPage() {
 
   const toggleGender = (gender: string) => {
     setSelectedGenders(prev => prev.includes(gender) ? prev.filter(g => g !== gender) : [...prev, gender]);
+  };
+
+  /**
+   * M10: record a like or a pass.
+   *
+   * The decision is persisted server-side in a single transaction that also
+   * creates the match when the interest turns out to be mutual. The card is
+   * removed from the feed optimistically because the decision is final either
+   * way — re-liking the same person is idempotent.
+   */
+  const handleDecision = async (profile: Profile, isLike: boolean) => {
+    if (decisionPending) return;
+
+    setDecisionPending(profile.id);
+    setActionError(null);
+
+    try {
+      const result = await recordLike(profile.id, isLike);
+
+      setProfiles((prev) => prev.filter((item) => item.id !== profile.id));
+      setMenuOpen(null);
+
+      if (result.matched) {
+        setMatchNotice({ name: profile.display_name });
+      }
+    } catch (err) {
+      console.error('Failed to record decision:', err);
+      setActionError(
+        err instanceof LikeError
+          ? err.message
+          : 'Something went wrong. Please try again.'
+      );
+    } finally {
+      // Guarantees the buttons never stay stuck in a pending state.
+      setDecisionPending(null);
+    }
+  };
+
+  /**
+   * M12: block a member inline, without leaving the feed.
+   *
+   * The whole operation is one transaction in the database — the block, severing
+   * the match, and clearing both like decisions — so this is a single call and
+   * cannot half-apply. The card is removed locally because the member is now
+   * invisible to the server-side feed as well.
+   *
+   * Previously this menu item navigated to `/report?block=…`, which meant a
+   * member had to leave discovery to use the safety control.
+   */
+  const handleBlock = async (profile: Profile) => {
+    if (decisionPending) return;
+
+    setDecisionPending(profile.id);
+    setActionError(null);
+    setMenuOpen(null);
+
+    try {
+      await blockMember(profile.id);
+      setProfiles((prev) => prev.filter((item) => item.id !== profile.id));
+    } catch (err) {
+      console.error('Failed to block member:', err);
+      setActionError(
+        err instanceof BlockingError ? err.message : 'We could not block this member.'
+      );
+    } finally {
+      // Guarantees the button never stays stuck in a pending state.
+      setDecisionPending(null);
+    }
   };
 
   const handleApplyFilters = () => {
@@ -165,6 +273,11 @@ export default function DiscoverPage() {
     emptyState: { flex: 1, display: 'flex', flexDirection: 'column' as const, justifyContent: 'center', alignItems: 'center', padding: '40px', textAlign: 'center' as const },
     emptyTitle: { fontSize: '20px', fontWeight: '700', color: '#F2E9E4', marginBottom: '8px' },
     emptySubtitle: { fontSize: '14px', color: '#B58A83', marginBottom: '24px' },
+    moreBtn: { width: '36px', height: '36px', borderRadius: '50%', backgroundColor: 'rgba(28, 24, 34, 0.8)', border: '1px solid rgba(255,255,255,0.1)', display: 'flex', justifyContent: 'center', alignItems: 'center', cursor: 'pointer', color: '#F2E9E4' },
+    menuDropdown: { position: 'absolute' as const, top: '100%', right: '0', backgroundColor: '#1C1822', border: '1px solid #4A1828', borderRadius: '12px', overflow: 'hidden', minWidth: '140px', boxShadow: '0 10px 30px rgba(0,0,0,0.5)', zIndex: 100 },
+    menuItem: { display: 'flex', alignItems: 'center', gap: '8px', padding: '12px 16px', color: '#F2E9E4', fontSize: '14px', cursor: 'pointer', background: 'none', border: 'none', width: '100%', textAlign: 'left' as const },
+    menuItemHover: { backgroundColor: '#4A1828' },
+    decisionBtn: { width: '40px', height: '40px', borderRadius: '50%', border: '1px solid #4A1828', backgroundColor: 'transparent', fontSize: '16px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, lineHeight: '1' },
     modalOverlay: { position: 'fixed' as const, inset: 0, backgroundColor: 'rgba(13, 10, 16, 0.9)', backdropFilter: 'blur(8px)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 3000 },
     modalBox: { backgroundColor: '#1C1822', width: '90%', maxWidth: '350px', borderRadius: '24px', padding: '30px 24px', border: '1px solid #4A1828', textAlign: 'center' as const },
     modalTitle: { fontSize: '20px', fontWeight: '700', color: '#F2E9E4', marginBottom: '12px' },
@@ -220,17 +333,129 @@ export default function DiscoverPage() {
       ) : (
         <div style={styles.listContainer}>
           {profiles.map((profile) => (
-            <div key={profile.id} style={styles.listItem} onClick={() => alert(`Opening profile for ${profile.display_name}`)}>
-              <div style={styles.avatarWrapper}>
+            <div key={profile.id} style={styles.listItem}>
+              <div style={styles.avatarWrapper} onClick={() => alert(`Opening profile for ${profile.display_name}`)}>
                 {profile.avatar_url ? <img src={profile.avatar_url} alt={profile.display_name} style={styles.avatar} /> : <div style={{ ...styles.avatar, display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '24px' }}>👤</div>}
                 <div style={styles.onlineDot} />
               </div>
-              <div style={styles.infoWrapper}>
+              <div style={styles.infoWrapper} onClick={() => alert(`Opening profile for ${profile.display_name}`)}>
                 <div style={styles.nameRow}><span style={styles.flag}>{getCountryFlag(profile.country)}</span><span style={styles.name}>{profile.display_name}</span><span style={styles.genderIcon}>{getGenderIcon(profile.gender)}</span></div>
                 <div style={styles.bioText}>{profile.intention || 'Hey there! I am using Mettivo.'}</div>
               </div>
+
+              {/* M10: like / pass */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <button
+                  type="button"
+                  aria-label={`Pass on ${profile.display_name}`}
+                  disabled={decisionPending === profile.id}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void handleDecision(profile, false);
+                  }}
+                  style={{ ...styles.decisionBtn, color: '#B58A83', opacity: decisionPending === profile.id ? 0.5 : 1 }}
+                >
+                  ✕
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Like ${profile.display_name}`}
+                  disabled={decisionPending === profile.id}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void handleDecision(profile, true);
+                  }}
+                  style={{ ...styles.decisionBtn, backgroundColor: '#4A1828', color: '#D4B18A', opacity: decisionPending === profile.id ? 0.5 : 1 }}
+                >
+                  {decisionPending === profile.id ? '…' : '♥'}
+                </button>
+              </div>
+
+              <div style={{ position: 'relative' }}>
+                <button
+                  style={styles.moreBtn}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setMenuOpen(menuOpen === profile.id ? null : profile.id);
+                  }}
+                >
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+                </button>
+                {menuOpen === profile.id && (
+                  <div style={styles.menuDropdown}>
+                    <button
+                      style={styles.menuItem}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setMenuOpen(null);
+                        window.location.href = `/report?report=${profile.id}`;
+                      }}
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                      Report
+                    </button>
+                    <button
+                      style={styles.menuItem}
+                      disabled={decisionPending !== null}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void handleBlock(profile);
+                      }}
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                      {decisionPending === profile.id ? 'Blocking…' : 'Block'}
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {actionError && (
+        <div
+          role="alert"
+          style={{
+            margin: '0 20px 16px 20px',
+            backgroundColor: '#3B1220',
+            border: '1px solid #7F1D2E',
+            color: '#FCA5B5',
+            borderRadius: '14px',
+            padding: '12px 16px',
+            fontSize: '13px',
+            lineHeight: 1.5,
+          }}
+        >
+          {actionError}
+        </div>
+      )}
+
+      {/* M10: mutual match celebration */}
+      {matchNotice && (
+        <div style={styles.modalOverlay}>
+          <div style={styles.modalBox}>
+            <div style={{ fontSize: '44px', marginBottom: '12px' }}>💛</div>
+            <div style={{ ...styles.emptyTitle, marginBottom: '8px' }}>It&apos;s a match!</div>
+            <div style={{ ...styles.emptySubtitle, marginBottom: '20px' }}>
+              You and {matchNotice.name} liked each other.
+            </div>
+            <button
+              type="button"
+              onClick={() => setMatchNotice(null)}
+              style={{
+                backgroundColor: '#D4B18A',
+                color: '#17121C',
+                padding: '14px 28px',
+                borderRadius: '20px',
+                border: 'none',
+                fontWeight: 700,
+                cursor: 'pointer',
+              }}
+            >
+              Keep browsing
+            </button>
+          </div>
         </div>
       )}
 

@@ -1,10 +1,17 @@
 'use client';
 
 import { useState, useRef } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { useLanguage } from '@/context/LanguageContext';
 import { type Language } from '@/lib/translations';
+import {
+  PrivacyError,
+  deleteMyAccount,
+  downloadDataExport,
+  exportMyData,
+} from '@/lib/privacy';
 
 /**
  * Only languages that actually have translations are offered, so choosing one
@@ -24,6 +31,11 @@ export default function SettingsPage() {
   const { language, changeLanguage } = useLanguage();
   const [isLangModalOpen, setIsLangModalOpen] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
+  // M15: data-subject rights (export / erasure)
+  const [isExporting, setIsExporting] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [privacyError, setPrivacyError] = useState<string | null>(null);
 
   const selectedLang =
     LANGUAGES.find((entry) => entry.code === language)?.label ?? 'English';
@@ -60,10 +72,15 @@ export default function SettingsPage() {
       const reader = new FileReader();
       reader.onloadend = async () => {
         const base64String = reader.result as string;
-        // Update the avatar in Supabase
         const { data: { user } } = await supabase.auth.getUser();
         if (user) {
-          const { error } = await supabase.from('profiles').update({ avatar_url: base64String }).eq('id', user.id);
+          // Upsert, not a bare update: `update()` silently changes nothing when
+          // the row does not exist yet, which is a data-loss bug
+          // (AGENTS.md hard constraint 6). Only the supplied columns are
+          // written, so the rest of the profile is untouched.
+          const { error } = await supabase
+            .from('profiles')
+            .upsert({ id: user.id, avatar_url: base64String }, { onConflict: 'id' });
           if (error) {
             alert(`Error updating avatar: ${error.message}`);
           } else {
@@ -78,6 +95,55 @@ export default function SettingsPage() {
   const handleLanguageSelect = (code: Language) => {
     changeLanguage(code);
     setIsLangModalOpen(false);
+  };
+
+  // --- M15: data-subject rights ---------------------------------------------
+
+  /** Portability: fetch a machine-readable copy and hand it to the browser. */
+  const handleExportData = async () => {
+    if (isExporting) return;
+    setIsExporting(true);
+    setPrivacyError(null);
+    try {
+      const payload = await exportMyData();
+      downloadDataExport(payload);
+    } catch (err) {
+      console.error('Data export failed:', err);
+      setPrivacyError(
+        err instanceof PrivacyError ? err.message : 'Could not prepare your data export.'
+      );
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  /** Erasure: irreversible, so it takes two deliberate taps. */
+  const handleDeleteAccount = async () => {
+    if (isDeleting) return;
+
+    if (!confirmDelete) {
+      setConfirmDelete(true);
+      setPrivacyError(null);
+      return;
+    }
+
+    setIsDeleting(true);
+    setPrivacyError(null);
+    try {
+      await deleteMyAccount();
+      // The session no longer exists; send the user to the landing page.
+      router.replace('/');
+    } catch (err) {
+      console.error('Account deletion failed:', err);
+      setPrivacyError(
+        err instanceof PrivacyError
+          ? err.message
+          : 'Could not delete your account. Please try again.'
+      );
+      setConfirmDelete(false);
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   // Reusable styles for the menu items
@@ -159,8 +225,58 @@ export default function SettingsPage() {
         <div style={styles.row} onClick={() => alert('Safety Center coming soon!')}><span style={styles.rowLabel}>Safety Center</span><span style={styles.chevron}>›</span></div>
         <div style={styles.row} onClick={() => alert('Terms of Use coming soon!')}><span style={styles.rowLabel}>Terms of Use</span><span style={styles.chevron}>›</span></div>
         <div style={styles.row} onClick={() => alert('About Us coming soon!')}><span style={styles.rowLabel}>About Us</span><span style={styles.chevron}>›</span></div>
-        <div style={styles.row} onClick={() => alert('Block List coming soon!')}><span style={styles.rowLabel}>Block List</span><span style={styles.chevron}>›</span></div>
+        <div style={styles.row} onClick={() => router.push('/report')}><span style={styles.rowLabel}>Block List</span><span style={styles.chevron}>›</span></div>
         <div style={styles.row} onClick={() => void handleClearCache()}><span style={styles.rowLabel}>Clear Cache</span><span style={styles.chevron}>›</span></div>
+
+        {/* M15: data-subject rights. Additive rows — existing rows untouched. */}
+        {privacyError && (
+          <div
+            role="alert"
+            style={{
+              margin: '12px 20px',
+              backgroundColor: '#3B1220',
+              border: '1px solid #7F1D2E',
+              color: '#FCA5B5',
+              borderRadius: '14px',
+              padding: '12px 16px',
+              fontSize: '13px',
+              lineHeight: 1.5,
+            }}
+          >
+            {privacyError}
+          </div>
+        )}
+
+        <div style={styles.row} onClick={() => void handleExportData()}>
+          <span style={styles.rowLabel}>
+            {isExporting ? 'Preparing your data...' : 'Download my data'}
+          </span>
+          <span style={styles.chevron}>›</span>
+        </div>
+
+        <Link href="/privacy" style={{ ...styles.row, textDecoration: 'none' }}>
+          <span style={styles.rowLabel}>Privacy &amp; Terms</span>
+          <span style={styles.chevron}>›</span>
+        </Link>
+
+        <div
+          style={{ ...styles.row, ...(confirmDelete ? { backgroundColor: '#3B1220' } : {}) }}
+          onClick={() => void handleDeleteAccount()}
+        >
+          <span
+            style={{
+              ...styles.rowLabel,
+              color: confirmDelete ? '#FCA5B5' : '#EF4444',
+            }}
+          >
+            {isDeleting
+              ? 'Deleting your account...'
+              : confirmDelete
+                ? 'Tap again to permanently delete'
+                : 'Delete Account'}
+          </span>
+          <span style={styles.chevron}>›</span>
+        </div>
         <div style={styles.row} onClick={() => alert('Account settings coming soon!')}><span style={styles.rowLabel}>Account</span><span style={styles.chevron}>›</span></div>
         <div style={{ ...styles.row, ...styles.rowLast }} onClick={() => alert('Privacy Control coming soon!')}>
           <span style={styles.rowLabel}>Privacy Control</span>

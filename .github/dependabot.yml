@@ -1,0 +1,43 @@
+version: 2
+
+# M17 — dependency-update automation.
+#
+# Weekly, grouped pull requests keep the production dependency tree clean so the
+# `npm run audit` gate in ci.yml stays meaningful. Security updates are opened
+# immediately rather than waiting for the weekly window.
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+      timezone: Asia/Kathmandu
+    open-pull-requests-limit: 5
+    groups:
+      # Dev tooling is upgraded in one PR: these are the packages behind the
+      # "no fix available" advisories, and a single grouped PR is easier to
+      # validate than a dozen.
+      dev-tooling:
+        dependency-type: development
+        update-types:
+          - minor
+          - patch
+      production:
+        dependency-type: production
+        update-types:
+          - minor
+          - patch
+    labels:
+      - dependencies
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+      timezone: Asia/Kathmandu
+    labels:
+      - dependencies
+      - ci

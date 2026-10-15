@@ -34,32 +34,66 @@ export default function ProfileDashboardPage() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [userEmail, setUserEmail] = useState<string>('');
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'about' | 'gallery'>('about');
 
   useEffect(() => {
-    async function loadProfile() {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        router.push('/auth');
-        return;
-      }
-      setUserEmail(user.email || 'Not set');
+    let isMounted = true;
 
-      const { data, error } = await supabase.from('profiles').select('*').eq('id', user.id).single();
-      
-      if (error) console.error("Error fetching profile:", error);
-      setProfile(data);
-      setLoading(false);
+    async function loadProfile() {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!isMounted) return;
+
+        if (!user) {
+          router.replace('/auth');
+          return;
+        }
+        setUserEmail(user.email || 'Not set');
+
+        // maybeSingle(): "zero rows" is a normal outcome for a user who has not
+        // onboarded yet, not a failed load.
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', user.id)
+          .maybeSingle();
+
+        if (!isMounted) return;
+
+        if (error) {
+          console.error("Error fetching profile:", error.message);
+          setLoadError('We could not load your profile.');
+          return;
+        }
+
+        setProfile(data);
+      } catch (err) {
+        if (isMounted) {
+          console.error('Unexpected error fetching profile:', err);
+          setLoadError('We could not load your profile.');
+        }
+      } finally {
+        if (isMounted) setLoading(false);
+      }
     }
-    loadProfile();
+
+    void loadProfile();
+
+    return () => {
+      isMounted = false;
+    };
   }, [router]);
 
-  // STRICT GATEKEEPER: If no profile exists, force redirect to onboarding
+  // GATEKEEPER: redirect to onboarding only when we know for certain that no
+  // profile row exists. Bouncing whenever `profile` was null also bounced on
+  // transient fetch failures, which caused an infinite
+  // edit -> dashboard -> profile -> edit loop.
   useEffect(() => {
-    if (!loading && !profile) {
-      router.push('/profile');
+    if (!loading && !loadError && !profile) {
+      router.replace('/profile');
     }
-  }, [loading, profile, router]);
+  }, [loading, loadError, profile, router]);
 
   const calculateCompletion = () => {
     if (!profile) return 0;
@@ -77,6 +111,23 @@ export default function ProfileDashboardPage() {
   const completionPercentage = calculateCompletion();
 
   if (loading) return <div style={{ minHeight: '100vh', display: 'flex', justifyContent: 'center', alignItems: 'center', backgroundColor: '#0D0A10', color: '#D4B18A' }}>Loading Profile...</div>;
+
+  // A failed load gets a retry affordance instead of an endless "Redirecting"
+  // message, since we deliberately do not bounce to onboarding on error.
+  if (loadError) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', gap: '16px', justifyContent: 'center', alignItems: 'center', backgroundColor: '#0D0A10', color: '#D4B18A', padding: '24px', textAlign: 'center' }}>
+        <p style={{ margin: 0, fontSize: '14px' }}>{loadError}</p>
+        <button
+          type="button"
+          onClick={() => window.location.reload()}
+          style={{ backgroundColor: '#D4B18A', color: '#17121C', padding: '12px 28px', borderRadius: '30px', fontSize: '14px', fontWeight: 700, border: 'none', cursor: 'pointer' }}
+        >
+          Try again
+        </button>
+      </div>
+    );
+  }
 
   // If profile is null, we are already redirecting, just show a loading state
   if (!profile) {

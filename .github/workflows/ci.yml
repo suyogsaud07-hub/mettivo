@@ -1,0 +1,109 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Cancel superseded runs on the same ref rather than queueing them.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Typecheck · Lint · Test · Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      # M18: the owner-built navigation is a first-class feature. A refactor
+      # that drops one of these is a critical regression, not a simplification.
+      - name: Protected navigation and routes
+        run: |
+          count=$(grep -cE "'/notifications'|'/moments'|'/game-zone'" src/app/components/layout/MobileNav.tsx)
+          echo "protected nav entries: $count (expected 3)"
+          test "$count" -eq 3
+          for route in notifications moments game-zone; do
+            test -f "src/app/$route/page.tsx" || { echo "missing route page: $route"; exit 1; }
+          done
+
+      # M17 security gate. Scoped to production dependencies: the only open
+      # advisories are in dev-only build tooling (braces via eslint-config-next)
+      # and carry "no fix available", so a full-tree gate could never go green.
+      # A shipped-dependency advisory must fail the build.
+      - name: Audit production dependencies
+        run: npm run audit
+
+      # The database suite runs against PGlite (WASM PostgreSQL) applying every
+      # migration, so it needs no external services and no secrets.
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  # Adversarial RLS verification against a real Supabase project.
+  # Skipped automatically when the secrets are not configured, so forks and
+  # local runs stay green.
+  rls-verification:
+    name: RLS verification (live project)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check for credentials
+        id: creds
+        env:
+          SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+        run: |
+          if [ -n "$SUPABASE_URL" ] && [ -n "$SUPABASE_ANON_KEY" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "Supabase secrets not configured — skipping live RLS verification."
+          fi
+
+      - name: Verify no personal data is readable without authentication
+        if: steps.creds.outputs.available == 'true'
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+        run: ./scripts/verify-rls.sh
+
+      # M4/M18: migrations are applied by hand, so the live schema can silently
+      # fall behind the repository. This fails the moment they disagree.
+      - name: Verify the live schema matches the migrations
+        if: steps.creds.outputs.available == 'true'
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+        run: ./scripts/check-schema-drift.sh

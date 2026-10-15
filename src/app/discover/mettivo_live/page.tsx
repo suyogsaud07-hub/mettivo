@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase'; 
+import { fetchDiscoveryCandidates, rankDiscovery } from '@/lib/discovery';
 
 import { useRouter } from 'next/navigation';
 
@@ -57,23 +58,67 @@ export default function MettivoLivePage() {
   const tabs = ['For you', 'Just Chatting', 'Sing a Song', 'Gaming'];
 
   useEffect(() => {
+    let isMounted = true;
+
     async function loadProfiles() {
       const { data: { user } } = await supabase.auth.getUser();
+      if (!isMounted) return;
       if (!user) { router.push('/auth'); return; }
 
-      const query = supabase
-        .from('profiles')
-        .select('*')
-        .neq('id', user.id)
-        .eq('onboarding_completed', true)
-        .eq('is_online', true)
-        .limit(20);
+      try {
+        // M9/M12: this surface used to read the plain `public_profiles` view, so
+        // a blocked member could still appear here. Eligibility now comes from
+        // `discover_profiles()` in PostgreSQL — blocked pairs, suspended
+        // members, anyone already liked/passed and anyone already matched are
+        // removed before the browser sees them — and ordering comes from the
+        // deterministic rule-based score.
+        const { data: me } = await supabase
+          .from('profiles')
+          .select('intention, interests, prompts')
+          .eq('id', user.id)
+          .maybeSingle();
 
-      const { data, error } = await query;
-      if (!error && data) setProfiles(data);
-      setLoading(false);
+        const candidates = await fetchDiscoveryCandidates({ onlineOnly: true, limit: 20 });
+
+        const ranked = rankDiscovery(
+          {
+            id: user.id,
+            intention: typeof me?.intention === 'string' ? me.intention : null,
+            interests: Array.isArray(me?.interests) ? me.interests : [],
+            promptAnswers:
+              typeof me?.prompts === 'object' && me?.prompts !== null
+                ? (me.prompts as Record<string, string>)
+                : {},
+          },
+          candidates,
+          { limit: 20 }
+        );
+
+        if (!isMounted) return;
+
+        setProfiles(
+          ranked.map(({ profile }) => ({
+            id: profile.id,
+            display_name: profile.displayName,
+            gender: profile.gender ?? '',
+            avatar_url: profile.avatarUrl ?? '',
+            intention: profile.intention ?? '',
+            is_online: profile.online,
+          }))
+        );
+      } catch (err) {
+        console.error('[mettivo-live] failed to load profiles:', err);
+      } finally {
+        // CONSTITUTION Article 2.8: the loading state must always terminate.
+        if (isMounted) setLoading(false);
+      }
     }
-    loadProfiles();
+
+    void loadProfiles();
+
+    return () => {
+      isMounted = false;
+    };
   }, [router, activeTab]);
 
   const startRecording = async () => {
