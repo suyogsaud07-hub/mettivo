@@ -2,15 +2,16 @@ import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 
-// Force dynamic rendering in Next.js 15 to prevent build errors
-
-
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url);
   const code = searchParams.get('code');
 
-  if (code) {
-    // In Next.js 15, cookies() is async and MUST be awaited
+  if (!code) {
+    // If no code is present, redirect back to the auth page
+    return NextResponse.redirect(`${origin}/auth`);
+  }
+
+  try {
     const cookieStore = await cookies(); 
     
     const supabase = createServerClient(
@@ -35,25 +36,37 @@ export async function GET(request: Request) {
     );
 
     // Exchange the code for a session
-    await supabase.auth.exchangeCodeForSession(code);
-
-    // Check if the user has completed onboarding
-    const { data: { user } } = await supabase.auth.getUser();
-    
-    if (user) {
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('onboarding_completed')
-        .eq('id', user.id)
-        .single();
-
-      // If no profile exists OR onboarding is false, force them to the interview
-      if (!profile || profile.onboarding_completed === false) {
-        return NextResponse.redirect(`${origin}/profile`);
-      }
+    const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
+    if (exchangeError) {
+      console.error('Error exchanging code for session:', exchangeError.message);
+      return NextResponse.redirect(`${origin}/auth`);
     }
-  }
 
-  // If they finished onboarding, let them into the app
-  return NextResponse.redirect(`${origin}/discover`);
+    // Get the authenticated user
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
+    
+    if (userError || !user) {
+      return NextResponse.redirect(`${origin}/auth`);
+    }
+    
+    // Check if the user has a profile and completed onboarding
+    // .maybeSingle() prevents errors when a new user has no profile row yet
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('onboarding_completed')
+      .eq('id', user.id)
+      .maybeSingle();
+
+    // If no profile exists OR onboarding is false, force them to profile setup / interview
+    if (!profile || profile.onboarding_completed === false) {
+      return NextResponse.redirect(`${origin}/profile`); 
+    }
+
+    // If onboarding is already completed, let them into the app
+    return NextResponse.redirect(`${origin}/discover`);
+
+  } catch (err) {
+    console.error('Unexpected auth callback error:', err);
+    return NextResponse.redirect(`${origin}/auth`);
+  }
 }

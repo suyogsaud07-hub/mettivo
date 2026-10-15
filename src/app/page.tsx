@@ -1,12 +1,12 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useLanguage } from '../context/LanguageContext';
-// FIXED: Using the absolute alias path to src/lib
 import { Language } from '@/lib/translations';
-
-const LANGUAGES: { code: Language, name: string }[] = [
+import { supabase } from '@/lib/supabase';
+const LANGUAGES: { code: Language; name: string }[] = [
   { code: 'en', name: 'English (UK)' },
   { code: 'en', name: 'English (US)' },
   { code: 'ne', name: 'Nepali (नेपाली)' },
@@ -16,11 +16,57 @@ const LANGUAGES: { code: Language, name: string }[] = [
 ];
 
 export default function LandingPage() {
+  const router = useRouter();
   const { language, changeLanguage, t } = useLanguage();
   const [langMenuOpen, setLangMenuOpen] = useState(false);
+  const [isCheckingAuth, setIsCheckingAuth] = useState(true);
+
+  
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function verifyUserAndRouting() {
+      try {
+        // 1. Check active auth session
+        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+        
+        if (sessionError || !session) {
+          if (isMounted) setIsCheckingAuth(false);
+          return;
+        }
+
+        // 2. Check profile onboarding status in database
+        const { data: profile, error: profileError } = await supabase
+          .from('profiles')
+          .select('onboarding_completed')
+          .eq('id', session.user.id)
+          .maybeSingle();
+
+        if (!isMounted) return;
+
+        // 3. Precision Routing Decision
+        if (profileError || !profile || profile.onboarding_completed === false) {
+          router.replace('/profile'); // Send to interview / setup
+        } else {
+          router.replace('/discover'); // Send to main app
+        }
+      } catch (err) {
+        console.error('Auth verification error on root page:', err);
+        if (isMounted) setIsCheckingAuth(false);
+      }
+    }
+
+    verifyUserAndRouting();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [router, supabase]);
 
   const styles = {
     container: { minHeight: '100vh', backgroundColor: '#0D0A10', color: '#F2E9E4', fontFamily: 'system-ui', display: 'flex', flexDirection: 'column' as const },
+    loaderContainer: { minHeight: '100vh', backgroundColor: '#0D0A10', color: '#F2E9E4', display: 'flex', flexDirection: 'column' as const, alignItems: 'center', justifyContent: 'center', gap: '20px' },
     topBar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '24px 30px', zIndex: 50 },
     logoWrapper: { display: 'flex', alignItems: 'center', gap: '12px' },
     logoText: { display: 'flex', flexDirection: 'column' as const, gap: '2px' },
@@ -38,6 +84,18 @@ export default function LandingPage() {
     secondaryBtn: { backgroundColor: '#29202D', color: '#F2E9E4', padding: '16px', borderRadius: '30px', fontSize: '16px', fontWeight: '600', border: '1px solid #4A1828', cursor: 'pointer', textDecoration: 'none', display: 'block', textAlign: 'center' as const },
     footer: { padding: '24px', textAlign: 'center' as const, fontSize: '13px', color: '#B58A83' }
   };
+
+  // Render a polished branded loading state while verifying auth & profile to eliminate flicker
+  if (isCheckingAuth) {
+    return (
+      <div style={styles.loaderContainer}>
+        <svg viewBox="0 0 100 100" style={{ width: '48px', height: '48px', fill: 'none', stroke: '#D4B18A', strokeWidth: 8, strokeLinecap: 'round', strokeLinejoin: 'round', opacity: 0.9 }}>
+          <path d="M 25,30 C 15,30 15,70 25,70 C 40,70 60,30 75,30 C 85,30 85,70 75,70 C 60,70 40,30 25,30 Z" />
+        </svg>
+        <span style={{ fontSize: '12px', letterSpacing: '3px', color: '#B58A83', textTransform: 'uppercase' }}>Loading Mettivo...</span>
+      </div>
+    );
+  }
 
   return (
     <div style={styles.container}>
@@ -59,9 +117,9 @@ export default function LandingPage() {
           </button>
           {langMenuOpen && (
             <div style={styles.langDropdown}>
-              {LANGUAGES.map((lang) => (
+              {LANGUAGES.map((lang, idx) => (
                 <div 
-                  key={lang.name} 
+                  key={`${lang.code}-${idx}`} 
                   style={{ ...styles.langItem, backgroundColor: language === lang.code ? '#4A1828' : 'transparent' }} 
                   onClick={() => { changeLanguage(lang.code); setLangMenuOpen(false); }}
                 >
