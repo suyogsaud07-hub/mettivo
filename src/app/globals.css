@@ -76,3 +76,26 @@ body {
     user-select: text;
   }
 }
+
+/* Mettivo Live — the "on air" pulse used on the navigation dot and the live
+   screen. Kept as a named animation so every live indicator beats in step. */
+@keyframes mr-live-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.35;
+    transform: scale(0.72);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

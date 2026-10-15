@@ -22,6 +22,7 @@ const NAV_HREFS = [
   '/moments',
   '/game-zone',
   '/profile/dashboard',
+  '/live',
 ];
 
 test.describe('§3.3 — public surfaces', () => {
@@ -93,7 +94,7 @@ test.describe('§3.3 — protected navigation and routes (R-12)', () => {
     });
   });
 
-  test('keeps all seven bottom-nav destinations, including the three owner-added ones', async ({
+  test('keeps every bottom-nav destination, including the owner-added ones', async ({
     page,
   }) => {
     await page.goto('/discover');
@@ -117,6 +118,20 @@ test.describe('§3.3 — protected navigation and routes (R-12)', () => {
         `${path} must render the app shell`
       ).toBeVisible();
     }
+  });
+
+  test('renders the Mettivo Live surface with its pre-flight permission step', async ({
+    page,
+  }) => {
+    const response = await page.goto('/live');
+    expect(response?.status(), '/live must render').toBe(200);
+
+    await expect(page.getByRole('heading', { name: 'Mettivo Live' })).toBeVisible();
+    // Camera access is requested deliberately, behind a button — never on load.
+    await expect(page.getByTestId('live-allow')).toBeVisible();
+    await expect(page.getByTestId('live-permission-cancel')).toBeVisible();
+    // The nav entry that leads here is present on the page too.
+    await expect(page.locator('a[href="/live"]').first()).toBeVisible();
   });
 
   test('renders real content on /people, not an empty scaffold', async ({ page }) => {
