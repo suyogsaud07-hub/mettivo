@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState, use } from 'react';
-import { supabase } from '@/lib/supabase'; 
+import { supabase } from '@/lib/supabase';
 
 export default function ChatPage({ params }: { params: Promise<{ matchId: string }> }) {
   const resolvedParams = use(params);
