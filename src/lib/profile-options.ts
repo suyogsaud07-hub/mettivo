@@ -58,6 +58,28 @@ export const PROFILE_PETS_OPTIONS = [
   'Want pets',
 ] as const;
 
+/** Free-text hobby labels. Stored in `profiles.hobbies`. */
+export const PROFILE_HOBBIES_OPTIONS = [
+  'Music',
+  'Travel',
+  'Photography',
+  'Gaming',
+  'Fitness',
+  'Cooking',
+  'Reading',
+  'Movies',
+  'Art & Design',
+  'Outdoors & Hiking',
+  'Dancing',
+  'Tech & Coding',
+  'Yoga',
+  'Coffee & Tea',
+  'Fashion',
+  'Sports',
+  'Pets & Animals',
+  'Wine & Dining',
+] as const;
+
 /** The label for a stored intention value, falling back to the raw value. */
 export function intentionLabel(value: string): string {
   return PROFILE_INTENTION_OPTIONS.find((option) => option.value === value)?.label ?? value;

@@ -16,7 +16,7 @@ interface UserProfile {
 }
 
 interface UserListProps {
-  type: 'followers' | 'following' | 'friends';
+  type: 'followers' | 'following' | 'friends' | 'likes';
 }
 
 export default function UserList({ type }: UserListProps) {
@@ -55,6 +55,15 @@ export default function UserList({ type }: UserListProps) {
       } else if (type === 'friends') {
         // Friends = Mutuals (Intersection of following and followers)
         targetIds = followingIds.filter(id => followerIds.includes(id));
+      } else if (type === 'likes') {
+        // Members who liked this user's profile. RLS (`likes_select_involved`)
+        // permits reading rows where the caller is either side of the like.
+        const { data: likeData } = await supabase
+          .from('likes')
+          .select('liker_id')
+          .eq('liked_id', user.id)
+          .eq('is_like', true);
+        targetIds = likeData?.map(l => l.liker_id) || [];
       }
 
       if (targetIds.length === 0) {
@@ -128,6 +137,7 @@ export default function UserList({ type }: UserListProps) {
   const getTitle = () => {
     if (type === 'followers') return '👥 Followers';
     if (type === 'following') return '➕ Following';
+    if (type === 'likes') return '💛 Profile Likes';
     return '🤝 Friends';
   };
 
@@ -144,6 +154,7 @@ export default function UserList({ type }: UserListProps) {
         {type === 'followers' && 'People who follow you'}
         {type === 'following' && 'People you follow'}
         {type === 'friends' && 'Mutual connections (you follow each other)'}
+        {type === 'likes' && 'People who liked your profile'}
       </div>
 
       <div style={styles.searchContainer}>

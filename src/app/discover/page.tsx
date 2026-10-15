@@ -4,6 +4,8 @@ import { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase'; 
 import { useRouter } from 'next/navigation';
 import MobileNav from '../components/layout/MobileNav';
+import IntentionBadge from '../components/profile/IntentionBadge';
+import FollowButton from '../components/profile/FollowButton';
 import { recordLike, LikeError } from '@/lib/likes';
 import { blockMember, BlockingError } from '@/lib/blocking';
 import { fetchDiscoveryCandidates, rankDiscovery } from '@/lib/discovery';
@@ -334,17 +336,18 @@ export default function DiscoverPage() {
         <div style={styles.listContainer}>
           {profiles.map((profile) => (
             <div key={profile.id} style={styles.listItem}>
-              <div style={styles.avatarWrapper} onClick={() => alert(`Opening profile for ${profile.display_name}`)}>
+              <div style={styles.avatarWrapper} onClick={() => router.push(`/profile/${profile.id}`)}>
                 {profile.avatar_url ? <img src={profile.avatar_url} alt={profile.display_name} style={styles.avatar} /> : <div style={{ ...styles.avatar, display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '24px' }}>👤</div>}
                 <div style={styles.onlineDot} />
               </div>
-              <div style={styles.infoWrapper} onClick={() => alert(`Opening profile for ${profile.display_name}`)}>
+              <div style={styles.infoWrapper} onClick={() => router.push(`/profile/${profile.id}`)}>
                 <div style={styles.nameRow}><span style={styles.flag}>{getCountryFlag(profile.country)}</span><span style={styles.name}>{profile.display_name}</span><span style={styles.genderIcon}>{getGenderIcon(profile.gender)}</span></div>
-                <div style={styles.bioText}>{profile.intention || 'Hey there! I am using Mettivo.'}</div>
+                <IntentionBadge intention={profile.intention} />
               </div>
 
-              {/* M10: like / pass */}
+              {/* M10: like / pass. M18: follow, without leaving the feed. */}
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <FollowButton targetUserId={profile.id} />
                 <button
                   type="button"
                   aria-label={`Pass on ${profile.display_name}`}

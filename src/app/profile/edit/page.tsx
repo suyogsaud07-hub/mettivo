@@ -23,6 +23,7 @@ import {
 } from '@/lib/onboarding-steps';
 import {
   PROFILE_DRINKING_OPTIONS,
+  PROFILE_HOBBIES_OPTIONS as HOBBIES_LIST,
   PROFILE_INTENTION_OPTIONS as INTENTIONS,
   PROFILE_LOOKING_FOR_OPTIONS,
   PROFILE_PETS_OPTIONS as PETS_OPTIONS,
@@ -43,12 +44,6 @@ const COUNTRIES = [
   "Singapore", "Slovakia", "Slovenia", "South Africa", "South Korea", "Spain", "Sri Lanka", "Sweden", "Switzerland", "Syria",
   "Taiwan", "Tanzania", "Thailand", "Tunisia", "Turkey", "Uganda", "Ukraine", "United Arab Emirates", "United Kingdom", "United States",
   "Uruguay", "Uzbekistan", "Venezuela", "Vietnam", "Yemen", "Zambia", "Zimbabwe"
-];
-
-const HOBBIES_LIST = [
-  "Music", "Travel", "Photography", "Gaming", "Fitness", "Cooking", "Reading",
-  "Movies", "Art & Design", "Outdoors & Hiking", "Dancing", "Tech & Coding",
-  "Yoga", "Coffee & Tea", "Fashion", "Sports", "Pets & Animals", "Wine & Dining"
 ];
 
 const MBTI_TYPES = [

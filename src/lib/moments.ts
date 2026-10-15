@@ -135,6 +135,35 @@ export async function fetchMomentFeed(
   return rows;
 }
 
+/**
+ * Loads one member's own moments, newest first.
+ *
+ * Used by the profile dashboard's "Posts" tab, which shows only what the
+ * signed-in member has shared. Reads the same `moment_feed` view as
+ * `fetchMomentFeed` so the aggregated counts and `liked_by_me` flag are
+ * consistent between the feed and the profile.
+ */
+export async function fetchUserMoments(
+  userId: string,
+  limit = 60
+): Promise<MomentFeedRow[]> {
+  const { data, error } = await supabase
+    .from('moment_feed')
+    .select(
+      'id, author_id, caption, media, tags, shares, created_at, updated_at, like_count, comment_count, liked_by_me'
+    )
+    .eq('author_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    console.error('[moments] load user moments failed:', error.message);
+    throw new MomentError(error.message, error.code);
+  }
+
+  return (data ?? []) as MomentFeedRow[];
+}
+
 /** Display data for the authors of a set of moments. */
 export async function fetchMomentAuthors(
   authorIds: string[]
@@ -303,24 +332,14 @@ export async function shareMoment(momentId: string): Promise<number> {
   return typeof data === 'number' ? data : 0;
 }
 
-/** Follows another member (used by the card's Follow button). */
-export async function followUser(targetUserId: string): Promise<void> {
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) throw new MomentError('You must be signed in.', '28000');
-  if (user.id === targetUserId) throw new MomentError('You cannot follow yourself.');
-
-  const { error } = await supabase
-    .from('follows')
-    .insert({ follower_id: user.id, following_id: targetUserId });
-
-  if (error && error.code !== '23505') {
-    console.error('[moments] follow failed:', error.message);
-    throw new MomentError(error.message, error.code);
-  }
-}
+/**
+ * Follows another member.
+ *
+ * Re-exported from `@/lib/follows` so every Follow button shares one
+ * implementation. Kept in this module's public surface because the Moments feed
+ * imports it from here.
+ */
+export { followUser, FollowError } from '@/lib/follows';
 
 /** Streams newly published moments so the feed updates without a refresh. */
 export function subscribeToMoments(onInsert: () => void): () => void {

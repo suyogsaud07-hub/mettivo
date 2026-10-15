@@ -7,13 +7,26 @@ import { MAX_BIO_LENGTH, MIN_AGE } from '@/lib/profile';
 import { ONBOARDING_GENDERS } from '@/lib/onboarding-steps';
 import {
   PROFILE_DRINKING_OPTIONS,
+  PROFILE_HOBBIES_OPTIONS,
   PROFILE_INTENTION_OPTIONS,
   PROFILE_LOOKING_FOR_OPTIONS,
   PROFILE_PETS_OPTIONS,
   PROFILE_SMOKING_OPTIONS,
-  intentionLabel,
 } from '@/lib/profile-options';
+import {
+  MomentError,
+  addMomentComment,
+  fetchUserMoments,
+  likeMoment,
+  shareMoment,
+  unlikeMoment,
+} from '@/lib/moments';
+import type { MomentAuthor, MomentFeedRow } from '@/lib/types';
 import MobileNav from '../../components/layout/MobileNav';
+import ProfileHeader from '../../components/profile/ProfileHeader';
+import ProfileTabs, { type ProfileTab } from '../../components/profile/ProfileTabs';
+import ProfileDetails from '../../components/profile/ProfileDetails';
+import ProfileMoments from '../../components/profile/ProfileMoments';
 
 /** The oldest age the dashboard will accept when a member edits their age. */
 const MAX_AGE = 120;
@@ -37,13 +50,14 @@ interface Profile {
   politics: string;
   drinking: string;
   smoking: string;
-  followers?: number;
-  following?: number;
-  friends?: number;
+  followers_count: number;
+  following_count: number;
+  matches_count: number;
+  profile_likes_count: number;
 }
 
 /**
- * The subset of `Profile` a member can edit from this screen.
+ * The subset of `Profile` a member can edit from the Details tab.
  *
  * Email and phone are deliberately absent: they live on the auth user, not the
  * `profiles` row, and are saved through `supabase.auth.updateUser`.
@@ -60,6 +74,7 @@ type EditableKey =
   | 'politics'
   | 'pets'
   | 'personality'
+  | 'hobbies'
   | 'email'
   | 'phone';
 
@@ -78,6 +93,7 @@ type ProfilePatch = Partial<
     | 'politics'
     | 'pets'
     | 'personality'
+    | 'hobbies'
   >
 >;
 
@@ -102,6 +118,7 @@ const EDITOR_FIELDS: Record<EditableKey, FieldConfig> = {
   politics: { title: 'Politics', hint: 'Optional — leave blank to hide.', kind: 'text' },
   pets: { title: 'Pets', hint: 'How you feel about animals.', kind: 'multi' },
   personality: { title: 'Personality', hint: 'Separate traits with commas.', kind: 'tags' },
+  hobbies: { title: 'Interests/Hobbies', hint: 'Pick everything you enjoy.', kind: 'multi' },
   email: { title: 'Email', hint: 'We will email you a link to confirm.', kind: 'email' },
   phone: { title: 'Phone', hint: 'We will text you a code to verify.', kind: 'phone' },
 };
@@ -119,7 +136,7 @@ const EDITOR_FIELDS: Record<EditableKey, FieldConfig> = {
  * inference collapses to an error type.
  */
 const PROFILE_COLUMNS =
-  'id, display_name, age, gender, city, country, avatar_url, photos, bio, intention, looking_for, hobbies, pets, personality, religion, politics, drinking, smoking' as const;
+  'id, display_name, age, gender, city, country, avatar_url, photos, bio, intention, looking_for, hobbies, pets, personality, religion, politics, drinking, smoking, followers_count, following_count, matches_count, profile_likes_count' as const;
 
 export default function ProfileDashboardPage() {
   const router = useRouter();
@@ -128,7 +145,12 @@ export default function ProfileDashboardPage() {
   const [phone, setPhone] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'about' | 'gallery'>('about');
+  const [activeTab, setActiveTab] = useState<ProfileTab>('feed');
+
+  // The member's own Moments, shown on the Posts tab.
+  const [posts, setPosts] = useState<MomentFeedRow[]>([]);
+  const [postsLoading, setPostsLoading] = useState(true);
+  const [postsError, setPostsError] = useState<string | null>(null);
 
   // Inline editor state. `editor` is the field being edited, or null when the
   // sheet is closed. `textDraft` backs the single-value inputs, `listDraft` the
@@ -147,6 +169,8 @@ export default function ProfileDashboardPage() {
 
   const [toast, setToast] = useState<{ message: string; tone: 'success' | 'error' } | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const profileId = profile?.id;
 
   useEffect(() => {
     let isMounted = true;
@@ -207,6 +231,37 @@ export default function ProfileDashboardPage() {
     }
   }, [loading, loadError, profile, router]);
 
+  // Load the member's own Moments once the profile (and therefore the user id)
+  // is known. Keyed on the id, not the whole profile object, so an inline edit
+  // does not trigger a needless re-fetch.
+  useEffect(() => {
+    if (!profileId) return;
+    let cancelled = false;
+
+    const load = async () => {
+      try {
+        const rows = await fetchUserMoments(profileId);
+        if (!cancelled) {
+          setPosts(rows);
+          setPostsError(null);
+        }
+      } catch (err) {
+        console.error('Failed to load your posts:', err);
+        if (!cancelled) {
+          setPostsError(err instanceof MomentError ? err.message : 'Could not load your posts.');
+        }
+      } finally {
+        if (!cancelled) setPostsLoading(false);
+      }
+    };
+
+    void load();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [profileId]);
+
   // Clear the toast timer if the page unmounts mid-countdown, so a dismissed
   // toast cannot set state on an unmounted component.
   useEffect(() => {
@@ -252,6 +307,7 @@ export default function ProfileDashboardPage() {
       case 'politics': setTextDraft(profile.politics ?? ''); break;
       case 'looking_for': setListDraft([...(profile.looking_for ?? [])]); break;
       case 'pets': setListDraft([...(profile.pets ?? [])]); break;
+      case 'hobbies': setListDraft([...(profile.hobbies ?? [])]); break;
       case 'personality': setTagDraft((profile.personality ?? []).join(', ')); break;
       case 'email': setTextDraft(userEmail); break;
       case 'phone': setTextDraft(''); setPhoneStage('enter'); break;
@@ -396,6 +452,14 @@ export default function ProfileDashboardPage() {
           break;
         }
 
+        case 'hobbies': {
+          const failure = await persistProfile({ hobbies: [...listDraft] });
+          if (failure) { setEditorError(failure); return; }
+          showToast('Interests updated');
+          closeEditor();
+          break;
+        }
+
         case 'personality': {
           const value = tagDraft
             .split(',')
@@ -449,6 +513,83 @@ export default function ProfileDashboardPage() {
     }
   };
 
+  // --- Posts tab: like / comment / share, mirroring the /moments feed ------ //
+
+  const handleLikePost = async (post: MomentFeedRow) => {
+    const wasLiked = post.liked_by_me;
+    setPostsError(null);
+
+    // Optimistic flip; reverted if the write fails.
+    setPosts((prev) =>
+      prev.map((item) =>
+        item.id === post.id
+          ? {
+              ...item,
+              liked_by_me: !wasLiked,
+              like_count: Math.max(0, item.like_count + (wasLiked ? -1 : 1)),
+            }
+          : item
+      )
+    );
+
+    try {
+      if (wasLiked) await unlikeMoment(post.id);
+      else await likeMoment(post.id);
+    } catch (err) {
+      console.error('Like failed:', err);
+      setPosts((prev) =>
+        prev.map((item) =>
+          item.id === post.id
+            ? {
+                ...item,
+                liked_by_me: wasLiked,
+                like_count: Math.max(0, item.like_count + (wasLiked ? 1 : -1)),
+              }
+            : item
+        )
+      );
+      showToast('Could not update your like.', 'error');
+    }
+  };
+
+  const handleCommentPost = async (post: MomentFeedRow) => {
+    const comment = window.prompt('Write a comment:');
+    if (!comment || !comment.trim()) return;
+
+    try {
+      await addMomentComment(post.id, comment);
+      setPosts((prev) =>
+        prev.map((item) =>
+          item.id === post.id ? { ...item, comment_count: item.comment_count + 1 } : item
+        )
+      );
+      showToast('Comment posted');
+    } catch (err) {
+      console.error('Comment failed:', err);
+      showToast('Could not post your comment.', 'error');
+    }
+  };
+
+  const handleSharePost = async (post: MomentFeedRow) => {
+    try {
+      const total = await shareMoment(post.id);
+      setPosts((prev) =>
+        prev.map((item) => (item.id === post.id ? { ...item, shares: total } : item))
+      );
+
+      const shareText = post.caption?.trim() || 'Check out this Moment on Mettivo.';
+      try {
+        await navigator.clipboard.writeText(shareText);
+        showToast('Copied to your clipboard');
+      } catch {
+        showToast('Share count updated');
+      }
+    } catch (err) {
+      console.error('Share failed:', err);
+      showToast('Could not share this Moment.', 'error');
+    }
+  };
+
   const calculateCompletion = () => {
     if (!profile) return 0;
     const fields = [
@@ -464,18 +605,18 @@ export default function ProfileDashboardPage() {
 
   const completionPercentage = calculateCompletion();
 
-  if (loading) return <div style={{ minHeight: '100vh', display: 'flex', justifyContent: 'center', alignItems: 'center', backgroundColor: '#0D0A10', color: '#D4B18A' }}>Loading Profile...</div>;
+  if (loading) return <div style={{ minHeight: '100vh', display: 'flex', justifyContent: 'center', alignItems: 'center', backgroundColor: '#131017', color: '#D8B38A' }}>Loading Profile...</div>;
 
   // A failed load gets a retry affordance instead of an endless "Redirecting"
   // message, since we deliberately do not bounce to onboarding on error.
   if (loadError) {
     return (
-      <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', gap: '16px', justifyContent: 'center', alignItems: 'center', backgroundColor: '#0D0A10', color: '#D4B18A', padding: '24px', textAlign: 'center' }}>
+      <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', gap: '16px', justifyContent: 'center', alignItems: 'center', backgroundColor: '#131017', color: '#D8B38A', padding: '24px', textAlign: 'center' }}>
         <p style={{ margin: 0, fontSize: '14px' }}>{loadError}</p>
         <button
           type="button"
           onClick={() => window.location.reload()}
-          style={{ backgroundColor: '#D4B18A', color: '#17121C', padding: '12px 28px', borderRadius: '30px', fontSize: '14px', fontWeight: 700, border: 'none', cursor: 'pointer' }}
+          style={{ backgroundColor: '#D8B38A', color: '#131017', padding: '12px 28px', borderRadius: '30px', fontSize: '14px', fontWeight: 700, border: 'none', cursor: 'pointer' }}
         >
           Try again
         </button>
@@ -485,63 +626,70 @@ export default function ProfileDashboardPage() {
 
   // If profile is null, we are already redirecting, just show a loading state
   if (!profile) {
-    return <div style={{ minHeight: '100vh', display: 'flex', justifyContent: 'center', alignItems: 'center', backgroundColor: '#0D0A10', color: '#D4B18A' }}>Redirecting to onboarding...</div>;
+    return <div style={{ minHeight: '100vh', display: 'flex', justifyContent: 'center', alignItems: 'center', backgroundColor: '#131017', color: '#D8B38A' }}>Redirecting to onboarding...</div>;
   }
 
   const styles = {
-    container: { minHeight: '100vh', backgroundColor: '#0D0A10', color: '#F2E9E4', fontFamily: 'system-ui', paddingBottom: '100px' },
-    topBar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '20px', borderBottom: '1px solid #29202D' },
-    iconButton: { width: '40px', height: '40px', borderRadius: '50%', backgroundColor: '#1C1822', border: '1px solid #29202D', display: 'flex', justifyContent: 'center', alignItems: 'center', cursor: 'pointer', color: '#F2E9E4' },
-    title: { fontSize: '18px', fontWeight: '700', color: '#F2E9E4', letterSpacing: '0.5px' },
+    container: { minHeight: '100vh', backgroundColor: '#131017', color: '#EAE2F0', fontFamily: 'system-ui', paddingBottom: '100px' },
+    topBar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '20px', borderBottom: '1px solid #34283F' },
+    iconButton: { width: '40px', height: '40px', borderRadius: '50%', backgroundColor: '#211A28', border: '1px solid #34283F', display: 'flex', justifyContent: 'center', alignItems: 'center', cursor: 'pointer', color: '#EAE2F0' },
+    title: { fontSize: '18px', fontWeight: 700, color: '#EAE2F0', letterSpacing: '0.5px' },
     heroSection: { display: 'flex', flexDirection: 'column' as const, alignItems: 'center', padding: '30px 20px' },
     avatarContainer: { position: 'relative' as const, marginBottom: '16px' },
-    avatar: { width: '120px', height: '120px', borderRadius: '50%', objectFit: 'cover' as const, border: '3px solid #D4B18A', backgroundColor: '#29202D' },
-    onlineBadge: { position: 'absolute' as const, bottom: '5px', right: '10px', width: '20px', height: '20px', borderRadius: '50%', backgroundColor: '#34D399', border: '3px solid #0D0A10' },
+    avatar: { width: '120px', height: '120px', borderRadius: '50%', objectFit: 'cover' as const, border: '3px solid #D8B38A', backgroundColor: '#34283F' },
+    onlineBadge: { position: 'absolute' as const, bottom: '5px', right: '10px', width: '20px', height: '20px', borderRadius: '50%', backgroundColor: '#34D399', border: '3px solid #131017' },
     nameRow: { display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '4px' },
-    name: { fontSize: '26px', fontWeight: '800', color: '#F2E9E4' },
-    ageBadge: { backgroundColor: '#4A1828', color: '#D4B18A', padding: '4px 12px', borderRadius: '20px', fontSize: '14px', fontWeight: '700' },
+    name: { fontSize: '26px', fontWeight: 800, color: '#EAE2F0' },
+    ageBadge: { backgroundColor: '#4A1828', color: '#D8B38A', padding: '4px 12px', borderRadius: '20px', fontSize: '14px', fontWeight: 700 },
     location: { fontSize: '14px', color: '#B58A83', marginBottom: '16px' },
-    intentionTag: { backgroundColor: '#29202D', color: '#D4B18A', border: '1px solid #4A1828', padding: '6px 16px', borderRadius: '20px', fontSize: '12px', fontWeight: '600' },
-    statsGrid: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', padding: '0 20px', marginBottom: '24px' },
-    statCard: { backgroundColor: '#1C1822', borderRadius: '16px', padding: '16px 8px', display: 'flex', flexDirection: 'column' as const, alignItems: 'center', border: '1px solid #29202D', cursor: 'pointer', transition: 'transform 0.1s' },
-    statIcon: { fontSize: '22px', marginBottom: '8px' },
-    statValue: { fontSize: '18px', fontWeight: '800', color: '#F2E9E4', marginBottom: '4px' },
-    statLabel: { fontSize: '10px', color: '#B58A83', fontWeight: '600', textTransform: 'uppercase' as const, letterSpacing: '0.5px' },
-    progressCard: { margin: '0 20px 24px 20px', backgroundColor: '#1C1822', borderRadius: '16px', padding: '20px', display: 'flex', alignItems: 'center', gap: '16px', border: '1px solid #29202D' },
+    intentionTag: { backgroundColor: '#241C2C', color: '#D8B38A', border: '1px solid #4A1828', padding: '6px 16px', borderRadius: '20px', fontSize: '12px', fontWeight: 600 },
+    statsGrid: { display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px', padding: '0 20px', marginBottom: '24px' },
+    statCard: { backgroundColor: '#211A28', borderRadius: '16px', padding: '20px 10px', display: 'flex', flexDirection: 'column' as const, alignItems: 'center', border: '1px solid #34283F', cursor: 'pointer', transition: 'transform 0.1s' },
+    statIcon: { fontSize: '24px', marginBottom: '8px' },
+    statValue: { fontSize: '20px', fontWeight: 800, color: '#EAE2F0', marginBottom: '4px' },
+    statLabel: { fontSize: '10px', color: '#B58A83', fontWeight: 600, textTransform: 'uppercase' as const, letterSpacing: '0.5px', textAlign: 'center' as const },
+    progressCard: { margin: '0 20px 24px 20px', backgroundColor: '#211A28', borderRadius: '16px', padding: '20px', display: 'flex', alignItems: 'center', gap: '16px', border: '1px solid #34283F' },
     progressCircle: { width: '50px', height: '50px' },
     progressText: { flex: 1 },
-    progressTitle: { fontSize: '15px', fontWeight: '700', color: '#F2E9E4', marginBottom: '4px' },
+    progressTitle: { fontSize: '15px', fontWeight: 700, color: '#EAE2F0', marginBottom: '4px' },
     progressSubtitle: { fontSize: '12px', color: '#B58A83' },
-    completeBtn: { backgroundColor: '#D4B18A', color: '#17121C', padding: '10px 16px', borderRadius: '20px', fontSize: '12px', fontWeight: '700', border: 'none', cursor: 'pointer' },
-    tabsContainer: { display: 'flex', padding: '0 20px', marginBottom: '24px', gap: '12px' },
-    tab: { flex: 1, padding: '14px', borderRadius: '14px', textAlign: 'center' as const, fontSize: '14px', fontWeight: '700', cursor: 'pointer', transition: 'all 0.2s', border: '1px solid #29202D' },
-    tabActive: { background: 'linear-gradient(135deg, #D4B18A, #B58A83)', color: '#17121C', border: 'none' },
-    tabInactive: { backgroundColor: '#1C1822', color: '#B58A83' },
-    section: { margin: '0 20px 24px 20px', backgroundColor: '#1C1822', borderRadius: '20px', padding: '20px', border: '1px solid #29202D' },
+    completeBtn: { backgroundColor: '#D8B38A', color: '#131017', padding: '10px 16px', borderRadius: '20px', fontSize: '12px', fontWeight: 700, border: 'none', cursor: 'pointer' },
+    segment: { position: 'relative' as const, display: 'flex', margin: '0 20px 24px 20px', backgroundColor: '#211A28', borderRadius: '999px', padding: '4px', border: '1px solid #34283F' },
+    segmentIndicator: { position: 'absolute' as const, top: '4px', bottom: '4px', left: '4px', width: 'calc(50% - 4px)', backgroundColor: '#D8B38A', borderRadius: '999px', transition: 'transform 0.25s ease' },
+    segmentBtn: { position: 'relative' as const, flex: 1, zIndex: 1, padding: '12px', borderRadius: '999px', border: 'none', background: 'none', fontSize: '14px', fontWeight: 700, cursor: 'pointer', transition: 'color 0.25s ease' },
+    section: { margin: '0 20px 24px 20px', backgroundColor: '#211A28', borderRadius: '20px', padding: '20px', border: '1px solid #34283F' },
     sectionHeader: { display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' },
-    sectionIcon: { width: '32px', height: '32px', borderRadius: '10px', background: 'linear-gradient(135deg, #4A1828, #D4B18A)', display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '16px' },
-    sectionTitle: { fontSize: '16px', fontWeight: '700', color: '#F2E9E4' },
-    infoRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', borderBottom: '1px solid #29202D' },
-    infoLabel: { display: 'flex', alignItems: 'center', gap: '10px', fontSize: '14px', color: '#B58A83', fontWeight: '500' },
+    sectionIcon: { width: '32px', height: '32px', borderRadius: '10px', background: 'linear-gradient(135deg, #4A1828, #D8B38A)', display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '16px' },
+    sectionTitle: { fontSize: '16px', fontWeight: 700, color: '#EAE2F0' },
+    sectionEditBtn: { marginLeft: 'auto', background: 'none', border: '1px solid #D8B38A', color: '#D8B38A', borderRadius: '20px', padding: '6px 16px', fontSize: '12px', fontWeight: 700, cursor: 'pointer' },
+    infoRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', borderBottom: '1px solid #34283F' },
+    infoLabel: { display: 'flex', alignItems: 'center', gap: '10px', fontSize: '14px', color: '#B58A83', fontWeight: 500 },
     infoValueButton: { display: 'flex', alignItems: 'center', gap: '8px', background: 'none', border: 'none', padding: '4px', margin: 0, cursor: 'pointer', font: 'inherit', textAlign: 'right' as const, maxWidth: '64%' },
-    infoValue: { fontSize: '14px', color: '#F2E9E4', fontWeight: '600', textAlign: 'right' as const, wordBreak: 'break-word' as const },
+    infoValue: { fontSize: '14px', color: '#EAE2F0', fontWeight: 600, textAlign: 'right' as const, wordBreak: 'break-word' as const },
     editIcon: { fontSize: '12px', opacity: 0.6, flexShrink: 0 },
     editHint: { fontSize: '12px', color: '#B58A83', marginTop: '-8px', marginBottom: '16px' },
-    galleryGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' },
-    galleryImage: { width: '100%', aspectRatio: '1/1', borderRadius: '16px', objectFit: 'cover' as const, backgroundColor: '#29202D', border: '1px solid #4A1828' },
-    galleryEmpty: { width: '100%', aspectRatio: '1/1', borderRadius: '16px', backgroundColor: '#29202D', border: '2px dashed #4A1828', display: 'flex', justifyContent: 'center', alignItems: 'center', color: '#B58A83', fontSize: '24px' },
+    chipWrap: { display: 'flex', flexWrap: 'wrap' as const, gap: '8px' },
+    chip: { backgroundColor: '#241C2C', color: '#D8B38A', border: '1px solid #4A1828', borderRadius: '20px', padding: '8px 14px', fontSize: '13px', fontWeight: 600 },
+    emptyText: { fontSize: '13px', color: '#B58A83' },
+    bioText: { fontSize: '14px', color: '#EAE2F0', lineHeight: 1.6, margin: 0 },
+    postsHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '0 20px 16px 20px' },
+    postsHeaderTitle: { fontSize: '15px', fontWeight: 700, color: '#EAE2F0' },
+    newPostBtn: { background: 'linear-gradient(135deg, #D8B38A, #C78C8D)', color: '#131017', border: 'none', borderRadius: '20px', padding: '10px 18px', fontSize: '13px', fontWeight: 700, cursor: 'pointer' },
+    postsEmpty: { margin: '0 20px', backgroundColor: '#211A28', border: '1px dashed #4A1828', borderRadius: '20px', padding: '40px 24px', textAlign: 'center' as const, color: '#B58A83', fontSize: '14px' },
+    postsEmptyTitle: { fontSize: '16px', fontWeight: 700, color: '#EAE2F0', marginBottom: '8px' },
+    postsError: { margin: '0 20px 16px 20px', backgroundColor: '#3B1220', border: '1px solid #7F1D2E', color: '#FCA5B5', borderRadius: '14px', padding: '12px 16px', fontSize: '13px' },
     overlay: { position: 'fixed' as const, inset: 0, backgroundColor: 'rgba(8, 6, 10, 0.72)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 100, padding: '16px' },
     modal: { width: '100%', maxWidth: '440px', backgroundColor: '#211A28', borderRadius: '24px', padding: '24px', border: '1px solid #34283F', marginBottom: '16px', maxHeight: '80vh', overflowY: 'auto' as const },
-    modalTitle: { fontSize: '18px', fontWeight: 700, color: '#F2E9E4', marginBottom: '4px' },
+    modalTitle: { fontSize: '18px', fontWeight: 700, color: '#EAE2F0', marginBottom: '4px' },
     modalSubtitle: { fontSize: '13px', color: '#B58A83', marginBottom: '18px' },
-    modalInput: { width: '100%', backgroundColor: '#131017', border: '1px solid #34283F', borderRadius: '14px', padding: '14px', color: '#F2E9E4', fontSize: '15px', outline: 'none', boxSizing: 'border-box' as const },
-    modalTextarea: { width: '100%', backgroundColor: '#131017', border: '1px solid #34283F', borderRadius: '14px', padding: '14px', color: '#F2E9E4', fontSize: '15px', outline: 'none', boxSizing: 'border-box' as const, minHeight: '120px', resize: 'vertical' as const, fontFamily: 'inherit' },
+    modalInput: { width: '100%', backgroundColor: '#131017', border: '1px solid #34283F', borderRadius: '14px', padding: '14px', color: '#EAE2F0', fontSize: '15px', outline: 'none', boxSizing: 'border-box' as const },
+    modalTextarea: { width: '100%', backgroundColor: '#131017', border: '1px solid #34283F', borderRadius: '14px', padding: '14px', color: '#EAE2F0', fontSize: '15px', outline: 'none', boxSizing: 'border-box' as const, minHeight: '120px', resize: 'vertical' as const, fontFamily: 'inherit' },
     optionWrap: { display: 'flex', flexWrap: 'wrap' as const, gap: '10px' },
     optionPill: { padding: '10px 16px', borderRadius: '20px', border: '1px solid #34283F', backgroundColor: '#131017', color: '#D8B38A', fontSize: '13px', fontWeight: 600, cursor: 'pointer' },
     optionPillActive: { backgroundColor: '#D8B38A', color: '#131017', border: '1px solid #D8B38A' },
     modalActions: { display: 'flex', gap: '12px', marginTop: '20px' },
     modalCancel: { flex: 1, padding: '14px', borderRadius: '16px', border: '1px solid #34283F', backgroundColor: 'transparent', color: '#B58A83', fontWeight: 700, fontSize: '14px', cursor: 'pointer' },
-    modalSave: { flex: 1, padding: '14px', borderRadius: '16px', border: 'none', background: 'linear-gradient(135deg, #D8B38A, #B58A83)', color: '#131017', fontWeight: 700, fontSize: '14px', cursor: 'pointer' },
+    modalSave: { flex: 1, padding: '14px', borderRadius: '16px', border: 'none', background: 'linear-gradient(135deg, #D8B38A, #C78C8D)', color: '#131017', fontWeight: 700, fontSize: '14px', cursor: 'pointer' },
     modalError: { marginTop: '12px', color: '#F0A6A6', fontSize: '13px' },
     toast: { position: 'fixed' as const, left: '50%', bottom: '96px', transform: 'translateX(-50%)', zIndex: 110, padding: '12px 20px', borderRadius: '999px', fontSize: '13px', fontWeight: 600, boxShadow: '0 10px 30px rgba(0,0,0,0.4)', maxWidth: '90%', textAlign: 'center' as const },
     toastSuccess: { backgroundColor: '#D8B38A', color: '#131017' },
@@ -551,36 +699,14 @@ export default function ProfileDashboardPage() {
   const radius = 20;
   const circumference = 2 * Math.PI * radius;
   const strokeDashoffset = circumference - (completionPercentage / 100) * circumference;
-  const displayLocation = profile.city && profile.country ? `${profile.city}, ${profile.country}` : profile.city || profile.country || 'Location not set';
 
-  /**
-   * One tappable fact row. `onEdit` is omitted for read-only rows so the value
-   * is rendered as plain text rather than a button.
-   */
-  const renderInfoRow = (config: {
-    icon: string;
-    label: string;
-    value: string;
-    onEdit?: () => void;
-    last?: boolean;
-  }) => (
-    <div style={{ ...styles.infoRow, ...(config.last ? { borderBottom: 'none' } : {}) }}>
-      <div style={styles.infoLabel}>{config.icon} {config.label}</div>
-      {config.onEdit ? (
-        <button
-          type="button"
-          onClick={config.onEdit}
-          aria-label={`Edit ${config.label}`}
-          style={styles.infoValueButton}
-        >
-          <span style={styles.infoValue}>{config.value}</span>
-          <span style={styles.editIcon} aria-hidden="true">✏️</span>
-        </button>
-      ) : (
-        <div style={styles.infoValue}>{config.value}</div>
-      )}
-    </div>
-  );
+  const author: MomentAuthor = {
+    id: profile.id,
+    displayName: profile.display_name,
+    avatarUrl: profile.avatar_url,
+    gender: profile.gender,
+    country: profile.country,
+  };
 
   const editorConfig = editor ? EDITOR_FIELDS[editor] : null;
   const editorTitle = editor === 'phone' && phoneStage === 'verify' ? 'Verify phone' : editorConfig?.title ?? '';
@@ -759,6 +885,22 @@ export default function ProfileDashboardPage() {
           </div>
         );
 
+      case 'hobbies':
+        return (
+          <div style={styles.optionWrap}>
+            {PROFILE_HOBBIES_OPTIONS.map((option) => (
+              <button
+                key={option}
+                type="button"
+                style={{ ...styles.optionPill, ...(listDraft.includes(option) ? styles.optionPillActive : {}) }}
+                onClick={() => toggleListDraft(option)}
+              >
+                {option}
+              </button>
+            ))}
+          </div>
+        );
+
       case 'religion':
         return (
           <input
@@ -787,76 +929,87 @@ export default function ProfileDashboardPage() {
   return (
     <div style={styles.container}>
       <div style={styles.topBar}>
-        <button style={styles.iconButton} onClick={() => router.back()}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M15 18l-6-6 6-6"/></svg></button>
+        <button style={styles.iconButton} onClick={() => router.back()} aria-label="Back"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M15 18l-6-6 6-6"/></svg></button>
         <div style={styles.title}>My Profile</div>
-        <button style={styles.iconButton} onClick={() => router.push('/profile/settings')}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg></button>
+        <button style={styles.iconButton} onClick={() => router.push('/profile/settings')} aria-label="Settings"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg></button>
       </div>
 
-      <div style={styles.heroSection}>
-        <div style={styles.avatarContainer}>
-          {profile.avatar_url ? <img src={profile.avatar_url} alt="Avatar" style={styles.avatar} /> : <div style={{ ...styles.avatar, display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '40px' }}>👤</div>}
-          <div style={styles.onlineBadge} />
+      <ProfileHeader
+        displayName={profile.display_name}
+        age={profile.age ?? null}
+        gender={profile.gender}
+        city={profile.city}
+        country={profile.country}
+        avatarUrl={profile.avatar_url}
+        isOnline
+        intention={profile.intention}
+        matches={profile.matches_count}
+        following={profile.following_count}
+        followers={profile.followers_count}
+        likes={profile.profile_likes_count}
+        onStatNavigate={(key) => router.push(`/profile/stats/${key}`)}
+      />
+
+      <div style={styles.section}>
+        <div style={styles.sectionHeader}>
+          <div style={styles.sectionIcon}>📝</div>
+          <div style={styles.sectionTitle}>Bio</div>
         </div>
-        <div style={styles.nameRow}><span style={styles.name}>{profile.display_name}</span><span style={styles.ageBadge}>{profile.age}</span></div>
-        <div style={styles.location}>{profile.gender} • {displayLocation}</div>
-        <div style={styles.intentionTag}>{intentionLabel(profile.intention) || 'Looking for connections'}</div>
-      </div>
-
-      <div style={styles.statsGrid}>
-        <div style={styles.statCard} onClick={() => router.push('/profile/stats/photos')}><span style={styles.statIcon}>📸</span><span style={styles.statValue}>{profile.photos?.filter(p => p).length || 0}</span><span style={styles.statLabel}>Photos</span></div>
-        <div style={styles.statCard} onClick={() => router.push('/profile/stats/interests')}><span style={styles.statIcon}>❤️</span><span style={styles.statValue}>{profile.hobbies?.length || 0}</span><span style={styles.statLabel}>Interests</span></div>
-        <div style={styles.statCard} onClick={() => router.push('/profile/stats/matches')}><span style={styles.statIcon}>✨</span><span style={styles.statValue}>0</span><span style={styles.statLabel}>Matches</span></div>
-        <div style={styles.statCard} onClick={() => router.push('/profile/stats/followers')}><span style={styles.statIcon}>👥</span><span style={styles.statValue}>{profile.followers || 0}</span><span style={styles.statLabel}>Followers</span></div>
-        <div style={styles.statCard} onClick={() => router.push('/profile/stats/following')}><span style={styles.statIcon}>➕</span><span style={styles.statValue}>{profile.following || 0}</span><span style={styles.statLabel}>Following</span></div>
-        <div style={styles.statCard} onClick={() => router.push('/profile/stats/friends')}><span style={styles.statIcon}>🤝</span><span style={styles.statValue}>{profile.friends || 0}</span><span style={styles.statLabel}>Friends</span></div>
+        {profile.bio?.trim() ? (
+          <p style={styles.bioText}>{profile.bio}</p>
+        ) : (
+          <div style={styles.emptyText}>No bio added yet.</div>
+        )}
       </div>
 
       <div style={styles.progressCard}>
-        <svg style={styles.progressCircle} viewBox="0 0 50 50"><circle cx="25" cy="25" r={radius} fill="none" stroke="#29202D" strokeWidth="4" /><circle cx="25" cy="25" r={radius} fill="none" stroke="#D4B18A" strokeWidth="4" strokeDasharray={circumference} strokeDashoffset={strokeDashoffset} strokeLinecap="round" transform="rotate(-90 25 25)" /><text x="25" y="28" textAnchor="middle" fill="#F2E9E4" fontSize="10" fontWeight="bold">{completionPercentage}%</text></svg>
+        <svg style={styles.progressCircle} viewBox="0 0 50 50"><circle cx="25" cy="25" r={radius} fill="none" stroke="#34283F" strokeWidth="4" /><circle cx="25" cy="25" r={radius} fill="none" stroke="#D8B38A" strokeWidth="4" strokeDasharray={circumference} strokeDashoffset={strokeDashoffset} strokeLinecap="round" transform="rotate(-90 25 25)" /><text x="25" y="28" textAnchor="middle" fill="#EAE2F0" fontSize="10" fontWeight="bold">{completionPercentage}%</text></svg>
         <div style={styles.progressText}><div style={styles.progressTitle}>Complete your profile</div><div style={styles.progressSubtitle}>Add more info to attract matches</div></div>
         <button style={styles.completeBtn} onClick={() => router.push('/profile/edit')}>Complete</button>
       </div>
 
-      <div style={styles.tabsContainer}>
-        <div style={{ ...styles.tab, ...(activeTab === 'about' ? styles.tabActive : styles.tabInactive) }} onClick={() => setActiveTab('about')}>About</div>
-        <div style={{ ...styles.tab, ...(activeTab === 'gallery' ? styles.tabActive : styles.tabInactive) }} onClick={() => setActiveTab('gallery')}>Gallery</div>
-      </div>
+      <ProfileTabs active={activeTab} onChange={setActiveTab} />
 
-      {activeTab === 'about' && (
-        <div>
-          <div style={styles.section}>
-            <div style={styles.sectionHeader}><div style={styles.sectionIcon}>👤</div><div style={styles.sectionTitle}>About Me</div></div>
-            <p style={styles.editHint}>Tap any row to edit it.</p>
-            {renderInfoRow({ icon: '📝', label: 'Bio', value: profile.bio?.trim() || 'No bio added yet.', onEdit: () => openEditor('bio') })}
-            {renderInfoRow({ icon: '🎂', label: 'Age', value: profile.age ? `${profile.age} years` : 'Not set', onEdit: () => openEditor('age') })}
-            {renderInfoRow({ icon: '👥', label: 'Gender', value: profile.gender || 'Not set', onEdit: () => openEditor('gender') })}
-            {renderInfoRow({ icon: '❤️', label: 'Looking for', value: profile.looking_for?.join(', ') || 'Not set', onEdit: () => openEditor('looking_for'), last: true })}
-          </div>
-          <div style={styles.section}>
-            <div style={styles.sectionHeader}><div style={styles.sectionIcon}>✨</div><div style={styles.sectionTitle}>More About Me</div></div>
-            {renderInfoRow({ icon: '💫', label: 'Intention', value: profile.intention ? intentionLabel(profile.intention) : 'Not set', onEdit: () => openEditor('intention') })}
-            {renderInfoRow({ icon: '🍷', label: 'Drinking', value: profile.drinking || 'Not set', onEdit: () => openEditor('drinking') })}
-            {renderInfoRow({ icon: '🚬', label: 'Smoking', value: profile.smoking || 'Not set', onEdit: () => openEditor('smoking') })}
-            {renderInfoRow({ icon: '🛐', label: 'Religion', value: profile.religion || 'Not set', onEdit: () => openEditor('religion') })}
-            {renderInfoRow({ icon: '⚖️', label: 'Politics', value: profile.politics || 'Not set', onEdit: () => openEditor('politics') })}
-            {renderInfoRow({ icon: '🐾', label: 'Pets', value: profile.pets?.join(', ') || 'Not set', onEdit: () => openEditor('pets') })}
-            {renderInfoRow({ icon: '🧠', label: 'Personality', value: profile.personality?.join(', ') || 'Not set', onEdit: () => openEditor('personality'), last: true })}
-          </div>
-          <div style={styles.section}>
-            <div style={styles.sectionHeader}><div style={styles.sectionIcon}>📞</div><div style={styles.sectionTitle}>Contact</div></div>
-            {renderInfoRow({ icon: '📧', label: 'Email', value: userEmail || 'Not set', onEdit: () => openEditor('email') })}
-            {renderInfoRow({ icon: '📱', label: 'Phone', value: phone || 'Not set', onEdit: () => openEditor('phone'), last: true })}
-          </div>
-        </div>
+      {activeTab === 'feed' && (
+        <ProfileMoments
+          posts={posts}
+          author={author}
+          isOwn
+          loading={postsLoading}
+          error={postsError}
+          title="Your Posts"
+          action={
+            <button type="button" style={styles.newPostBtn} onClick={() => router.push('/moments')}>
+              + New Post
+            </button>
+          }
+          emptyTitle="No posts yet"
+          emptyBody="Share photos, videos and updates in Moments and they will appear here."
+          onLike={(item) => void handleLikePost(item)}
+          onComment={(item) => void handleCommentPost(item)}
+          onShare={(item) => void handleSharePost(item)}
+        />
       )}
 
-      {activeTab === 'gallery' && (
-        <div style={styles.section}>
-          <div style={styles.sectionHeader}><div style={styles.sectionIcon}>🖼️</div><div style={styles.sectionTitle}>Verification Gallery</div></div>
-          <div style={styles.galleryGrid}>
-            {profile.photos && profile.photos.length > 0 ? profile.photos.map((photo, index) => (photo ? <img key={index} src={photo} alt={`Gallery ${index}`} style={styles.galleryImage} /> : <div key={index} style={styles.galleryEmpty}>+</div>)) : Array.from({ length: 6 }).map((_, index) => <div key={index} style={styles.galleryEmpty}>+</div>)}
-          </div>
-        </div>
+      {activeTab === 'details' && (
+        <ProfileDetails
+          data={{
+            bio: profile.bio,
+            age: profile.age ?? null,
+            gender: profile.gender,
+            looking_for: profile.looking_for,
+            intention: profile.intention,
+            drinking: profile.drinking,
+            smoking: profile.smoking,
+            religion: profile.religion,
+            politics: profile.politics,
+            pets: profile.pets,
+            personality: profile.personality,
+            hobbies: profile.hobbies,
+          }}
+          onEdit={openEditor}
+          contact={{ email: userEmail, phone }}
+        />
       )}
 
       {editor && editorConfig && (

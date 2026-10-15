@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import MobileNav from '../components/layout/MobileNav';
+import IntentionBadge from '../components/profile/IntentionBadge';
 
 /**
  * `/people` — the member's connections.
@@ -31,6 +32,7 @@ interface Connection {
   age: number | null;
   city: string | null;
   country: string | null;
+  intention: string | null;
   isOnline: boolean;
 }
 
@@ -41,7 +43,7 @@ interface MatchRow {
 }
 
 /** The only columns we may read about another member. */
-const PROFILE_COLUMNS = 'id, display_name, age, city, country, avatar_url, is_online';
+const PROFILE_COLUMNS = 'id, display_name, age, city, country, avatar_url, intention, is_online';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -146,6 +148,7 @@ export default function PeoplePage() {
             age: num(profile?.age),
             city: str(profile?.city),
             country: str(profile?.country),
+            intention: str(profile?.intention),
             isOnline: profile?.is_online === true,
           };
         })
@@ -215,6 +218,15 @@ export default function PeoplePage() {
     name: { fontSize: '15px', fontWeight: 600, margin: 0 },
     meta: { fontSize: '12px', color: '#B58A83', margin: '4px 0 0 0' },
     online: { fontSize: '11px', color: '#34D399', margin: '4px 0 0 0' },
+    profileLink: {
+      display: 'inline-block',
+      marginTop: '8px',
+      marginLeft: '66px',
+      fontSize: '12px',
+      fontWeight: 700,
+      color: '#D8B38A',
+      textDecoration: 'none',
+    },
     empty: { padding: '48px 24px', textAlign: 'center' as const },
     emptyTitle: { fontSize: '15px', color: '#F2E9E4', margin: 0 },
     emptyBody: { fontSize: '13px', color: '#B58A83', margin: '8px 0 20px', lineHeight: 1.5 },
@@ -299,8 +311,14 @@ export default function PeoplePage() {
                       .filter(Boolean)
                       .join(' · ') || 'No details yet'}
                   </p>
+                  <div style={{ marginTop: '6px' }}>
+                    <IntentionBadge intention={connection.intention} />
+                  </div>
                   {connection.isOnline && <p style={styles.online}>● Online now</p>}
                 </div>
+              </Link>
+              <Link href={`/profile/${connection.userId}`} style={styles.profileLink}>
+                View profile
               </Link>
             </li>
           ))}

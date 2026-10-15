@@ -23,10 +23,17 @@
 -- members); the protection here is column-level, and access is restricted to the
 -- `authenticated` role with `anon` explicitly revoked.
 --
--- SAFE TO RE-RUN: `create or replace view`.
+-- SAFE TO RE-RUN: the view is DROPPED and recreated rather than `create or
+-- replace`d. `create or replace view` may only append columns, so once a later
+-- migration (M18) widened the projection this definition could no longer be
+-- re-applied against it — and re-running `apply_all.sql` as a no-op is a tested
+-- property that failed exactly that way. Nothing depends on the view
+-- structurally, so a drop is safe.
 -- =============================================================================
 
-create or replace view public.public_profiles as
+drop view if exists public.public_profiles;
+
+create view public.public_profiles as
 select
   id,
   display_name,
