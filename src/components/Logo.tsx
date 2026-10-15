@@ -29,6 +29,23 @@
 
 export type LogoVariant = 'mark' | 'lockup';
 
+/**
+ * The mark's own coordinate system, exported.
+ *
+ * A caller that needs to line type up under the mark (the intro splash) must
+ * derive the rendered height from this ratio — the mark's 520:870 box is taller
+ * than its ink, so guessing from the width alone puts the text in the wrong
+ * place. `public/logo-mark.svg` uses the same value and
+ * `scripts/generate-icons.mjs` reads it back out of that file.
+ */
+export const MARK_VIEW_BOX = '240 0 520 870';
+
+/** Rendered height of the mark for a given width. */
+export function markHeightForWidth(width: number): number {
+  const [, , , vbWidth, vbHeight] = MARK_VIEW_BOX.split(/\s+/).map(Number);
+  return (width * vbHeight) / vbWidth;
+}
+
 export interface LogoProps {
   /** Which lockup to draw. Defaults to the full brand lockup. */
   variant?: LogoVariant;

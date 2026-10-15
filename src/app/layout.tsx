@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import { LanguageProvider } from '@/context/LanguageContext';
 import ServiceWorkerRegistrar from '@/app/components/ServiceWorkerRegistrar';
+import IntroSplashAnimation from '@/app/components/IntroSplashAnimation';
 
 const APP_NAME = 'Mettivo';
 const APP_DESCRIPTION =
@@ -70,6 +71,17 @@ export default function RootLayout({
       <body className="bg-[#131017] text-[#eae2f0] antialiased">
         <LanguageProvider>
           {children}
+          {/*
+            The intro splash lives in the ROOT layout, not on the landing page.
+
+            It is a once-per-session curtain over the whole app, so it has to be
+            above whatever route the member lands on first — someone who opens
+            `/discover` or a shared `/chat/...` link has never seen the landing
+            page, and a splash mounted there would never run for them. It renders
+            nothing of its own until the client decides (see the component), so it
+            cannot introduce a hydration mismatch.
+          */}
+          <IntroSplashAnimation />
           <ServiceWorkerRegistrar />
         </LanguageProvider>
       </body>
