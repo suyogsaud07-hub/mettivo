@@ -1285,7 +1285,10 @@ begin
     select case when m.user_a = new.sender_id then m.user_b else m.user_a end
       into recipient
     from public.matches m
-    where m.id::text = new.match_id
+    -- Both sides cast to text: `messages.match_id` is `uuid` on the live project
+    -- and `text` in some rebuilt environments. A one-sided cast raises
+    -- "operator does not exist: text = uuid" the first time a message is sent.
+    where m.id::text = new.match_id::text
     limit 1;
 
     if recipient is not null and recipient <> new.sender_id then
@@ -2514,7 +2517,9 @@ begin
   select case when m.user_a = new.sender_id then m.user_b else m.user_a end
     into recipient
   from public.matches m
-  where m.id::text = new.match_id
+  -- Both sides cast to text: `messages.match_id` is `uuid` on the live project
+  -- and `text` in some rebuilt environments.
+  where m.id::text = new.match_id::text
   limit 1;
 
   if recipient is not null and public.is_blocked_pair(new.sender_id, recipient) then
@@ -2852,7 +2857,11 @@ create policy "messages_select_participant"
     exists (
       select 1
       from public.matches m
-      where m.id::text = messages.match_id
+      -- Both sides are cast to text. `messages.match_id` is `uuid` on the live
+      -- project and `text` in some rebuilt environments, and `CREATE POLICY` is
+      -- TYPE-CHECKED at creation, so a one-sided cast fails outright with
+      -- "operator does not exist: text = uuid".
+      where m.id::text = messages.match_id::text
         and (m.user_a = auth.uid() or m.user_b = auth.uid())
     )
   );
@@ -2895,10 +2904,10 @@ security definer
 set search_path = public, pg_temp
 as $$
 begin
-  if exists (select 1 from public.matches m where m.id::text = new.match_id)
+  if exists (select 1 from public.matches m where m.id::text = new.match_id::text)
      and not exists (
        select 1 from public.matches m
-       where m.id::text = new.match_id
+       where m.id::text = new.match_id::text
          and (m.user_a = new.sender_id or m.user_b = new.sender_id)
      ) then
     raise exception 'You are not part of this conversation.' using errcode = '42501';
@@ -3010,7 +3019,7 @@ as $$
   left join public.match_read_state rs
     on rs.match_id = m.id and rs.user_id = auth.uid()
   left join public.messages msg
-    on msg.match_id = m.id::text
+    on msg.match_id::text = m.id::text
   where auth.uid() is not null
     and (m.user_a = auth.uid() or m.user_b = auth.uid())
   group by m.id, rs.last_read_at;

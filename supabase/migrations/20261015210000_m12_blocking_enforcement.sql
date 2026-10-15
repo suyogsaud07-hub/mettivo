@@ -279,7 +279,9 @@ begin
   select case when m.user_a = new.sender_id then m.user_b else m.user_a end
     into recipient
   from public.matches m
-  where m.id::text = new.match_id
+  -- Both sides cast to text: `messages.match_id` is `uuid` on the live project
+  -- and `text` in some rebuilt environments.
+  where m.id::text = new.match_id::text
   limit 1;
 
   if recipient is not null and public.is_blocked_pair(new.sender_id, recipient) then

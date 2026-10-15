@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import type { PGlite } from '@electric-sql/pglite';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { anonReadCount, createBaseDb, migrationFiles } from './harness';
+import { anonReadCount, createBaseDb, createLiveLikeDb, migrationFiles } from './harness';
 
 /**
  * The operator's bootstrap file.
@@ -133,6 +133,15 @@ describe('apply_all.sql — the operator bootstrap', () => {
       'unmatch_member',
       'unread_counts',
     ]);
+  });
+
+  it('applies cleanly on a live-shaped database too', async () => {
+    // The bundle must work against the LIVE column types, not only the default
+    // harness shape. This is the exact combination that failed for the operator
+    // with "operator does not exist: text = uuid".
+    const liveDb = await createLiveLikeDb();
+    await expect(liveDb.exec(sql)).resolves.toBeDefined();
+    await expect(liveDb.exec(sql)).resolves.toBeDefined();
   });
 
   it('seeds the interest and prompt catalogue', async () => {

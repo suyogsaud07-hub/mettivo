@@ -112,6 +112,38 @@ export async function applyMigrations(
 }
 
 /**
+ * A database that mirrors the LIVE project's column types.
+ *
+ * The default `BASE_SCHEMA` declares `messages.match_id` as `text`, but the live
+ * project declares it `uuid` (verified by probing PostgREST: a non-uuid filter
+ * value is rejected with `22P02 invalid input syntax for type uuid`, while a
+ * genuine text column such as `profiles.display_name` accepts it).
+ *
+ * That single divergence made the whole migration set look correct locally while
+ * `create policy ... where m.id::text = messages.match_id` failed on the live
+ * project with `operator does not exist: text = uuid`. `CREATE POLICY` IS
+ * type-checked at creation time, so it is the first thing to break.
+ *
+ * This variant exists so the suite can never make that assumption again.
+ */
+export async function createLiveLikeDb(): Promise<PGlite> {
+  const db = new PGlite();
+
+  await db.exec(BASE_SCHEMA.replace('match_id text,', 'match_id uuid,'));
+
+  // The live project already has a `matches` table (an older shape): only `id`
+  // and `created_at`, with `user_a`/`user_b` added by the M10 migration.
+  await db.exec(`
+    create table if not exists public.matches (
+      id         uuid primary key default gen_random_uuid(),
+      created_at timestamptz not null default now()
+    );
+  `);
+
+  return db;
+}
+
+/**
  * Fresh database with the Supabase base objects and NO project migrations.
  *
  * Use this to assert something about the migration set as a whole — for example

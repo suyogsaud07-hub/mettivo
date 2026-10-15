@@ -141,7 +141,10 @@ begin
     select case when m.user_a = new.sender_id then m.user_b else m.user_a end
       into recipient
     from public.matches m
-    where m.id::text = new.match_id
+    -- Both sides cast to text: `messages.match_id` is `uuid` on the live project
+    -- and `text` in some rebuilt environments. A one-sided cast raises
+    -- "operator does not exist: text = uuid" the first time a message is sent.
+    where m.id::text = new.match_id::text
     limit 1;
 
     if recipient is not null and recipient <> new.sender_id then
