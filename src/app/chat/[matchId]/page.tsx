@@ -5,7 +5,14 @@ import type { RealtimePostgresChangesPayload } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { markConversationRead } from '@/lib/messages';
 import { type MessageRow } from '@/lib/types';
-import { type ReportRow, type BlockedUserRow, type BlockedUserWithProfile } from '@/lib/types';
+import {
+  NO_RESTRICTIONS,
+  describeRestriction,
+  fetchMyRestrictions,
+  type MyRestrictions,
+} from '@/lib/reports';
+import { ReportButton } from '@/app/components/moderation/ReportButton';
+import { ReportModal } from '@/app/components/moderation/ReportModal';
 import TranslatableMessage from '@/app/components/chat/TranslatableMessage';
 import { usePreferredTranslationLanguage } from '@/app/components/chat/usePreferredTranslationLanguage';
 
@@ -42,12 +49,9 @@ export default function ChatPage({
   const [otherUserId, setOtherUserId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [reporting, setReporting] = useState(false);
   const [blocking, setBlocking] = useState(false);
-  const [blockReason, setBlockReason] = useState('');
-  const [reportReason, setReportReason] = useState('');
-  const [reportDetails, setReportDetails] = useState('');
-  const [showReportModal, setShowReportModal] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
+  const [restrictions, setRestrictions] = useState<MyRestrictions>(NO_RESTRICTIONS);
 
   /**
    * The language this member wants incoming messages translated into.
@@ -88,6 +92,12 @@ export default function ChatPage({
 
       if (!isMounted) return;
       if (user) setCurrentUserId(user.id);
+
+      // M21: a banned or suspended member can read but not compose. The
+      // database enforces this too (a BEFORE INSERT trigger); the notice just
+      // explains the disabled composer instead of letting a send silently fail.
+      const myRestrictions = await fetchMyRestrictions();
+      if (isMounted) setRestrictions(myRestrictions);
 
       const { data, error: fetchError } = await supabase
         .from('messages')
@@ -171,49 +181,9 @@ export default function ChatPage({
     setNewMessage('');
   };
 
-  const handleReport = async () => {
-    if (!otherUserId || !reportReason) return;
-
-    setReporting(true);
-    setError(null);
-
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        setError('You must be signed in to report a user.');
-        return;
-      }
-
-      const { error: insertError } = await supabase
-        .from('reports')
-        .insert({
-          reporter_id: user.id,
-          reported_user_id: otherUserId,
-          reason: reportReason,
-          details: reportReason === 'other' ? reportDetails.trim() : null,
-        });
-
-      if (insertError) {
-        if (insertError.code === '23505') {
-          setError('You have already reported this user.');
-        } else {
-          console.error('Failed to submit report:', insertError.message);
-          setError(`Could not submit report: ${insertError.message}`);
-        }
-        return;
-      }
-
-      setShowReportModal(false);
-      setReportReason('');
-      setReportDetails('');
-      setMenuOpen(false);
-      alert('Report submitted successfully. Our safety team will review it.');
-    } catch (err) {
-      console.error('Unexpected error submitting report:', err);
-      setError('An unexpected error occurred. Please try again.');
-    } finally {
-      setReporting(false);
-    }
+  const handleReported = () => {
+    setReportOpen(false);
+    setMenuOpen(false);
   };
 
   const handleBlock = async () => {
@@ -256,6 +226,9 @@ export default function ChatPage({
     }
   };
 
+  const restrictionMessage = describeRestriction(restrictions);
+  const canSend = restrictionMessage === null;
+
   return (
     <div className="flex flex-col h-screen max-w-md mx-auto p-4 bg-neutral-950 text-white">
       {/* Header with back button and report/block menu */}
@@ -284,12 +257,12 @@ export default function ChatPage({
                 <button
                   onClick={() => {
                     setMenuOpen(false);
-                    setShowReportModal(true);
+                    setReportOpen(true);
                   }}
                   className="w-full text-left px-3 py-2 rounded hover:bg-neutral-100 dark:hover:bg-neutral-700"
-                  disabled={reporting}
+                  disabled={!otherUserId}
                 >
-                  {reporting ? 'Reporting...' : 'Report User'}
+                  Report User
                 </button>
                 <button
                   onClick={handleBlock}
@@ -319,8 +292,20 @@ export default function ChatPage({
           return (
             <div
               key={msg.id}
-              className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}
+              className={`flex items-end gap-1 ${isMe ? 'justify-end' : 'justify-start'}`}
             >
+              {/* Only incoming messages offer a report, and it points at the
+                  exact message so `file_report` captures it as context. */}
+              {!isMe && (
+                <ReportButton
+                  targetUserId={msg.sender_id}
+                  targetType="message"
+                  targetId={msg.id}
+                  title="Report this message"
+                  ariaLabel="Report this message"
+                  className="mb-1"
+                />
+              )}
               <div
                 className={`p-3 rounded-2xl max-w-[75%] ${
                   isMe ? 'bg-rose-500 text-white' : 'bg-neutral-800 text-neutral-200'
@@ -341,6 +326,15 @@ export default function ChatPage({
         })}
       </div>
 
+      {restrictionMessage && (
+        <div
+          role="status"
+          className="mb-3 rounded-xl border border-amber-700/50 bg-amber-950/40 p-3 text-xs text-amber-200"
+        >
+          {restrictionMessage}
+        </div>
+      )}
+
       {error && (
         <p role="alert" className="mb-3 text-center text-xs text-rose-400">
           {error}
@@ -352,94 +346,29 @@ export default function ChatPage({
           type="text"
           value={newMessage}
           onChange={(e) => setNewMessage(e.target.value)}
-          placeholder="Type a message..."
+          placeholder={canSend ? 'Type a message...' : 'Messaging is paused'}
           aria-label="Message"
-          className="flex-1 p-3 rounded-xl bg-neutral-900 border border-neutral-800 text-white focus:outline-none"
+          disabled={!canSend}
+          className="flex-1 p-3 rounded-xl bg-neutral-900 border border-neutral-800 text-white focus:outline-none disabled:opacity-50"
         />
         <button
           type="submit"
-          className="px-5 py-3 bg-rose-500 font-semibold rounded-xl text-white"
+          disabled={!canSend}
+          className="px-5 py-3 bg-rose-500 font-semibold rounded-xl text-white disabled:opacity-50 disabled:cursor-not-allowed"
         >
           Send
         </button>
       </form>
 
-      {/* Report Modal */}
-      {showReportModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-          <div className="relative w-full max-w-md max-h-[90vh] overflow-y-auto rounded-3xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 shadow-2xl">
-            {/* Close button */}
-            <button
-              onClick={() => setShowReportModal(false)}
-              className="absolute top-3 right-3 rounded-full bg-neutral-200 dark:bg-neutral-800 p-1.5 hover:bg-neutral-300 dark:hover:bg-neutral-700 transition-colors"
-              aria-label="Close"
-            >
-              <svg className="h-4 w-4 stroke-current" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-
-            <div className="px-6 py-4 border-b border-neutral-200 dark:border-neutral-800">
-              <h3 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">Report user</h3>
-            </div>
-
-            <div className="px-6 py-5">
-              <form onSubmit={(e) => {
-                e.preventDefault();
-                handleReport();
-              }}>
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium mb-1">Reason for reporting</label>
-                    <select
-                      value={reportReason}
-                      onChange={(e) => setReportReason(e.target.value)}
-                      className="w-full px-4 py-2.5 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 focus:outline-none focus:ring-2 focus:ring-rose-500 focus:border-rose-500"
-                      disabled={reporting}
-                    >
-                      <option value="">Select a reason...</option>
-                      <option value="harassment">Harassment or hate speech</option>
-                      <option value="fake_profile">Fake profile or scam</option>
-                      <option value="inappropriate">Inappropriate content</option>
-                      <option value="underage">Underage user</option>
-                      <option value="other">Other</option>
-                    </select>
-                  </div>
-                  {reportReason === "other" && (
-                    <div>
-                      <label className="block text-sm font-medium mb-1">Please explain</label>
-                      <textarea
-                        rows={3}
-                        value={reportDetails}
-                        onChange={(e) => setReportDetails(e.target.value)}
-                        className="w-full px-4 py-2.5 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-rose-500 focus:border-rose-500"
-                        placeholder="Tell us more about what happened..."
-                        disabled={reporting}
-                      />
-                    </div>
-                  )}
-                  <div className="flex justify-end">
-                    <button
-                      onClick={() => setShowReportModal(false)}
-                      className="px-3 py-1.5 rounded text-sm bg-neutral-200 hover:bg-neutral-300"
-                      disabled={reporting}
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="submit"
-                      className="px-4 py-2 bg-rose-500 text-white rounded hover:bg-rose-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                      disabled={!reportReason || (reportReason === "other" && !reportDetails.trim()) || reporting}
-                    >
-                      Submit report
-                    </button>
-                  </div>
-                </div>
-              </form>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Report dialog — shared with every other surface. */}
+      <ReportModal
+        isOpen={reportOpen}
+        onClose={() => setReportOpen(false)}
+        targetUserId={otherUserId ?? ''}
+        targetType="user"
+        title="Report member"
+        onSubmitted={handleReported}
+      />
     </div>
   );
 }

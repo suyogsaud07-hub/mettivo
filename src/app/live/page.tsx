@@ -10,6 +10,14 @@ import LiveStage from '@/app/components/live/LiveStage';
 import LiveControls from '@/app/components/live/LiveControls';
 import LiveChatDrawer from '@/app/components/live/LiveChatDrawer';
 import MobileNav from '@/app/components/layout/MobileNav';
+import { ReportButton } from '@/app/components/moderation/ReportButton';
+import { captureStreamFrame } from '@/lib/live/snapshot';
+import {
+  NO_RESTRICTIONS,
+  describeRestriction,
+  fetchMyRestrictions,
+  type MyRestrictions,
+} from '@/lib/reports';
 
 /**
  * Mettivo Live — random 1-on-1 video, OmeTV style.
@@ -29,6 +37,7 @@ export default function LivePage() {
   const router = useRouter();
   const [ready, setReady] = useState(false);
   const [showPermission, setShowPermission] = useState(true);
+  const [restrictions, setRestrictions] = useState<MyRestrictions>(NO_RESTRICTIONS);
 
   const session = useLiveSession();
   const {
@@ -38,6 +47,7 @@ export default function LivePage() {
     remoteStream,
     myCountry,
     partnerCountry,
+    partnerUserId,
     peersOnline,
     messages,
     micEnabled,
@@ -63,6 +73,12 @@ export default function LivePage() {
         router.replace('/auth');
         return;
       }
+      // A video ban or suspension disables Start. There is no application
+      // server to enforce this at launch, so it is client-gated here and
+      // recorded server-side when the report/action was applied.
+      const mine = await fetchMyRestrictions();
+      if (!mounted) return;
+      setRestrictions(mine);
       setReady(true);
     })();
     return () => {
@@ -79,6 +95,8 @@ export default function LivePage() {
   }
 
   const inPool = phase === 'searching' || phase === 'connecting' || phase === 'live';
+  const restrictionMessage = describeRestriction(restrictions);
+  const videoRestricted = restrictions.videoBanned || restrictions.suspended;
 
   return (
     <div
@@ -155,8 +173,39 @@ export default function LivePage() {
           >
             <span aria-hidden style={{ fontSize: '18px' }}>{countryFlagEmoji(myCountry)}</span>
           </span>
+
+          {/* Report the partner mid-call. The snapshot is captured at the tap,
+              because the stream is gone the moment the call ends. */}
+          {phase === 'live' && partnerUserId && remoteStream && (
+            <ReportButton
+              targetUserId={partnerUserId}
+              targetType="live"
+              title="Report this call"
+              ariaLabel="Report this call"
+              captureEvidence={() => captureStreamFrame(remoteStream)}
+              className="p-2"
+            />
+          )}
         </div>
       </div>
+
+      {restrictionMessage && (
+        <div
+          role="status"
+          style={{
+            marginBottom: '12px',
+            padding: '12px 14px',
+            borderRadius: '14px',
+            border: '1px solid #542036',
+            backgroundColor: '#2a1420',
+            color: '#f3c9d3',
+            fontSize: '13px',
+            lineHeight: 1.5,
+          }}
+        >
+          {restrictionMessage}
+        </div>
+      )}
 
       <LiveStage
         phase={phase}
@@ -169,7 +218,11 @@ export default function LivePage() {
         phase={phase}
         micEnabled={micEnabled}
         camEnabled={camEnabled}
-        onStart={() => void start()}
+        restricted={videoRestricted}
+        onStart={() => {
+          if (videoRestricted) return;
+          void start();
+        }}
         onNext={next}
         onStop={() => {
           stop();
@@ -188,6 +241,7 @@ export default function LivePage() {
           localStream={localStream}
           onAllow={() => void requestMedia()}
           onStart={() => {
+            if (videoRestricted) return;
             setShowPermission(false);
             void start();
           }}

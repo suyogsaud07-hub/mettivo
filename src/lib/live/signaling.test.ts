@@ -110,8 +110,18 @@ describe('countryFlagEmoji', () => {
 
 describe('readSeek', () => {
   it('reads a well-formed seek and defaults a missing country', () => {
-    expect(readSeek({ from: 'a', country: 'Nepal' })).toEqual({ from: 'a', country: 'Nepal' });
-    expect(readSeek({ from: 'a' })).toEqual({ from: 'a', country: '' });
+    expect(readSeek({ from: 'a', country: 'Nepal' })).toEqual({
+      from: 'a',
+      country: 'Nepal',
+      userId: null,
+    });
+    expect(readSeek({ from: 'a' })).toEqual({ from: 'a', country: '', userId: null });
+  });
+
+  it("carries the sender's real account id when present", () => {
+    expect(readSeek({ from: 'a', country: 'Nepal', userId: 'user-1' })?.userId).toBe('user-1');
+    expect(readSeek({ from: 'a', userId: '   ' })?.userId).toBeNull();
+    expect(readSeek({ from: 'a', userId: 42 })?.userId).toBeNull();
   });
 
   it('drops a seek with no sender', () => {
@@ -124,10 +134,11 @@ describe('readSeek', () => {
 
 describe('readAvailable', () => {
   it('requires a recipient', () => {
-    expect(readAvailable({ from: 'a', to: 'b', country: 'India' })).toEqual({
+    expect(readAvailable({ from: 'a', to: 'b', country: 'India', userId: 'user-2' })).toEqual({
       from: 'a',
       to: 'b',
       country: 'India',
+      userId: 'user-2',
     });
     expect(readAvailable({ from: 'a', country: 'India' })).toBeNull();
   });

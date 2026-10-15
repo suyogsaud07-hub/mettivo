@@ -34,9 +34,16 @@ const BASE_SCHEMA = `
       select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid
     $$;
 
-  create table auth.users (id uuid primary key);
-  insert into auth.users (id) values
-    ('${USER_A}'), ('${USER_B}'), ('${USER_C}'), ('${USER_D}'), ('${MODERATOR}');
+  -- Supabase's auth.users always carries an email; the moderation outbox
+  -- resolves a warning recipient from it. Nullable so a missing address can be
+  -- exercised (a warning is then queued as 'skipped', never lost).
+  create table auth.users (id uuid primary key, email text);
+  insert into auth.users (id, email) values
+    ('${USER_A}', 'ada@example.com'),
+    ('${USER_B}', 'bo@example.com'),
+    ('${USER_C}', 'cy@example.com'),
+    ('${USER_D}', 'dee@example.com'),
+    ('${MODERATOR}', 'mod@example.com');
 
   -- Mirrors the live profiles table, including the columns the M6 view reads.
   create table public.profiles (

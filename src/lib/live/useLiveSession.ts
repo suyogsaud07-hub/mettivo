@@ -66,7 +66,14 @@ export interface UseLiveSession {
   localStream: MediaStream | null;
   remoteStream: MediaStream | null;
   myCountry: string;
+  /** My own account id, for reporting a partner. */
+  myUserId: string | null;
   partnerCountry: string | null;
+  /**
+   * The partner's real account id, as announced over signaling. Used only to
+   * open a report against a person; never treated as proof of identity.
+   */
+  partnerUserId: string | null;
   peersOnline: number;
   messages: LiveChatMessage[];
   micEnabled: boolean;
@@ -101,7 +108,9 @@ export function useLiveSession(): UseLiveSession {
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const [myCountry, setMyCountry] = useState('');
+  const [myUserId, setMyUserId] = useState<string | null>(null);
   const [partnerCountry, setPartnerCountry] = useState<string | null>(null);
+  const [partnerUserId, setPartnerUserId] = useState<string | null>(null);
   const [peersOnline, setPeersOnline] = useState(0);
   const [messages, setMessages] = useState<LiveChatMessage[]>([]);
   const [micEnabled, setMicEnabled] = useState(true);
@@ -122,6 +131,7 @@ export function useLiveSession(): UseLiveSession {
   const pendingCandidatesRef = useRef<RTCIceCandidateInit[]>([]);
   const phaseRef = useRef<LivePhase>('idle');
   const myCountryRef = useRef('');
+  const myUserIdRef = useRef<string | null>(null);
   const inPoolRef = useRef(false);
   const answerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const connectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -193,9 +203,14 @@ export function useLiveSession(): UseLiveSession {
     teardownPeer();
     partnerRef.current = null;
     setPartnerCountry(null);
+    setPartnerUserId(null);
     setMessages([]);
     setPhaseState('searching');
-    send('seek', { from: myPeerId(), country: myCountryRef.current });
+    send('seek', {
+      from: myPeerId(),
+      country: myCountryRef.current,
+      userId: myUserIdRef.current,
+    });
   }, [teardownPeer, setPhaseState, send, myPeerId]);
 
   /** Arms a timeout that gives up on a partner who never completes handshaking. */
@@ -206,6 +221,7 @@ export function useLiveSession(): UseLiveSession {
         teardownPeer();
         partnerRef.current = null;
         setPartnerCountry(null);
+        setPartnerUserId(null);
         if (inPoolRef.current) beginSearch();
         else setPhaseState('ready');
       }
@@ -235,6 +251,7 @@ export function useLiveSession(): UseLiveSession {
         teardownPeer();
         partnerRef.current = null;
         setPartnerCountry(null);
+        setPartnerUserId(null);
         if (inPoolRef.current) beginSearch();
         else setPhaseState('ready');
       }
@@ -270,6 +287,7 @@ export function useLiveSession(): UseLiveSession {
         teardownPeer();
         partnerRef.current = null;
         setPartnerCountry(null);
+        setPartnerUserId(null);
         if (inPoolRef.current) beginSearch();
       }
     },
@@ -288,8 +306,14 @@ export function useLiveSession(): UseLiveSession {
 
       partnerRef.current = message.from;
       setPartnerCountry(message.country || null);
+      setPartnerUserId(message.userId);
       setPhaseState('connecting');
-      send('available', { from: me, to: message.from, country: myCountryRef.current });
+      send('available', {
+        from: me,
+        to: message.from,
+        country: myCountryRef.current,
+        userId: myUserIdRef.current,
+      });
 
       // If the caller vanishes before offering, resume the search.
       if (answerTimerRef.current) clearTimeout(answerTimerRef.current);
@@ -297,6 +321,7 @@ export function useLiveSession(): UseLiveSession {
         if (phaseRef.current === 'connecting' && !pcRef.current) {
           partnerRef.current = null;
           setPartnerCountry(null);
+          setPartnerUserId(null);
           if (inPoolRef.current) beginSearch();
         }
       }, 8000);
@@ -314,6 +339,7 @@ export function useLiveSession(): UseLiveSession {
       clearTimers();
       partnerRef.current = message.from;
       setPartnerCountry(message.country || null);
+      setPartnerUserId(message.userId);
       setPhaseState('connecting');
       void createOffer(message.from);
     },
@@ -349,6 +375,7 @@ export function useLiveSession(): UseLiveSession {
         teardownPeer();
         partnerRef.current = null;
         setPartnerCountry(null);
+        setPartnerUserId(null);
         if (inPoolRef.current) beginSearch();
       }
     },
@@ -411,6 +438,7 @@ export function useLiveSession(): UseLiveSession {
       teardownPeer();
       partnerRef.current = null;
       setPartnerCountry(null);
+      setPartnerUserId(null);
       if (inPoolRef.current) beginSearch();
       else setPhaseState('ready');
     },
@@ -543,7 +571,7 @@ export function useLiveSession(): UseLiveSession {
     if (!channel || !inPoolRef.current) return;
 
     void channel
-      .track({ peerId: myPeerId(), country: myCountryRef.current })
+      .track({ peerId: myPeerId(), country: myCountryRef.current, userId: myUserIdRef.current })
       .catch((err: unknown) => console.warn('[live] presence track failed:', err));
 
     beginSearch();
@@ -556,7 +584,12 @@ export function useLiveSession(): UseLiveSession {
     if (!inPoolRef.current) {
       inPoolRef.current = true;
       void ensureChannel().then((channel) => {
-        if (channel) void channel.track({ peerId: myPeerId(), country: myCountryRef.current });
+        if (channel)
+          void channel.track({
+            peerId: myPeerId(),
+            country: myCountryRef.current,
+            userId: myUserIdRef.current,
+          });
         beginSearch();
       });
       return;
@@ -572,6 +605,7 @@ export function useLiveSession(): UseLiveSession {
     teardownPeer();
     partnerRef.current = null;
     setPartnerCountry(null);
+    setPartnerUserId(null);
     setMessages([]);
 
     const channel = channelRef.current;
@@ -633,6 +667,8 @@ export function useLiveSession(): UseLiveSession {
           data: { user },
         } = await supabase.auth.getUser();
         if (!user) return;
+        myUserIdRef.current = user.id;
+        if (mounted) setMyUserId(user.id);
         const { data } = await supabase
           .from('profiles')
           .select('country')
@@ -684,7 +720,9 @@ export function useLiveSession(): UseLiveSession {
     localStream,
     remoteStream,
     myCountry,
+    myUserId,
     partnerCountry,
+    partnerUserId,
     peersOnline,
     messages,
     micEnabled,

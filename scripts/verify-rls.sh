@@ -53,6 +53,19 @@ TABLES=(
   "reports"
   "blocked_users"
   "likes"
+  "notifications"
+  "user_roles"
+  "admin_audit_log"
+  # M21 moderation enforcement. These name members and measure their behaviour,
+  # so an anonymous caller must never see a row. `moderation_secrets` holds the
+  # worker bearer token and has no SELECT grant at all.
+  "bans"
+  "suspensions"
+  "moderation_ai_scans"
+  "moderation_warnings"
+  "moderation_emails"
+  "moderation_settings"
+  "moderation_secrets"
 )
 
 failures=0

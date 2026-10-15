@@ -195,6 +195,20 @@ RPC_SPECS=(
   "record_like|{\"target_user\":\"${RPC_ZERO}\",\"is_like_value\":true}"
   "mark_conversation_read|{\"p_match_id\":\"${RPC_ZERO}\"}"
   "admin_resolve_report|{\"p_report_id\":\"${RPC_ZERO}\",\"p_status\":\"dismissed\"}"
+  # M21 — universal moderation. `file_report` is the client entry point; the
+  # predicates are what every surface reads to show a restriction notice. All are
+  # granted to `authenticated` only, so an anonymous caller must be refused.
+  "file_report|{\"p_target_user\":\"${RPC_ZERO}\",\"p_category\":\"harassment\"}"
+  "my_restrictions|{}"
+  "is_chat_restricted|{\"p_user\":\"${RPC_ZERO}\"}"
+  "is_video_restricted|{\"p_user\":\"${RPC_ZERO}\"}"
+  "admin_apply_moderation_action|{\"p_target_user\":\"${RPC_ZERO}\",\"p_category\":\"harassment\",\"p_scope\":\"chat\"}"
+  # Worker RPCs are reachable with the public anon key but gated on the shared
+  # worker secret, so the probe's wrong secret must be refused (403). A 404 here
+  # would mean the enforcement loop's server side is missing; a 200 would mean
+  # the secret gate is broken.
+  "claim_moderation_scans|{\"p_secret\":\"probe\"}"
+  "claim_moderation_emails|{\"p_secret\":\"probe\"}"
 )
 
 if [[ "$QUIET" -eq 0 ]]; then

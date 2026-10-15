@@ -58,6 +58,15 @@ const PERSONAL_TABLES = [
   'game_results',
   // M17: member-scoped settings. An anonymous caller must read zero rows.
   'user_preferences',
+  // M21: the moderation system. Enforcements, AI scans, warnings, the email
+  // outbox, the tunable policy and the worker secret must all be dark to anon.
+  'bans',
+  'suspensions',
+  'moderation_ai_scans',
+  'moderation_warnings',
+  'moderation_emails',
+  'moderation_settings',
+  'moderation_secrets',
 ];
 
 describe('1. auth bypass attempts (anonymous callers)', () => {
@@ -110,6 +119,13 @@ describe('1. auth bypass attempts (anonymous callers)', () => {
       `select public.share_moment(gen_random_uuid())`,
       `select public.record_game_result('tic-tac-toe','win',1,1)`,
       `select public.admin_suspend_user('${USER_A}'::uuid,'x')`,
+      // M21: reporting, self-restriction and the moderation console are for
+      // signed-in members; the worker RPCs reject anon with the wrong secret.
+      `select public.file_report('${USER_A}'::uuid,'spam')`,
+      `select public.my_restrictions()`,
+      `select public.is_chat_restricted('${USER_A}'::uuid)`,
+      `select public.admin_apply_moderation_action('${USER_A}'::uuid,'harassment','chat','x')`,
+      `select public.claim_moderation_scans('not-the-secret')`,
     ];
 
     for (const statement of privileged) {

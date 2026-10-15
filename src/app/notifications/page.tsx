@@ -230,7 +230,11 @@ export default function NotificationsPage() {
                     <span style={styles.name}>{name}</span>
                     {actor && <span style={styles.genderIcon}>{getGenderIcon(actor.gender)}</span>}
                   </div>
-                  <div style={styles.message}>{describeNotification(notif.type)}</div>
+                  <div style={styles.message}>
+                    {notif.type === 'warning' && notif.body
+                      ? notif.body
+                      : describeNotification(notif.type)}
+                  </div>
                   <div style={styles.timestamp}>{formatRelativeTime(notif.created_at)}</div>
                 </div>
                 {action && (

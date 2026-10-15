@@ -11,6 +11,7 @@ import {
   genderIcon,
   subscribeToMomentComments,
 } from '@/lib/moments';
+import { ReportButton } from '@/app/components/moderation/ReportButton';
 
 /**
  * The comment drawer for one Moment.
@@ -154,6 +155,15 @@ export default function CommentSheet({
                         {author?.displayName ?? 'Member'}
                       </span>
                       <span style={styles.commentTime}>{relativeTime(comment.created_at)}</span>
+                      {comment.author_id !== currentUserId && (
+                        <ReportButton
+                          targetUserId={comment.author_id}
+                          targetType="comment"
+                          targetId={comment.id}
+                          title="Report this comment"
+                          ariaLabel="Report this comment"
+                        />
+                      )}
                     </div>
                     <div style={styles.commentText}>{comment.body}</div>
                   </div>

@@ -17,6 +17,7 @@ const NOTIFICATION_TYPES: NotificationType[] = [
   'message',
   'visitor',
   'report',
+  'warning',
 ];
 
 const notification = (overrides: Partial<NotificationRow>): NotificationRow => ({
@@ -25,6 +26,7 @@ const notification = (overrides: Partial<NotificationRow>): NotificationRow => (
   actor_id: 'u2',
   type: 'like',
   entity_id: null,
+  body: null,
   read_at: null,
   created_at: new Date().toISOString(),
   ...overrides,

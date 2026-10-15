@@ -12,6 +12,8 @@ export interface LiveControlsProps {
   phase: LivePhase;
   micEnabled: boolean;
   camEnabled: boolean;
+  /** A video ban or suspension: Start is shown but disabled. */
+  restricted?: boolean;
   onStart: () => void;
   onNext: () => void;
   onStop: () => void;
@@ -64,6 +66,7 @@ export default function LiveControls({
   phase,
   micEnabled,
   camEnabled,
+  restricted = false,
   onStart,
   onNext,
   onStop,
@@ -71,7 +74,7 @@ export default function LiveControls({
   onToggleCam,
 }: LiveControlsProps) {
   const inPool = phase === 'searching' || phase === 'connecting' || phase === 'live';
-  const canStart = !inPool && phase !== 'requesting';
+  const canStart = !inPool && phase !== 'requesting' && !restricted;
 
   const pill: React.CSSProperties = {
     flex: 1,
@@ -106,14 +109,21 @@ export default function LiveControls({
         onClick={onToggleCam}
       />
 
-      {canStart ? (
+      {canStart || (!inPool && restricted) ? (
         <button
           type="button"
           data-testid="live-start"
           onClick={onStart}
-          style={{ ...pill, background: 'linear-gradient(135deg, #d8b38a, #c78c8d)', color: '#1a130c' }}
+          disabled={restricted || phase === 'requesting'}
+          style={{
+            ...pill,
+            background: 'linear-gradient(135deg, #d8b38a, #c78c8d)',
+            color: '#1a130c',
+            opacity: restricted ? 0.5 : 1,
+            cursor: restricted ? 'default' : 'pointer',
+          }}
         >
-          Start
+          {restricted ? 'Unavailable' : 'Start'}
         </button>
       ) : (
         <>

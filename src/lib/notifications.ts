@@ -22,14 +22,16 @@ export class NotificationError extends Error {
 }
 
 /** UI tabs, mapped to the notification types each one shows. */
-export const NOTIFICATION_TABS = ['All', 'Follows', 'Likes', 'Activity', 'Visitors'] as const;
+export const NOTIFICATION_TABS = ['All', 'Follows', 'Likes', 'Activity', 'Safety', 'Visitors'] as const;
 export type NotificationTab = (typeof NOTIFICATION_TABS)[number];
 
 const TAB_TYPES: Record<NotificationTab, NotificationType[] | null> = {
   All: null,
   Follows: ['follow'],
   Likes: ['like'],
-  Activity: ['match', 'message', 'report'],
+  Activity: ['match', 'message'],
+  // Safety carries the M21 warnings and the outcome of a report you filed.
+  Safety: ['warning', 'report'],
   Visitors: ['visitor'],
 };
 
@@ -53,6 +55,8 @@ export function describeNotification(type: NotificationType): string {
       return 'visited your profile.';
     case 'report':
       return 'your report was reviewed and actioned.';
+    case 'warning':
+      return 'the safety team sent you a notice.';
     default:
       return 'sent you an update.';
   }
@@ -108,7 +112,7 @@ export function formatRelativeTime(iso: string, now: number = Date.now()): strin
 export async function fetchNotifications(limit = 100): Promise<NotificationRow[]> {
   const { data, error } = await supabase
     .from('notifications')
-    .select('id, user_id, actor_id, type, entity_id, read_at, created_at')
+    .select('id, user_id, actor_id, type, entity_id, body, read_at, created_at')
     .order('created_at', { ascending: false })
     .limit(limit);
 
@@ -215,6 +219,7 @@ export function subscribeToNotifications(
             actor_id: typeof row.actor_id === 'string' ? row.actor_id : null,
             type: row.type as NotificationType,
             entity_id: typeof row.entity_id === 'string' ? row.entity_id : null,
+            body: typeof row.body === 'string' ? row.body : null,
             read_at: typeof row.read_at === 'string' ? row.read_at : null,
             created_at: row.created_at,
           });

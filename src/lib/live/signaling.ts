@@ -55,17 +55,28 @@ export interface LivePresence {
   peerId: string;
   /** ISO-ish country of the member, for the flag. Never a name. */
   country: string;
+  /** The member's real account id; see `SeekMessage.userId`. */
+  userId: string | null;
 }
 
 export interface SeekMessage {
   from: string;
   country: string;
+  /**
+   * The sender's REAL account id, so a report on a live call can name a person.
+   * It is deliberately NOT shown in the UI (the anonymity guarantee stands) and
+   * never trusted for enforcement: a spoofed id can only open a report, which a
+   * moderator or the AI verdict must still confirm before any action is taken.
+   */
+  userId: string | null;
 }
 
 export interface AvailableMessage {
   from: string;
   to: string;
   country: string;
+  /** The sender's real account id; see `SeekMessage.userId`. */
+  userId: string | null;
 }
 
 export interface OfferMessage {
@@ -242,6 +253,17 @@ function readOptionalString(record: Record<string, unknown>, key: string): strin
 }
 
 /**
+ * Reads an account id off a signal, mapping a blank value to `null`.
+ *
+ * Signals arrive from the sender's browser, so this is untrusted input: it is
+ * only ever used to label a report, never to decide an action.
+ */
+function readUserId(record: Record<string, unknown>): string | null {
+  const value = record.userId;
+  return typeof value === 'string' && value.trim() ? value : null;
+}
+
+/**
  * The shared shape every signal must have: an object with a non-empty `from`.
  *
  * Realtime delivers whatever the sender broadcast, so nothing here is trusted
@@ -264,7 +286,11 @@ function readEnvelope(payload: unknown): Envelope | null {
 export function readSeek(payload: unknown): SeekMessage | null {
   const envelope = readEnvelope(payload);
   if (!envelope) return null;
-  return { from: envelope.from, country: readString(envelope.record, 'country') };
+  return {
+    from: envelope.from,
+    country: readString(envelope.record, 'country'),
+    userId: readUserId(envelope.record),
+  };
 }
 
 /** Reads a broadcast `available`: "I accept your seek, pair with me". */
@@ -273,7 +299,12 @@ export function readAvailable(payload: unknown): AvailableMessage | null {
   if (!envelope) return null;
   const to = readString(envelope.record, 'to');
   if (!to) return null;
-  return { from: envelope.from, to, country: readString(envelope.record, 'country') };
+  return {
+    from: envelope.from,
+    to,
+    country: readString(envelope.record, 'country'),
+    userId: readUserId(envelope.record),
+  };
 }
 
 function readDescription(

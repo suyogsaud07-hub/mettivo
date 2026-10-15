@@ -110,6 +110,7 @@ migration set was applied.
 > | --- | --- |
 > | `20261015270000_m16_game_catalog_expansion.sql` | the seven playable mini-games. Until it runs, `record_game_result()` rejects every new game id, so the games render and play but their scores are not saved. |
 > | `20261015280000_m17_user_preferences.sql` | chat translation. Until it runs, `/api/translate` cannot read a member's preferred language and the settings row has no table to write to. |
+> | `20261015310000_m21_universal_moderation.sql` | the AI moderation and universal reporting system (§5.1). Until it runs, `file_report()`, `my_restrictions()` and the worker RPCs do not exist, so the report dialog and the live/chat restriction notices fall back to their documented safe defaults. |
 >
 > Apply them by pasting `supabase/apply_all.sql` into the Supabase SQL Editor
 > twice (the second pass proves idempotency). There is no migration runner
@@ -123,11 +124,14 @@ migration set was applied.
 > The project previously exposed `profiles` to anonymous callers and was missing
 > 16 migrations. See `RISK_REGISTER.md` `R-01`/`R-02` for the incident record.
 
-**19 tables exist in the migration set**, including `likes`, `matches`,
+**26 tables exist in the migration set**, including `likes`, `matches`,
 `notifications`, `moments`, `moment_likes`, `moment_comments`, `game_catalog`,
 `game_results`, `user_preferences`, `user_roles`, `admin_audit_log`,
 `rate_limit_counters`, `rate_limit_rules`, `match_read_state`,
-`interest_categories`, `interests` and `prompt_catalogue`.
+`interest_categories`, `interests` and `prompt_catalogue`, plus the seven M21
+moderation tables in §5.1 (`moderation_settings`, `moderation_secrets`, `bans`,
+`suspensions`, `moderation_ai_scans`, `moderation_warnings`,
+`moderation_emails`).
 
 | Table | Status | Key columns |
 | --- | --- | --- |
@@ -140,6 +144,46 @@ migration set was applied.
 | `user_preferences` | ⚠️ **created by M17, not yet applied** | `user_id`, `preferred_translation_language`, `created_at`, `updated_at` — one row per member, RLS `auth.uid() = user_id` |
 | `likes` | ❌ **missing on live** | created by migration 4 (M10) |
 | `interests` / `prompts` | ❌ **missing as tables** | currently columns on `profiles` + fixtures in `mockData.ts` |
+
+### 5.1 Universal reporting & AI moderation (M21)
+
+`20261015310000_m21_universal_moderation.sql` adds a self-executing safety
+pipeline. Nothing in it trusts the browser: reports name a user and an optional
+content id, and the *server* captures the context and decides the action.
+
+- **Reporting entry point.** Every surface files reports through one RPC,
+  `file_report(p_target_user, p_category, p_target_type, p_target_id, p_details,
+  p_evidence_image)`. It upserts on `(reporter_id, reported_user_id)`, captures
+  the referenced message/comment/caption text after verifying it belongs to the
+  reported member, and evaluates the thresholds. `src/lib/reports.ts` +
+  `ReportButton`/`ReportModal` are the only client path to it (chat messages,
+  chat menu, Moment posts, comments, public profile, Mettivo Live).
+- **Categories** are exactly `nudity | harassment | underage | spam`.
+- **Enforcement core.** `apply_moderation_action()` is the sole writer; it sets a
+  `chat`/`video` ban or an `account` suspension, idempotently per active scope,
+  and is the only place allowed past `protect_moderation_columns` (via the
+  tx-local GUC `mettivo.moderation_action`). `evaluate_report_thresholds()` counts
+  DISTINCT reporters within `report_window_days`; an underage report is gated on
+  `underage_requires_ai`. A `reports` AFTER UPDATE trigger routes any `actioned`
+  report to the core.
+- **Chat ban is physical.** `enforce_chat_restriction()` is a BEFORE INSERT
+  trigger on `messages`; a muzzled member cannot write a row even by hand.
+- **AI worker.** Content is queued into `moderation_ai_scans` by triggers
+  (messages, comments, Moments, profile bio) and by live snapshots. A server
+  route (`/api/moderation/scan`) plus `src/lib/moderation/worker.ts` claim a
+  batch, classify text/vision via an OpenAI-compatible endpoint, and record a
+  verdict. **A provider outage requeues; it is never recorded as clean.**
+- **Email outbox.** `moderation_emails` is drained by `/api/moderation/email`
+  via Resend and is **gracefully disabled** when `RESEND_API_KEY` is absent.
+- **Worker auth.** There is no application server and the `service_role` key
+  must not reach `src/`, so the worker RPCs are granted to `anon`/`authenticated`
+  and gated by a shared secret (`worker_secret_ok`), set in
+  `moderation_secrets` and in the `MODERATION_WORKER_SECRET` env var. The guard
+  uses `exists`, not a bare comparison, so a **missing** secret refuses rather
+  than passing on a NULL.
+- **Client notices.** `my_restrictions()` drives read-only notices (chat muted,
+  Mettivo Live unavailable, account suspended). Mettivo Live is client-gated on
+  `is_video_restricted()` because there is no live server to enforce it.
 
 ## 6. Known gaps (as of this revision)
 
@@ -168,6 +212,14 @@ These are recorded so no future change assumes they are solved.
 6. **No full-stack end-to-end journey.** The Playwright suite runs real browser
    journeys with Supabase intercepted, deliberately never touching production.
    The signup → chat → reload path needs a staging backend.
+7. **The AI moderation worker is offline-tested until it is deployed with
+   secrets.** `src/lib/moderation/*` and the two `/api/moderation/*` routes are
+   covered by unit tests with an injected fetch; no real AI or Resend call has
+   been made from this environment. Bringing it live needs `MODERATION_WORKER_SECRET`
+   (matching `moderation_secrets.worker_secret`), `MODERATION_DISPATCH_SECRET`,
+   and — to actually scan and email — `AI_MODERATION_API_KEY` and `RESEND_API_KEY`.
+   Without them the routes return `503` and the worker batches skip with
+   `ai_not_configured` / `email_not_configured`, which is the intended degradation.
 
 ### Resolved
 

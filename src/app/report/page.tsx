@@ -3,21 +3,13 @@
 import { Suspense, useState, useEffect, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
 import { Button } from "@/app/components/ui/Button";
-import { Input } from "@/app/components/ui/Input";
 import { Card } from "@/app/components/ui/Card";
 import { Badge } from "@/app/components/ui/Badge";
-import { Modal } from "@/app/components/ui/Modal";
 import { Avatar } from "@/app/components/ui/Avatar";
+import { ReportModal } from "@/app/components/moderation/ReportModal";
 import { useRouter, useSearchParams } from "next/navigation";
-import { type ReportRow, type BlockedUserRow, type BlockedUserWithProfile } from "@/lib/types";
-
-const REPORT_REASONS = [
-  { value: "harassment", label: "Harassment or hate speech" },
-  { value: "fake_profile", label: "Fake profile or scam" },
-  { value: "inappropriate", label: "Inappropriate content" },
-  { value: "underage", label: "Underage user" },
-  { value: "other", label: "Other" },
-] as const;
+import { categoryLabel } from "@/lib/reports";
+import { type ReportRow, type BlockedUserWithProfile } from "@/lib/types";
 
 /**
  * `/report` reads URL params to auto-open the report/block modal, and
@@ -60,21 +52,15 @@ function ReportContent() {
   const [blockedUsers, setBlockedUsers] = useState<BlockedUserWithProfile[]>([]);
 
   // Modal state
-  const [modal, setModal] = useState<{ open: boolean; userId: string; userName?: string; userAvatar?: string } | null>(null);
-  const [reason, setReason] = useState("");
-  const [details, setDetails] = useState("");
+  const [modal, setModal] = useState<{ open: boolean; userId: string } | null>(null);
 
   // Loading states
-  const [loadingInitial, setLoadingInitial] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
-  const [blocking, setBlocking] = useState<string | null>(null);
   const [unblocking, setUnblocking] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Load initial data: reports and blocks for current user
   const loadData = useCallback(async () => {
     try {
-      setLoadingInitial(true);
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) {
         router.push('/auth');
@@ -116,22 +102,15 @@ function ReportContent() {
     } catch (err) {
       console.error('Unexpected error loading data:', err);
       setError('Could not load your safety data. Please try again.');
-    } finally {
-      setLoadingInitial(false);
     }
   }, [router]);
 
   // Declared before the effects that depend on them: referencing a `const`
   // before its declaration is a temporal dead zone error, and an unmemoized
   // function in a dependency array re-triggers the effect on every render.
-  const openReportModal = useCallback(
-    (userId: string, userName?: string, userAvatar?: string) => {
-      setModal({ open: true, userId, userName, userAvatar });
-      setReason("");
-      setDetails("");
-    },
-    []
-  );
+  const openReportModal = useCallback((userId: string) => {
+    setModal({ open: true, userId });
+  }, []);
 
   const closeModal = useCallback(() => {
     setModal(null);
@@ -156,96 +135,11 @@ function ReportContent() {
     return () => clearTimeout(timeoutId);
   }, [searchParams, openReportModal]);
 
-  const handleReport = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!modal || !reason) return;
-
-    setSubmitting(true);
-    setError(null);
-
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        setError('You must be signed in to report a user.');
-        return;
-      }
-
-      // Insert report into Supabase
-      const { error: insertError } = await supabase
-        .from('reports')
-        .insert({
-          reporter_id: user.id,
-          reported_user_id: modal.userId,
-          reason,
-          details: reason === 'other' ? details.trim() : null,
-        });
-
-      if (insertError) {
-        // Handle duplicate report error
-        if (insertError.code === '23505') {
-          setError('You have already reported this user.');
-        } else {
-          console.error('Failed to submit report:', insertError.message);
-          setError(`Could not submit report: ${insertError.message}`);
-        }
-        return;
-      }
-
-      // Refresh reports list
-      await loadData();
-      closeModal();
-      alert("Report submitted successfully. Our safety team will review it within 24 hours.");
-    } catch (err) {
-      console.error('Unexpected error submitting report:', err);
-      setError('An unexpected error occurred. Please try again.');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const handleBlock = async () => {
-    if (!modal) return;
-
-    setBlocking(modal.userId);
-    setError(null);
-
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        setError('You must be signed in to block a user.');
-        return;
-      }
-
-      // Insert block into Supabase
-      const { error: insertError } = await supabase
-        .from('blocked_users')
-        .insert({
-          blocker_id: user.id,
-          blocked_user_id: modal.userId,
-        });
-
-      if (insertError) {
-        // Handle duplicate block error
-        if (insertError.code === '23505') {
-          setError('You have already blocked this user.');
-        } else {
-          console.error('Failed to block user:', insertError.message);
-          setError(`Could not block user: ${insertError.message}`);
-        }
-        return;
-      }
-
-      // Refresh blocked users list
-      await loadData();
-      closeModal();
-      alert("User blocked successfully. They will no longer appear in your discover feed or messages.");
-    } catch (err) {
-      console.error('Unexpected error blocking user:', err);
-      setError('An unexpected error occurred. Please try again.');
-    } finally {
-      setBlocking(null);
-    }
-  };
+  // `file_report` already ran inside the shared dialog; refresh the list so the
+  // new row appears.
+  const handleReported = useCallback(() => {
+    void loadData();
+  }, [loadData]);
 
   const handleUnblock = async (blockedUserId: string) => {
     setUnblocking(blockedUserId);
@@ -279,9 +173,9 @@ function ReportContent() {
     }
   };
 
-  const getReasonLabel = (value: string) => {
-    return REPORT_REASONS.find(r => r.value === value)?.label || value;
-  };
+  // Prefer the M21 category, falling back to the legacy reason on old rows.
+  const getReasonLabel = (report: ReportRow) =>
+    categoryLabel(report.category ?? report.reason);
 
   return (
     <div className="pb-6">
@@ -323,7 +217,7 @@ function ReportContent() {
                         User: {report.reported_user_id.slice(0, 8)}...
                       </p>
                       <p className="text-sm text-neutral-500 dark:text-neutral-500">
-                        {getReasonLabel(report.reason)}
+                        {getReasonLabel(report)}
                         {report.details && ` - ${report.details}`}
                       </p>
                     </div>
@@ -430,73 +324,16 @@ function ReportContent() {
         </Button>
       </div>
 
-      {/* Report modal */}
-      {modal && (
-        <Modal
-          isOpen={true}
-          onClose={closeModal}
-          title="Report user"
-          width="md"
-        >
-          <form onSubmit={handleReport}>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium mb-1">
-                  Reason for reporting
-                </label>
-                <select
-                  value={reason}
-                  onChange={(e) => setReason(e.target.value)}
-                  className="w-full px-4 py-2.5 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 focus:outline-none focus:ring-2 focus:ring-rose-500 focus:border-rose-500"
-                  disabled={submitting}
-                >
-                  <option value="">Select a reason...</option>
-                  {REPORT_REASONS.map((r) => (
-                    <option key={r.value} value={r.value}>{r.label}</option>
-                  ))}
-                </select>
-              </div>
-              {reason === "other" && (
-                <div>
-                  <label className="block text-sm font-medium mb-1">
-                    Please explain
-                  </label>
-                  <textarea
-                    rows={3}
-                    value={details}
-                    onChange={(e) => setDetails(e.target.value)}
-                    className="w-full px-4 py-2.5 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-rose-500 focus:border-rose-500"
-                    placeholder="Tell us more about what happened..."
-                    disabled={submitting}
-                  />
-                </div>
-              )}
-              {error && (
-                <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-900/30 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-sm">
-                  {error}
-                </div>
-              )}
-              <div className="flex justify-end">
-                <Button
-                  variant="ghost"
-                  onClick={closeModal}
-                  disabled={submitting}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  variant="danger"
-                  type="submit"
-                  disabled={!reason || (reason === "other" && !details.trim()) || submitting}
-                  loading={submitting}
-                >
-                  Submit report
-                </Button>
-              </div>
-            </div>
-          </form>
-        </Modal>
-      )}
+      {/* Report dialog — the shared component, so the page and every other
+          touchpoint file reports through the same `file_report` path. */}
+      <ReportModal
+        isOpen={modal !== null}
+        onClose={closeModal}
+        targetUserId={modal?.userId ?? ''}
+        targetType="user"
+        title="Report member"
+        onSubmitted={handleReported}
+      />
     </div>
   );
 }

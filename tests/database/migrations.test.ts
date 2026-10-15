@@ -56,10 +56,12 @@ describe('migration health', () => {
           'profiles','messages','follows','reports','blocked_users',
           'likes','matches','notifications','user_roles','admin_audit_log',
           'rate_limit_counters','rate_limit_rules','moments','moment_likes',
-          'moment_comments','game_catalog','game_results'
+          'moment_comments','game_catalog','game_results',
+          'bans','suspensions','moderation_ai_scans','moderation_warnings',
+          'moderation_emails','moderation_settings','moderation_secrets'
         )
     `);
-    expect(result.rows.length).toBe(17);
+    expect(result.rows.length).toBe(24);
     expect(result.rows.filter((row) => row.rls !== true).map((row) => row.name)).toEqual([]);
   });
 

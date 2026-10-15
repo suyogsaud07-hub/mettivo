@@ -13,6 +13,7 @@ import ProfileTabs, { type ProfileTab } from '../../components/profile/ProfileTa
 import ProfileDetails from '../../components/profile/ProfileDetails';
 import ProfileMoments from '../../components/profile/ProfileMoments';
 import FollowButton from '../../components/profile/FollowButton';
+import { ReportButton } from '../../components/moderation/ReportButton';
 
 /**
  * Another member's public profile.
@@ -206,7 +207,17 @@ export default function PublicProfilePage({ params }: { params: Promise<{ userId
           </svg>
         </button>
         <div style={styles.title}>{isOwn ? 'My Profile' : displayName}</div>
-        <span style={styles.iconSpacer} />
+        {!isOwn ? (
+          <ReportButton
+            targetUserId={profile.id}
+            targetType="user"
+            title={`Report ${displayName}`}
+            ariaLabel={`Report ${displayName}`}
+            className="p-2"
+          />
+        ) : (
+          <span style={styles.iconSpacer} />
+        )}
       </div>
 
       <ProfileHeader

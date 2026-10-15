@@ -21,6 +21,12 @@ export interface ProfileSummary {
   avatar_url: string | null;
 }
 
+/** The four categories a report can carry (M21 `reports.category` CHECK). */
+export type ReportCategory = 'nudity' | 'harassment' | 'underage' | 'spam';
+
+/** What a report points at (M21 `reports.target_type`). */
+export type ReportTargetType = 'user' | 'message' | 'moment' | 'comment' | 'live';
+
 /** A row from the `reports` table. */
 export interface ReportRow {
   id: string;
@@ -28,6 +34,18 @@ export interface ReportRow {
   reported_user_id: string;
   reason: string;
   details: string | null;
+  /** M21 classification. Null on rows written before M21. */
+  category: ReportCategory | null;
+  /** M21: what the report is about. */
+  target_type: ReportTargetType | null;
+  target_id: string | null;
+  /** M21: server-captured content snapshot. */
+  context: string | null;
+  /** M21: whether the AI worker flagged this report's content. */
+  ai_flagged: boolean;
+  ai_score: number | null;
+  /** M21: the action the safety pipeline took, if any. */
+  action_taken: string | null;
   status: 'pending' | 'reviewed' | 'dismissed' | 'actioned';
   created_at: string;
   updated_at: string;
@@ -92,7 +110,9 @@ export type NotificationType =
   | 'match'
   | 'message'
   | 'visitor'
-  | 'report';
+  | 'report'
+  /** M21: a safety warning, e.g. an AI-flagged message or a ban. */
+  | 'warning';
 
 /** A row from the `notifications` table. */
 export interface NotificationRow {
@@ -104,6 +124,8 @@ export interface NotificationRow {
   type: NotificationType;
   /** Match id, message id or report id, depending on `type`. */
   entity_id: string | null;
+  /** M21: the human-readable body of a system notification (warnings). */
+  body: string | null;
   read_at: string | null;
   created_at: string;
 }
