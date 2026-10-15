@@ -157,6 +157,7 @@ note:
 
 ```bash
 npm run verify          # typecheck && lint && test && audit && build
+npm run test:e2e        # 11 Chromium journeys (needs the browser installed once)
 ./scripts/check-schema-drift.sh
 ./scripts/verify-rls.sh
 ```
@@ -165,9 +166,10 @@ npm run verify          # typecheck && lint && test && audit && build
 | --- | --- | --- |
 | Types | `npx tsc --noEmit` | prints nothing |
 | Lint | `npx eslint .` | `0 errors` |
-| Tests | `npm test` | all suites pass |
+| Tests | `npm test` | 267 tests pass |
 | Production audit | `npm run audit` | `found 0 vulnerabilities` |
 | Build | `npm run build` | exits 0 |
+| Browser journeys | `npm run test:e2e` | `11 passed` |
 | Live schema | `./scripts/check-schema-drift.sh` | `RESULT: IN SYNC` |
 | Live RLS | `./scripts/verify-rls.sh` | `RESULT: PASS` |
 
@@ -241,14 +243,34 @@ connection string contains a password: treat it as a secret, keep it out of
 
 A backup nobody has restored is a hypothesis, not a backup.
 
-1. Create a **scratch** Supabase project.
-2. Apply every migration in §3 order.
-3. Restore the latest dump into the scratch project.
-4. Run `./scripts/check-schema-drift.sh` and `./scripts/verify-rls.sh` against it.
-5. Record the date and the measured restore duration in
+**The schema half is automated and runs in CI.**
+`tests/database/restore_rehearsal.test.ts` rebuilds the database and asserts it
+is structurally identical to the normal development path — same tables, columns,
+types, constraints, policies, functions and indexes.
+
+**The data half needs a scratch project.** Run:
+
+```bash
+RESTORE_DATABASE_URL='postgresql://postgres:<pw>@db.<scratch-ref>.supabase.co:5432/postgres' \
+  ./scripts/restore-rehearsal.sh
+```
+
+The script refuses to run if the URL matches the production ref in `.env.local`,
+applies `supabase/apply_all.sql` to the scratch database, re-applies it to prove
+idempotency, and verifies the resulting posture (every table RLS-enabled, no
+`INSERT` policy missing `WITH CHECK`, no unpinned `SECURITY DEFINER`).
+
+Then:
+
+1. Restore a data dump into the same scratch project.
+2. Compare row counts for `profiles`, `messages`, `matches` and `likes`.
+3. Point the API checks at the scratch project:
+   `NEXT_PUBLIC_SUPABASE_URL=https://<scratch-ref>.supabase.co
+   NEXT_PUBLIC_SUPABASE_ANON_KEY=<scratch-anon-key> ./scripts/verify-rls.sh`
+4. Record the date, the measured time and both results in
    `RISK_REGISTER.md` `R-14`.
 
-Until step 5 has happened at least once, `R-14` stays **open**.
+Until step 4 has happened, `R-14` stays open.
 
 ---
 
@@ -279,6 +301,27 @@ Trigger: a report that personal data was visible without authorisation, or
 6. **Follow up.** Fix the test gap that let it through. `R-01` existed for as
    long as it did because the suite asserted anonymous zero-rows only for
    migration-created tables where the GRANT happened to be missing.
+
+### Where application errors go (R-08)
+
+| Signal | Lands in |
+| --- | --- |
+| A render-time throw in a route | `app/error.tsx` → `POST /api/observability` |
+| A throw in the root layout | `app/global-error.tsx` → same |
+| A caught error in client code | `reportException()` → same |
+| The sink itself | one JSON line on stdout: `{"level":"error","event":…,"context":{…},"timestamp":…}` |
+
+Triage by grepping the platform's log output for `"level":"error"` and grouping
+on `event` — the identifiers are stable (`app.route_error`, `app.global_error`,
+`client.exception`). The browser is capped at **5 reports per page load**, so a
+render loop cannot flood the pipeline.
+
+**Every field is redacted twice** — once in the browser, once in the route —
+against a key list covering `email`, `phone`, `birth`, `bio`, `answer`, `token`,
+`*_key`, `authorization`, `cookie` and more. Values come through as
+`[redacted]`; arrays, nesting depth and string length are capped; stack traces
+are never serialised. If you extend the context, add the key to `SENSITIVE_KEY`
+in `src/lib/logger.ts` and it is covered.
 
 ---
 

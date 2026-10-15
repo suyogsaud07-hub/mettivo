@@ -31,13 +31,13 @@
 | `R-05` | Minors can register; age gate is self-attested and clamped | 1 | 5 | 🟡 5 | **MITIGATED** — gate can no longer be bypassed; policy Q1 open |
 | `R-06` | Blocking stored but not enforced server-side | 1 | 3 | 🟢 3 | **CLOSED 2026-10-15** (M12) |
 | `R-07` | Suspended members remain discoverable | 1 | 3 | 🟢 3 | **CLOSED 2026-10-15** (M12) |
-| `R-08` | No observability — production failures are invisible | 4 | 3 | 🟠 12 | Open (M18) |
+| `R-08` | No observability — production failures are invisible | 2 | 3 | 🟡 6 | **MITIGATED** — app layer done; no alert routing yet |
 | `R-09` | Dev-tooling advisories with no fix break a naive audit gate | 3 | 2 | 🟡 6 | Mitigated |
 | `R-10` | Service worker pins clients to a stale bundle | 2 | 3 | 🟡 6 | Mitigated |
 | `R-11` | Account deletion misses a table added later | 2 | 4 | 🟠 8 | Mitigated by test |
-| `R-12` | Protected owner-built UI (Notifications/Moments/Games) removed by a refactor | 2 | 5 | 🟠 10 | Mitigated by test |
+| `R-12` | Protected owner-built UI (Notifications/Moments/Games) removed by a refactor | 1 | 5 | 🟡 5 | Mitigated by test **and by browser journey** |
 | `R-13` | Rate limiting bypassed by writing through a definer function that forgot the guard | 3 | 3 | 🟡 9 | Open |
-| `R-14` | Single-region database, no verified restore procedure | 2 | 5 | 🟠 10 | Open (M18) |
+| `R-14` | Single-region database, no verified restore procedure | 1 | 5 | 🟡 5 | Partly rehearsed — schema rebuild proven; **data restore still unverified** |
 | `R-15` | Onboarding drop-off at 15 steps | 4 | 3 | 🟠 12 | Open — product |
 | `R-16` | Passwordless/OAuth account takeover via callback handling | 2 | 5 | 🟠 10 | Mitigated by review |
 | `R-17` | Unbounded storage growth (moments media, game ledger) | 3 | 2 | 🟡 6 | Open |
@@ -244,17 +244,80 @@ the M12 discovery function.
 
 ---
 
-### `R-08` — No observability 🟠
+### `R-08` — No observability 🟡
 
-**Description.** There is no error reporting, no structured logging, and no
-alerting. A production failure is discovered by a user complaining.
+**Description.** There was no error reporting, no structured logging, and no
+alerting. A production failure was discovered by a member complaining, and a
+render-time throw produced a blank screen with no trace anywhere.
 
-**Mitigation (M18).** Error-boundary reporting hook, a `/api/health` route that
-verifies env configuration, and a documented log-triage runbook.
+**MITIGATED 2026-10-15 — application layer complete.**
+
+| Piece | Where |
+| --- | --- |
+| Route and root error boundaries, both reporting | `src/app/error.tsx`, `src/app/global-error.tsx` |
+| Structured one-JSON-object-per-line logging | `src/lib/logger.ts` |
+| **PII redaction on every emitted field** | `redact()` — keys matching `email`, `phone`, `birth`, `bio`, `token`, `*_key`, … become `[redacted]`; arrays, depth and string length are capped; stacks are never serialised |
+| Client reporter, bounded to 5 reports per page load | `src/lib/report-error.ts` |
+| Ingestion sink with size cap, **re-redaction** and rate limiting | `src/app/api/observability/route.ts` |
+| Configuration probe | `/api/health` |
+| Tests | `src/lib/logger.test.ts`, `src/app/api/observability/route.test.ts` — 18 |
+
+Redaction is the security-relevant half: a log line is a copy of personal data
+that lives outside the database, outside RLS, and outside every deletion path
+the product has. The ingestion route re-redacts because the sender is a browser.
+
+**Residual — why this is Mitigated, not Closed.** Nobody is paged. A failure now
+leaves durable, redacted, greppable forensic evidence, but detection is still a
+human noticing. Closing it needs alert routing (a log-drain threshold, or a
+service such as Sentry) and a retention decision — both infrastructure choices
+rather than code. `docs/DEPLOYMENT.md` §7 has the triage runbook.
+
+---
+
+### `R-14` — No verified restore procedure 🟡
+
+**Description.** Supabase point-in-time recovery is finite, and no restore had
+ever been rehearsed. A bad migration or a deletion bug was unrecoverable in
+practice.
+
+**PARTLY REHEARSED 2026-10-15 — the schema half is now proven and automated.**
+
+`tests/database/restore_rehearsal.test.ts` (9 tests) rebuilds the database from
+nothing and asserts the result is **structurally identical** to the normal
+development path — same tables, columns, types, nullability, constraints, RLS
+policies, functions and indexes — across two independent databases:
+
+```
+A: every migration applied file by file   (the development path)
+B: supabase/apply_all.sql                 (the recovery path)
+```
+
+It also repeats the rebuild against the live column types. If those ever
+diverge, a restore produces a database the test suite has never seen; that is
+the failure this catches. `CONSTITUTION.md` Article 3.12 is therefore
+*demonstrated*, not assumed.
+
+**Still open:** restoring real **data**. That needs a scratch Supabase project
+and a dump, neither of which can be created from inside this repository.
+`scripts/restore-rehearsal.sh` automates it and refuses to run against the
+production ref; run it, then record here:
+
+- the date of the rehearsal,
+- the measured rebuild time,
+- row-count parity for `profiles`, `messages`, `matches`, `likes`,
+- the `./scripts/verify-rls.sh` result against the scratch project.
+
+Likelihood drops to 1 because the rebuild path is exercised on every CI run;
+impact stays 5 because the data itself is still not recoverable on paper.
 
 ---
 
 ### `R-09` — Dev-tooling advisories vs. the audit gate 🟡
+
+| | |
+| --- | --- |
+| **Likelihood** | 3 — known and recurring |
+| **Impact** | 2 — dev-only tooling, not shipped |
 
 **Description.** `npm audit --audit-level=high` reports 5 high advisories in
 dev-only tooling (`braces` via `micromatch` → `fast-glob` →
@@ -314,18 +377,6 @@ that forgets to call it is unlimited.
 **Mitigation.** New definer write paths must attach the guard; `tests/database`
 asserts suspension and rate limiting for each existing path. Extend the test
 matrix whenever a write RPC is added.
-
----
-
-### `R-14` — No verified restore procedure 🟠
-
-**Description.** Supabase free/pro point-in-time recovery is finite, and no
-restore has been rehearsed. A bad migration or a deletion bug is unrecoverable
-in practice.
-
-**Mitigation (M18).** Documented backup cadence, a read-only export procedure,
-and a **rehearsed** restore into a scratch project with the date recorded. Until
-rehearsed, this stays open.
 
 ---
 

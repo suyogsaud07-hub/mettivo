@@ -1,8 +1,9 @@
 # Mettivo Testing Standards
 
-> **Current state (M18).** Unit tests, a database suite, an adversarial security
-> suite and a schema audit exist and run in CI. `npm test` runs **179 tests in
-> ~8 seconds** with no external services and no secrets:
+> **Current state (M18 + launch checklist).** Every layer of the pyramid exists
+> and runs in CI.
+>
+> `npm test` — **267 tests in ~9 seconds**, no external services, no secrets:
 >
 > | Suite | Tests | Covers |
 > | --- | --- | --- |
@@ -11,16 +12,26 @@
 > | `src/lib/catalogue.test.ts` | 11 | interest normalisation, prompt-answer validation, limits |
 > | `src/lib/profile.test.ts` | 13 | age derivation, the 18+ gate, draft validation |
 > | `src/lib/env.test.ts` | 10 | environment validation, no key material in health output |
+> | `src/lib/logger.test.ts` | 11 | R-08: redaction of PII, depth/array/string caps, safe stacks |
+> | `src/app/api/observability/route.test.ts` | 7 | R-08: ingestion, re-redaction, size cap, malformed input |
 > | `tests/database/migrations.test.ts` | 52 | every migration: RLS, matching, notifications, moments, games, moderation, erasure, onboarding-wizard columns |
 > | `tests/database/schema.test.ts` | 8 | M4: RLS coverage, primary keys, FK targets, FK indexes, erasure-safe FKs, no `uuid-ossp` |
 > | `tests/database/blocking.test.ts` | 10 | M12: symmetric blocks, like/message refusal, discovery exclusion, unmatch |
 > | `tests/database/messaging.test.ts` | 10 | M11: participant-only reads, write scoping, unread counts, read state |
 > | `tests/database/moderation.test.ts` | 10 | M13: evidence snapshots, moderator-only triage, resolution + audit |
+> | `tests/database/live_shape.test.ts` | 8 | the migration set against the live column types, exercised at runtime |
+> | `tests/database/apply_all.test.ts` | 10 | the operator bootstrap applies, re-applies, and leaves zero anon rows |
+> | `tests/database/restore_rehearsal.test.ts` | 9 | R-14: a rebuild is structurally identical to the normal path |
+> | `tests/integration/auth-callback.test.ts` | 11 | §3.2: the OAuth route — every branch, failing closed |
+> | `tests/integration/data-access.test.ts` | 33 | §3.2: every data-access module's error branches surface a message |
 > | `tests/security/security.test.ts` | 20 | M17: anonymous bypass, privilege escalation, `SECURITY DEFINER` hardening, secrets hygiene, public-surface hygiene |
 >
-> **Still outstanding:** mocked-Supabase integration tests for the data-access
-> modules, Playwright end-to-end journeys (§3.2 and §3.3), and a restore
-> rehearsal (`RISK_REGISTER.md` `R-14`).
+> `npm run test:e2e` — **11 Chromium journeys in ~4 seconds** (§3.3). The app
+> under test points at `e2e.invalid` and every Supabase call is intercepted, so
+> they need no secrets and cannot touch real data.
+>
+> **Still outstanding:** the data half of the restore rehearsal
+> (`RISK_REGISTER.md` `R-14`) — it needs a scratch Supabase project and a dump.
 
 ## 1. The three gates (mandatory, every change)
 
@@ -108,26 +119,65 @@ RLS and installed a SELECT-only baseline, silently making `messages` and
 
 ### 3.2 Integration tests
 
-- Route handlers (`/auth/callback`) with mocked Supabase responses: success,
-  error exchange, missing code, unexpected throw.
-- Data-access modules with a mocked client: verify `error` branches produce a
-  user-visible message and never a silent success.
+**Implemented** — `tests/integration/`, 44 tests, `npm test`.
 
-### 3.3 End-to-end — Playwright (one happy path, one safety path)
+| File | Covers |
+| --- | --- |
+| `auth-callback.test.ts` | The OAuth route handler with Supabase mocked: missing code, failed exchange, missing user, a brand-new account, an unfinished account, the happy path, an unexpected throw, and a throwing cookie store. Every failure must land somewhere that cannot loop, and a failed exchange must never reach `getUser()`. |
+| `data-access.test.ts` | Every data-access module against a mocked client, asserting the property `CONSTITUTION.md` Article 2.7 names: `{ error }` becomes a **user-visible throw**, never a plausible-looking empty result. |
 
-Critical journey that must never regress:
+The second file is the important one. "No conversations yet" and "the query
+failed" look identical to a member, and only one of them is true — so
+`fetchMessages`, `fetchDiscoveryCandidates`, `listBlockedMembers`,
+`fetchReportQueue` and `loadCatalogue` all throw rather than returning `[]`.
+The one deliberate exception is `fetchUnreadCounts()`, which degrades to no badge
+because a missing badge beats an unusable chat list; it is documented in place
+and pinned by a test.
 
+### 3.3 End-to-end — Playwright (Chromium)
+
+**Implemented** — `tests/e2e/`, 11 journeys, `npm run test:e2e`.
+
+```bash
+npm run test:e2e:install   # once: downloads Chromium into .playwright-browsers/
+npm run test:e2e           # starts the dev server itself, then runs the journeys
 ```
-signup → 18+ gate → OAuth callback → /profile (gate)
-      → /profile/edit → save → /profile/dashboard (profile renders)
-      → /discover → open a chat → send a message (persists after reload)
-```
 
-Safety journey:
+#### Never touch production
 
-```
-report a user → blocked user disappears from /discover and /chat
-```
+The suite is architected so it *cannot* reach the real backend, rather than
+relying on discipline:
+
+1. `playwright.config.ts` starts the dev server with
+   `NEXT_PUBLIC_SUPABASE_URL=https://e2e.invalid.supabase.co`. Next.js does not
+   let `.env.local` override an already-set variable, so this wins.
+2. `tests/e2e/fixtures.ts` intercepts every `auth/v1` and `rest/v1` call and
+   serves deterministic fixtures.
+
+If an interception is ever missed, the request fails harmlessly against
+`e2e.invalid` instead of creating real accounts or reading real profiles.
+
+#### What is covered
+
+| Journey | Why it exists |
+| --- | --- |
+| 18+ gate is inert until confirmed | `R-05`; the container is `pointer-events: none` |
+| A forced click still refuses | the handler guard, not just the CSS, is what protects a minor |
+| Confirming unlocks the providers | the gate must be passable by an adult |
+| Onboarding: minor refused, adult submitted | the wizard must reject, never clamp the age |
+| Interests + prompts travel in the payload | M8 wiring end to end |
+| Discovery renders a candidate, block removes it | `R-06` |
+| All six nav destinations present | `R-12`, owner-built navigation |
+| Each owner-built route renders | `R-12` |
+| Offline fallback, legal pages | public surfaces |
+| `/api/health` returns `ok` | M18 configuration probe |
+| Manifest + `no-store` service worker | `R-10` |
+
+The full browser signup → chat → reload journey in the original plan needs a
+real backend to create an account and persist a message; it is deliberately not
+simulated here, because a mocked version would assert the mock rather than the
+product. It belongs in the post-launch smoke checklist or against a dedicated
+staging project.
 
 ## 4. Database / RLS negative tests
 

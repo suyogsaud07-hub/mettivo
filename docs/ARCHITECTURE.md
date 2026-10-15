@@ -141,14 +141,20 @@ These are recorded so no future change assumes they are solved.
 4. **Suspension only hides a member from discovery.** `discover_profiles()`
    excludes suspended members; whether they should also disappear from the chat
    list and moments is the open product question `PRD_V1.md` Q1.
-5. **No observability.** No error reporting or structured logging. `/api/health`
-   reports configuration only.
+5. **Alerting is not wired.** Structured, PII-redacted logging, route/global error
+   boundaries and a `/api/observability` sink now exist (R-08), so a failure
+   leaves durable forensic evidence — but nobody is paged. Closing that needs a
+   log-drain threshold or a service such as Sentry, plus a retention decision.
 6. **No migration runner.** Migrations are applied by hand in the SQL Editor.
    `scripts/check-schema-drift.sh` derives the expected schema from the migration
    files and diffs it against the live project, and runs in CI.
-7. **Integration and end-to-end test layers are missing.**
-   `TESTING_STANDARDS.md` §3.2 (mocked-Supabase client tests) and §3.3
-   (Playwright journeys) are still outstanding; the database layer is covered.
+7. **The data half of the restore rehearsal is unrun.** The rebuild path is
+   proven and automated (`tests/database/restore_rehearsal.test.ts`,
+   `scripts/restore-rehearsal.sh`); restoring an actual dump needs a scratch
+   project. See `RISK_REGISTER.md` `R-14`.
+8. **No full-stack end-to-end journey.** The Playwright suite runs real browser
+   journeys with Supabase intercepted, deliberately never touching production.
+   The signup → chat → reload path needs a staging backend.
 
 ### Resolved
 

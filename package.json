@@ -10,6 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:e2e": "PLAYWRIGHT_BROWSERS_PATH=\"$PWD/.playwright-browsers\" playwright test",
+    "test:e2e:install": "PLAYWRIGHT_BROWSERS_PATH=\"$PWD/.playwright-browsers\" playwright install chromium",
     "audit": "npm audit --omit=dev --audit-level=high",
     "build:apply-all": "./scripts/build-apply-all.sh",
     "verify": "npm run typecheck && npm run lint && npm run test && npm run audit && npm run build"
@@ -24,6 +26,7 @@
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.10",
+    "@playwright/test": "^1.64.1",
     "@tailwindcss/turbopack": "^4",
     "@types/node": "^22.20.5",
     "@types/react": "^19",

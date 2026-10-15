@@ -42,3 +42,11 @@ next-env.d.ts
 
 # vitest reporter artifacts (generated; never commit)
 .vitest/
+
+# local npm cache (the user-level cache can be root-owned; see check-schema-drift)
+.npm-cache/
+
+# playwright browsers + artefacts (hundreds of MB; never commit)
+.playwright-browsers/
+test-results/
+playwright-report/
