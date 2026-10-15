@@ -403,14 +403,41 @@ describe('game zone', () => {
     });
 
   it('seeds the playable catalogue', async () => {
+    // M14 seeded tic-tac-toe + uno-lite; M16 added the seven social mini-games
+    // the Game Hub renders. Nine playable rows, and every id the client
+    // registry can launch must exist here or `record_game_result()` rejects its
+    // score as an unknown game.
     const result = await db.query<{ n: number }>(
       `select count(*)::int as n from public.game_catalog where is_playable`
     );
-    expect(result.rows[0].n).toBe(2);
+    expect(result.rows[0].n).toBe(9);
+
+    const ids = await db.query<{ game_id: string }>(
+      `select game_id from public.game_catalog where is_playable order by game_id`
+    );
+    expect(ids.rows.map((row) => row.game_id)).toEqual([
+      'icebreaker',
+      'memory-match',
+      'speed-matching',
+      'spin-the-wheel',
+      'tic-tac-toe',
+      'truth-or-dare',
+      'twenty-questions',
+      'uno-lite',
+      'word-guess',
+    ]);
   });
 
   it('records a real result', async () => {
     expect((await record(USER_A, 'tic-tac-toe', 'win', 10)).outcome).toBe('win');
+  });
+
+  it('accepts an M16 game id and still enforces its score ceiling', async () => {
+    // Deliberately USER_C: this suite's other assertions count USER_A's rows, so
+    // a successful insert here must not change that ledger.
+    expect((await record(USER_C, 'memory-match', 'win', 100)).outcome).toBe('win');
+    await expect(record(USER_C, 'memory-match', 'win', 101)).rejects.toThrow(/out of range/i);
+    await expect(record(USER_C, 'truth-or-dare', 'win', 16)).rejects.toThrow(/out of range/i);
   });
 
   it('rejects unknown, non-playable, malformed and out-of-range results', async () => {

@@ -36,22 +36,31 @@ export interface OAuthProviderBrand {
   background: string;
   /** Button text colour. */
   foreground: string;
-  /** Optional border, for dark brands that would otherwise vanish on black. */
+  /** Optional border, for dark brands that would otherwise vanish on the dark page. */
   border?: string;
+  /**
+   * Optional hover background.
+   *
+   * Required for Discord: a primary-coloured brand button must react to hover,
+   * and the rest state (#5865F2) is asserted by the browser suite, so the hover
+   * keeps the same hue and darkens it rather than changing colour family.
+   */
+  hover?: string;
 }
 
 /**
  * Brand colours per provider.
  *
- * Discord's brand colour is #5865F2. Twitter/X is intentionally near-black with
- * a border, because a pure-black button on this screen's #121212 background has
- * no edge at all.
+ * Discord's brand colour is #5865F2, with #4752C4 on hover — Discord's own
+ * pressed/hover blurple, so the same hue simply deepens. Twitter/X is
+ * intentionally near-black with a border, because a pure-black button on the
+ * Midnight Romance page background has no edge at all.
  */
 export const OAUTH_PROVIDER_BRANDS: Record<OAuthProvider, OAuthProviderBrand> = {
   google: { background: '#1A73E8', foreground: '#ffffff' },
   facebook: { background: '#1877F2', foreground: '#ffffff' },
   twitter: { background: '#000000', foreground: '#ffffff', border: '1px solid #333333' },
-  discord: { background: '#5865F2', foreground: '#ffffff' },
+  discord: { background: '#5865F2', foreground: '#ffffff', hover: '#4752C4' },
 };
 
 /** Human label for the button, e.g. "Sign up with Discord". */

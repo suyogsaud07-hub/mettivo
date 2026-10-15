@@ -3,10 +3,23 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import InstallButton from '@/app/components/InstallButton';
-import { useRouter } from 'next/navigation';
 import { useLanguage } from '../context/LanguageContext';
 import { Language } from '@/lib/translations';
 import { supabase } from '@/lib/supabase';
+
+/**
+ * The landing page is for EVERYONE, including signed-in members.
+ *
+ * It used to call `supabase.auth.getSession()` on mount and immediately
+ * `router.replace()` a signed-in visitor to `/profile` or `/discover`. That made
+ * the page unreachable for members — pressing Back from the app bounced you
+ * straight out again — and it was one half of a redirect cycle with the auth
+ * screen, which redirected an authenticated visitor back into the app.
+ *
+ * The session is now read for exactly one purpose: choosing the call to action.
+ * There is NO automatic navigation here. A signed-in member can read the landing
+ * page and decides for themselves whether to open their dashboard.
+ */
 
 const LANGUAGES: { code: Language; name: string }[] = [
   { code: 'en', name: 'English' },
@@ -17,51 +30,56 @@ const LANGUAGES: { code: Language; name: string }[] = [
 ];
 
 export default function LandingPage() {
-  const router = useRouter();
   const { language, changeLanguage, t } = useLanguage();
   const [langMenuOpen, setLangMenuOpen] = useState(false);
-  const [isCheckingAuth, setIsCheckingAuth] = useState(true);
+  /**
+   * Whether a member has a live session. Only ever used to pick the CTA.
+   *
+   * Starts `false` so the server and first client render agree (the signed-out
+   * state), and is corrected in an effect. Deciding this during render would be
+   * a hydration mismatch.
+   */
+  const [isSignedIn, setIsSignedIn] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
 
-    async function verifyUserAndRouting() {
-      try {
-        // 1. Check active auth session
-        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-        
-        if (sessionError || !session) {
-          if (isMounted) setIsCheckingAuth(false);
-          return;
-        }
+    /**
+     * `getSession()` reads the cookie locally — it does not call the Auth
+     * server, so this cannot block the landing page behind a network round trip.
+     * The session is already validated and refreshed by the middleware.
+     */
+    void supabase.auth
+      .getSession()
+      .then(({ data: { session } }) => {
+        if (isMounted) setIsSignedIn(Boolean(session));
+      })
+      .catch((err: unknown) => {
+        // A failure here must never strand the page: stay signed-out.
+        console.error('[landing] session lookup failed:', err);
+      });
 
-        // 2. Check profile onboarding status in database
-        const { data: profile, error: profileError } = await supabase
-          .from('profiles')
-          .select('onboarding_completed')
-          .eq('id', session.user.id)
-          .maybeSingle();
-
-        if (!isMounted) return;
-
-        // 3. Precision Routing Decision
-        if (profileError || !profile || profile.onboarding_completed === false) {
-          router.replace('/profile'); // Send to interview / setup
-        } else {
-          router.replace('/discover'); // Send to main app
-        }
-      } catch (err) {
-        console.error('Auth verification error on root page:', err);
-        if (isMounted) setIsCheckingAuth(false);
-      }
-    }
-
-    verifyUserAndRouting();
+    // A sign-out in another tab should stop this page claiming a session.
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (isMounted) setIsSignedIn(Boolean(session));
+    });
 
     return () => {
       isMounted = false;
+      subscription.unsubscribe();
     };
-  }, [router]);
+  }, []);
+
+  /**
+   * Signed-in members go to the onboarding gate at `/profile`, which routes on
+   * `onboarding_completed` (finished -> /profile/dashboard, unfinished ->
+   * /profile/edit). Letting the gate decide keeps that decision in one place
+   * instead of duplicating the rule here, which is what drifted before.
+   */
+  const primaryHref = isSignedIn ? '/profile' : '/auth';
+  const primaryLabel = isSignedIn ? 'Go to Dashboard' : t('get_started');
 
   const styles = {
     container: { minHeight: '100vh', backgroundColor: '#0D0A10', color: '#F2E9E4', fontFamily: 'system-ui', display: 'flex', flexDirection: 'column' as const },
@@ -82,17 +100,6 @@ export default function LandingPage() {
     primaryBtn: { backgroundColor: '#D4B18A', color: '#17121C', padding: '16px', borderRadius: '30px', fontSize: '16px', fontWeight: '700', border: 'none', cursor: 'pointer', textDecoration: 'none', display: 'block', textAlign: 'center' as const },
     footer: { padding: '24px', textAlign: 'center' as const, fontSize: '13px', color: '#B58A83' }
   };
-
-  if (isCheckingAuth) {
-    return (
-      <div style={styles.loaderContainer}>
-        <svg viewBox="0 0 100 100" style={{ width: '48px', height: '48px', fill: 'none', stroke: '#D4B18A', strokeWidth: 8, strokeLinecap: 'round', strokeLinejoin: 'round', opacity: 0.9 }}>
-          <path d="M 25,30 C 15,30 15,70 25,70 C 40,70 60,30 75,30 C 85,30 85,70 75,70 C 60,70 40,30 25,30 Z" />
-        </svg>
-        <span style={{ fontSize: '12px', letterSpacing: '3px', color: '#B58A83', textTransform: 'uppercase' }}>Loading Mettivo...</span>
-      </div>
-    );
-  }
 
   return (
     <div style={styles.container}>
@@ -140,8 +147,11 @@ export default function LandingPage() {
         </p>
 
         <div style={styles.buttonContainer}>
-          <Link href="/auth" style={styles.primaryBtn}>
-            {t('get_started')}
+          {/* No automatic redirect: the member chooses. Signed in -> the
+              onboarding gate decides between dashboard and setup; signed out ->
+              the auth screen. */}
+          <Link href={primaryHref} style={styles.primaryBtn} data-testid="landing-primary-cta">
+            {primaryLabel}
           </Link>
           <InstallButton />
         </div>

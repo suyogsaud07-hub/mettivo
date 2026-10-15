@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { E2E_OTHER_USER_ID, candidate, signedIn, stubSupabase } from './fixtures';
 
 /**
@@ -53,7 +53,7 @@ test.describe('§3.3 — the 18+ gate', () => {
 
     // Discord blurple is #5865F2. Asserting the computed colour proves the brand
     // style is actually applied rather than merely present in a style object.
-    await page.getByText('I confirm I am 18 years or older').click();
+    await page.getByTestId('age-gate').click();
     await expect
       .poll(async () => discord.evaluate((el) => getComputedStyle(el).backgroundColor))
       .toBe('rgb(88, 101, 242)');
@@ -96,7 +96,7 @@ test.describe('§3.3 — the 18+ gate', () => {
     await expect(page.getByTestId('auth-error')).toHaveText(/18 or older/i);
 
     // Confirm age, then an invalid address.
-    await page.getByText('I confirm I am 18 years or older').click();
+    await page.getByTestId('age-gate').click();
     await page.getByLabel('Email').fill('not-an-email');
     await submit.click();
     await expect(page.getByTestId('auth-error')).toHaveText(/email address/i);
@@ -117,7 +117,7 @@ test.describe('§3.3 — the 18+ gate', () => {
   test('unlocks the providers once age is confirmed, then reaches the provider', async ({
     page,
   }) => {
-    await page.getByText('I confirm I am 18 years or older').click();
+    await page.getByTestId('age-gate').click();
 
     const google = page.getByRole('button', { name: /Sign up with Google|Log in with Google/ });
     await expect
@@ -133,8 +133,112 @@ test.describe('§3.3 — the 18+ gate', () => {
   });
 });
 
+/** A real (tiny) PNG, so the wizard's FileReader produces a usable data URL. */
+const PNG_PIXEL = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64'
+);
+
+/** The wizard starts on step 1 and reports its position in this exact format. */
+const STEP_LABEL = /Step (\d+) of 15/;
+
+/**
+ * Satisfies whichever requirement the current step enforces.
+ *
+ * The wizard's own rule is the contract: "Next →" is disabled until the step is
+ * valid, and `validateOnboardingStep` refuses a programmatic click. So this
+ * helper supplies valid input for the step it is pointed at, and the journey
+ * fails loudly (the label never advances) if a requirement is missed — which is
+ * exactly the regression we want to catch.
+ */
+async function completeStep(page: Page, step: number): Promise<void> {
+  const next = page.getByRole('button', { name: 'Next →' });
+
+  if (step === 1) {
+    // Mandatory: display name AND at least four gallery photos.
+    await page.getByPlaceholder('Your name or nickname').fill('Sujata');
+    await page.locator('input[type="file"]').nth(1).setInputFiles([
+      { name: 'a.png', mimeType: 'image/png', buffer: PNG_PIXEL },
+      { name: 'b.png', mimeType: 'image/png', buffer: PNG_PIXEL },
+      { name: 'c.png', mimeType: 'image/png', buffer: PNG_PIXEL },
+      { name: 'd.png', mimeType: 'image/png', buffer: PNG_PIXEL },
+    ]);
+    // The gallery counter is the observable proof the uploads landed.
+    await expect(page.getByText('Gallery (4/6)')).toBeVisible();
+  }
+
+  if (step === 2) {
+    await page.getByRole('button', { name: 'Woman', exact: true }).click();
+  }
+
+  if (step === 3) {
+    await page.locator('input[type="date"]').fill('1998-05-04');
+  }
+
+  if (step === 4) {
+    // Country and city are both mandatory; the dropdown must not auto-continue.
+    await expect(next).toBeDisabled();
+    await page.locator('select').first().selectOption('Nepal');
+    await page.getByPlaceholder('e.g. Kathmandu, San Francisco').fill('Kathmandu');
+  }
+
+  if (step === 5) {
+    await page.getByPlaceholder('e.g. 175 cm').fill('170 cm');
+  }
+
+  if (step === 6) {
+    await page.getByRole('button', { name: 'Long-term Relationship / Dating' }).click();
+  }
+
+  if (step === 7) {
+    await page.getByRole('button', { name: 'Women', exact: true }).click();
+  }
+
+  if (step === 8) {
+    await page.getByRole('button', { name: 'INFJ', exact: true }).click();
+    await page.getByRole('button', { name: '+ Add a prompt' }).click();
+    await page.locator('select').last().selectOption('simple-pleasures');
+    await page
+      .getByPlaceholder('Coffee at sunrise')
+      .fill('Coffee at sunrise and a good playlist');
+  }
+
+  if (step === 9) {
+    // Curated interests come from the M8 catalogue; `exact` matters because the
+    // legacy hobby list also contains "Outdoors & Hiking".
+    await page.getByRole('button', { name: 'Hiking', exact: true }).click();
+  }
+
+  if (step === 10) {
+    await page.getByRole('button', { name: 'Dog lover', exact: true }).click();
+  }
+
+  if (step === 11) {
+    await page.locator('select').nth(0).selectOption('Non-smoker');
+    await page.locator('select').nth(1).selectOption('Social drinker');
+    await page.locator('select').nth(2).selectOption('A few times a week');
+  }
+
+  if (step === 12) {
+    await page
+      .getByPlaceholder("e.g. Bachelor's Degree, Master's, High School")
+      .fill("Bachelor's Degree");
+    await page.getByPlaceholder('e.g. Software Engineer, Designer, Student').fill('Engineer');
+  }
+
+  if (step === 13) {
+    await page.getByRole('button', { name: 'English', exact: true }).click();
+  }
+
+  if (step === 14) {
+    await page
+      .getByPlaceholder(/Tell others what makes you unique/)
+      .fill('Coffee, mountains and long conversations.');
+  }
+}
+
 test.describe('§3.3 — the onboarding wizard', () => {
-  test('refuses a minor and submits an adult profile', async ({ page }) => {
+  test('blocks every incomplete step, then submits a complete adult profile', async ({ page }) => {
     await signedIn(page);
 
     const stub = await stubSupabase(page, {
@@ -164,24 +268,45 @@ test.describe('§3.3 — the onboarding wizard', () => {
     await expect(page.getByText("Let's start with the basics")).toBeVisible();
 
     const next = page.getByRole('button', { name: 'Next →' });
+    const stepLabel = page.getByText(STEP_LABEL);
 
-    // --- step 1: a display name is required ---------------------------------
-    await next.click();
-    await expect(page.getByText(/provide a display name/i)).toBeVisible();
+    // --- step 1 is blocked twice over: no name, and fewer than four photos ---
+    await expect(next).toBeDisabled();
 
     await page.getByPlaceholder('Your name or nickname').fill('Sujata');
-    await next.click();
-    await expect(page.getByText('How do you identify?')).toBeVisible();
+    // A name alone is not enough — the photo minimum still blocks the step.
+    await expect(next).toBeDisabled();
+    await expect(page.getByTestId('step-error')).toHaveText(/4 profile photos/i);
 
-    // --- step 3: the age gate ----------------------------------------------
-    await next.click(); // step 2 -> 3
+    await page.locator('input[type="file"]').nth(1).setInputFiles([
+      { name: 'a.png', mimeType: 'image/png', buffer: PNG_PIXEL },
+      { name: 'b.png', mimeType: 'image/png', buffer: PNG_PIXEL },
+      { name: 'c.png', mimeType: 'image/png', buffer: PNG_PIXEL },
+    ]);
+    // Three is still not four: the count is interpolated into the message.
+    await expect(next).toBeDisabled();
+    await expect(page.getByTestId('step-error')).toHaveText(/3\/4 uploaded/);
+
+    await page.locator('input[type="file"]').nth(1).setInputFiles([
+      { name: 'd.png', mimeType: 'image/png', buffer: PNG_PIXEL },
+    ]);
+    await expect(next).toBeEnabled();
+    await next.click();
+    await expect(stepLabel).toHaveText('Step 2 of 15');
+
+    // --- step 2: identity is mandatory ---
+    await expect(next).toBeDisabled();
+    await page.getByRole('button', { name: 'Woman', exact: true }).click();
+    await next.click();
+    await expect(stepLabel).toHaveText('Step 3 of 15');
+
+    // --- step 3: the age gate ---
     await expect(page.getByText('When is your birthday?')).toBeVisible();
+    await expect(next).toBeDisabled();
 
     const dob = page.locator('input[type="date"]');
     await dob.fill('2015-01-01'); // 11 years old
-    await next.click();
-
-    // The wizard must refuse and stay on the step. It must NOT clamp the age.
+    await expect(next).toBeDisabled();
     await expect(page.getByText(/for adults only/i)).toBeVisible();
     await expect(page.getByText('When is your birthday?')).toBeVisible();
 
@@ -189,40 +314,29 @@ test.describe('§3.3 — the onboarding wizard', () => {
     await next.click();
     await expect(page.getByText('Where are you based?')).toBeVisible();
 
-    // --- walk the remaining steps ------------------------------------------
-    // The step counter is read explicitly and `Next` is only accepted once it
-    // has advanced. Checking visibility immediately after a click races the
-    // React re-render, which silently skipped the interests step in an earlier
-    // version of this test.
-    const stepLabel = page.getByText(/Step \d+ of 15/);
+    // --- step 4: country and city are mandatory, and the dropdown must not
+    // auto-continue on its own ---
+    await expect(next).toBeDisabled();
+    await page.locator('select').first().selectOption('Nepal');
+    await expect(next).toBeDisabled(); // city still missing
+    await page.getByPlaceholder('e.g. Kathmandu, San Francisco').fill('Kathmandu');
+    await next.click();
+    await expect(stepLabel).toHaveText('Step 5 of 15');
 
-    for (let guard = 0; guard < 20; guard += 1) {
-      const label = (await stepLabel.textContent()) ?? '';
-      const step = Number(/Step (\d+)/.exec(label)?.[1] ?? 0);
+    // --- steps 5..14: each one blocks until it has valid input ---
+    for (let step = 5; step <= 14; step += 1) {
+      await expect(stepLabel).toHaveText(`Step ${step} of 15`);
+      // Every step must refuse to advance while it is blank. Step 5 is the one
+      // exception in the contract: it has no blocking field beyond height.
+      await expect(next).toBeDisabled();
 
-      // Step 9: interests come from the M8 catalogue and are stored as ids.
-      // `exact` matters: the legacy hobby list also contains "Outdoors &
-      // Hiking", which a substring match would collide with.
-      if (step === 9) {
-        await page.getByRole('button', { name: 'Hiking', exact: true }).click();
-      }
-
-      // Step 8: the prompt slot select only appears after "+ Add a prompt".
-      if (step === 8) {
-        await page.getByRole('button', { name: '+ Add a prompt' }).click();
-        await page.locator('select').last().selectOption('simple-pleasures');
-        await page
-          .getByPlaceholder('Coffee at sunrise')
-          .fill('Coffee at sunrise and a good playlist');
-      }
-
-      if (step >= 15) break;
-
+      await completeStep(page, step);
       await next.click();
-      await expect(stepLabel).not.toHaveText(label);
+      await expect(stepLabel).toHaveText(`Step ${step + 1} of 15`);
     }
 
     // --- submit -------------------------------------------------------------
+    await expect(page.getByText('Review & Finish')).toBeVisible();
     await page.getByRole('button', { name: /Complete & Launch/ }).click();
 
     await expect
@@ -238,6 +352,17 @@ test.describe('§3.3 — the onboarding wizard', () => {
     expect(payload.birth_date).toBe('1998-05-04');
     expect(payload.onboarding_completed).toBe(true);
     expect(payload.display_name).toBe('Sujata');
+
+    // The mandatory four photos travelled with the payload — the step guard
+    // blocked on them, so they cannot be missing here.
+    expect(Array.isArray(payload.photos)).toBe(true);
+    expect(payload.photos).toHaveLength(4);
+
+    // Government of the mandatory identity + location fields.
+    expect(payload.gender).toBe('Woman');
+    expect(payload.country).toBe('Nepal');
+    expect(payload.city).toBe('Kathmandu');
+
     // M8: the curated prompt answer travelled with the payload.
     expect(payload.prompts).toMatchObject({
       'simple-pleasures': 'Coffee at sunrise and a good playlist',

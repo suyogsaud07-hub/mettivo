@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import type { GameOutcome } from './TicTacToe';
+import { createRng } from './deterministic';
+import { useGameRound } from './surface';
 
 type Colour = 'red' | 'yellow' | 'green' | 'blue';
 type CardColour = Colour | 'wild';
@@ -64,10 +66,17 @@ function buildDeck(): Card[] {
   return deck;
 }
 
-function shuffle<T>(items: T[]): T[] {
+/**
+ * CODING_STANDARDS §2: never compute a random value during render. `deal()` runs
+ * in a `useState` initializer and during SSR, so it is a pure function of the
+ * round number instead — a `Math.random()` shuffle here dealt a different hand
+ * on the server and the client, which is a hydration mismatch.
+ */
+function shuffle<T>(items: T[], seed: number): T[] {
+  const rng = createRng(seed);
   const copy = [...items];
   for (let i = copy.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = Math.floor(rng() * (i + 1));
     [copy[i], copy[j]] = [copy[j], copy[i]];
   }
   return copy;
@@ -96,8 +105,8 @@ interface UnoState {
   turn: 'player' | 'ai';
 }
 
-function deal(): UnoState {
-  const deck = shuffle(buildDeck());
+function deal(seed: number): UnoState {
+  const deck = shuffle(buildDeck(), seed);
   const player = deck.splice(0, 7);
   const ai = deck.splice(0, 7);
 
@@ -121,19 +130,20 @@ export default function UnoLite({
 }: {
   onFinish: (outcome: GameOutcome, score: number) => void;
 }) {
-  const [state, setState] = useState<UnoState>(() => deal());
+  const round = useGameRound();
+  const [state, setState] = useState<UnoState>(() => deal(20261015 + round * 17));
   const [message, setMessage] = useState('Your turn — match the colour or the number.');
   const [ended, setEnded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [score, setScore] = useState(0);
 
   const reset = useCallback(() => {
-    setState(deal());
+    setState(deal(20261015 + round * 17));
     setMessage('Your turn — match the colour or the number.');
     setEnded(false);
     setBusy(false);
     setScore(0);
-  }, []);
+  }, [round]);
 
   const finish = useCallback(
     (outcome: GameOutcome, finalScore: number) => {
@@ -271,7 +281,6 @@ export default function UnoLite({
 
     return () => window.clearTimeout(timer);
     // `busy` is intentionally excluded: it only guards player input.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state, ended, finish, score]);
 
   const styles = {

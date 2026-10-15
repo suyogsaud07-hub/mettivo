@@ -11,6 +11,30 @@
   --met-gray: #b58a83;
   --met-gold: #d4b18a;
   --met-cream: #f2e9e4;
+
+  /* ----------------------------------------------------------------
+     Midnight Romance — the auth surface palette.
+
+     Documented here as tokens so the values have one home, and consumed
+     as literal hexes in Tailwind arbitrary values so a typo shows up as
+     a wrong colour rather than a silently-transparent `var()`.
+     ---------------------------------------------------------------- */
+  --mr-page: #131017;          /* outer page background */
+  --mr-page-alt: #18131d;      /* raised page band / tab track */
+  --mr-card: #211a28;          /* form card fill (see --mr-panel) */
+  --mr-panel: var(--mr-card);  /* alias: the auth panel fill */
+  --mr-card-border: #34283f;   /* card hairline */
+  --mr-gold: #d8b38a;          /* primary action + active tab */
+  --mr-gold-hover: #cfab83;
+  --mr-gold-text: #1a130c;     /* dark text on gold */
+  --mr-input: #251d2d;         /* input surface */
+  --mr-input-border: #3e314b;
+  --mr-placeholder: #9b8ba6;
+  --mr-inactive: #2d2336;      /* inactive tab / neutral button */
+  --mr-inactive-text: #b4a3c0;
+  --mr-burgundy: #4a1c2e;      /* callout / banner highlight */
+  --mr-burgundy-border: #542036;
+  --mr-heading: #eae2f0;       /* headings + primary labels */
 }
 
 html {

@@ -21,6 +21,20 @@ import { NextResponse, type NextRequest } from 'next/server';
  * The response object is rebuilt inside `setAll` because Next.js caches the
  * headers of the original response; mutating cookies on a stale response is the
  * classic reason a refreshed session "does not stick".
+ *
+ * ⛔ THIS MIDDLEWARE MUST NEVER REDIRECT.
+ *   It refreshes a session and nothing else — every branch returns a response
+ *   that forwards the request unchanged. Route-level `redirect()` calls here are
+ *   how this app previously produced a redirect cycle:
+ *
+ *     /profile (no readable session yet) -> /auth
+ *     /auth   (session cookie now visible) -> /profile        -> repeat
+ *
+ *   A session can be present-but-unreadable for a request or two while the
+ *   refresh cookie round-trips, so *any* session-dependent redirect in
+ *   middleware is a loop waiting to happen. Authorisation decisions belong in
+ *   the page-level guards, which run with a settled session; the middleware's
+ *   only job is to make that session valid.
  */
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;

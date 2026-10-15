@@ -19,6 +19,12 @@ export class GameError extends Error {
   }
 }
 
+/**
+ * How the Game Hub groups a game. Every entry in `GAMES` must set exactly one
+ * of these, because the hub renders one section per value.
+ */
+export type GameCategory = 'icebreaker' | 'competitive' | 'quick';
+
 export interface GameDefinition {
   /** Matches `game_catalog.game_id`. */
   id: string;
@@ -31,6 +37,8 @@ export interface GameDefinition {
   duration: string;
   /** False when the game needs realtime multiplayer and is not built yet. */
   playable: boolean;
+  /** The hub section this game belongs to. Never optional: the hub groups on it. */
+  category: GameCategory;
   /** Why it is not playable, shown instead of a dead-end alert. */
   pendingReason?: string;
 }
@@ -38,6 +46,14 @@ export interface GameDefinition {
 /**
  * The games surfaced in the UI. `playable: true` entries have a real,
  * fully-playable route; the rest state honestly what they are waiting on.
+ *
+ * Every playable id here mirrors a row in `public.game_catalog`
+ * (`20261015180000_game_zone.sql` seeds the original four;
+ * `20261015270000_m16_game_catalog_expansion.sql` seeds the seven mini-games).
+ * `record_game_result()` rejects an id that is not in that table, and rejects a
+ * score above its `max_score`, so the two lists must stay in step. The matching
+ * score ceilings live next to each player in
+ * `src/app/components/games/engine.tsx` (`GAME_MAX_SCORES`).
  */
 export const GAMES: GameDefinition[] = [
   {
@@ -50,6 +66,7 @@ export const GAMES: GameDefinition[] = [
     players: 12,
     duration: '6m',
     playable: true,
+    category: 'competitive',
   },
   {
     id: 'tic-tac-toe',
@@ -60,6 +77,7 @@ export const GAMES: GameDefinition[] = [
     players: 6,
     duration: '5m',
     playable: true,
+    category: 'competitive',
   },
   {
     id: 'ludo-royale',
@@ -70,6 +88,7 @@ export const GAMES: GameDefinition[] = [
     players: 6,
     duration: '15m',
     playable: false,
+    category: 'competitive',
     pendingReason:
       'Ludo needs realtime turn synchronisation between up to four players, which this build does not have yet. The board, rules engine and Supabase Realtime turn channel are the next piece of work.',
   },
@@ -82,8 +101,86 @@ export const GAMES: GameDefinition[] = [
     players: 8,
     duration: '8m',
     playable: false,
+    category: 'competitive',
     pendingReason:
       'Ludo Dash shares the realtime turn system with Ludo Royale, so it lands at the same time.',
+  },
+  {
+    id: 'memory-match',
+    title: 'Memory Match',
+    description: 'Flip and pair all eight symbols on a 4×4 canvas board before your moves run away with you.',
+    icon: '🧠',
+    image: 'https://images.unsplash.com/photo-1606503153255-59d8b8b82176?q=80&w=400&auto=format&fit=crop',
+    players: 2,
+    duration: '3m',
+    playable: true,
+    category: 'quick',
+  },
+  {
+    id: 'word-guess',
+    title: 'Word Guessing',
+    description: 'Guess the Nepali word letter by letter — six wrong guesses and the round is gone.',
+    icon: '🔤',
+    image: 'https://images.unsplash.com/photo-1611996575749-79a3a250f948?q=80&w=400&auto=format&fit=crop',
+    players: 2,
+    duration: '4m',
+    playable: true,
+    category: 'quick',
+  },
+  {
+    id: 'icebreaker',
+    title: 'Icebreaker Trivia',
+    description: 'Six quick questions about Nepal and about you — the easiest way to start a conversation.',
+    icon: '💬',
+    image: 'https://images.unsplash.com/photo-1529156069898-49953e39b3ac?q=80&w=400&auto=format&fit=crop',
+    players: 2,
+    duration: '5m',
+    playable: true,
+    category: 'icebreaker',
+  },
+  {
+    id: 'twenty-questions',
+    title: '20 Questions',
+    description: 'Answer yes or no while the app narrows in on the thing you are thinking of.',
+    icon: '🤔',
+    image: 'https://images.unsplash.com/photo-1543269865-cbf427effbad?q=80&w=400&auto=format&fit=crop',
+    players: 2,
+    duration: '3m',
+    playable: true,
+    category: 'icebreaker',
+  },
+  {
+    id: 'truth-or-dare',
+    title: 'Truth or Dare',
+    description: 'A gentle pass-and-play deck of truths and dares, no prompt repeated until the deck runs out.',
+    icon: '🎭',
+    image: 'https://images.unsplash.com/photo-1511632765486-a01980e01a18?q=80&w=400&auto=format&fit=crop',
+    players: 2,
+    duration: '5m',
+    playable: true,
+    category: 'icebreaker',
+  },
+  {
+    id: 'spin-the-wheel',
+    title: 'Spin the Wheel',
+    description: 'Six date ideas on a wheel — spin it inside a sandboxed view and land on every one.',
+    icon: '🎡',
+    image: 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?q=80&w=400&auto=format&fit=crop',
+    players: 2,
+    duration: '2m',
+    playable: true,
+    category: 'icebreaker',
+  },
+  {
+    id: 'speed-matching',
+    title: 'Speed Matching',
+    description: 'Ten this-or-that rounds against the clock. Every answer you and your match agree on scores.',
+    icon: '⚡',
+    image: 'https://images.unsplash.com/photo-1552664730-d307ca884978?q=80&w=400&auto=format&fit=crop',
+    players: 2,
+    duration: '2m',
+    playable: true,
+    category: 'competitive',
   },
 ];
 

@@ -3,18 +3,18 @@
 > **Current state (M18 + launch checklist).** Every layer of the pyramid exists
 > and runs in CI.
 >
-> `npm test` — **274 tests in ~10 seconds**, no external services, no secrets:
+> `npm test` — **302 tests in ~10 seconds**, no external services, no secrets:
 >
 > | Suite | Tests | Covers |
 > | --- | --- | --- |
 > | `src/lib/matching.test.ts` | 18 | `matchScore`, `explainMatch`, intention affinity, deterministic ranking |
 > | `src/lib/helpers.test.ts` | 17 | notification copy/actions/tabs, relative time, flags, game stats |
 > | `src/lib/catalogue.test.ts` | 11 | interest normalisation, prompt-answer validation, limits |
-> | `src/lib/profile.test.ts` | 13 | age derivation, the 18+ gate, draft validation |
+> | `src/lib/profile.test.ts` | 40 | age derivation, the 18+ gate, draft validation, and the strict per-step onboarding guards (every step blocks when blank, photo minimum message is character-exact) |
 > | `src/lib/env.test.ts` | 10 | environment validation, no key material in health output |
 > | `src/lib/logger.test.ts` | 11 | R-08: redaction of PII, depth/array/string caps, safe stacks |
 > | `src/app/api/observability/route.test.ts` | 7 | R-08: ingestion, re-redaction, size cap, malformed input |
-> | `tests/database/migrations.test.ts` | 52 | every migration: RLS, matching, notifications, moments, games, moderation, erasure, onboarding-wizard columns |
+> | `tests/database/migrations.test.ts` | 53 | every migration: RLS, matching, notifications, moments, games (incl. the M16 catalogue), moderation, erasure, onboarding-wizard columns |
 > | `tests/database/schema.test.ts` | 8 | M4: RLS coverage, primary keys, FK targets, FK indexes, erasure-safe FKs, no `uuid-ossp` |
 > | `tests/database/blocking.test.ts` | 10 | M12: symmetric blocks, like/message refusal, discovery exclusion, unmatch |
 > | `tests/database/messaging.test.ts` | 10 | M11: participant-only reads, write scoping, unread counts, read state |
@@ -26,7 +26,7 @@
 > | `tests/integration/data-access.test.ts` | 33 | §3.2: every data-access module's error branches surface a message |
 > | `tests/security/security.test.ts` | 26 | M17: anonymous bypass, privilege escalation, `SECURITY DEFINER` hardening, secrets hygiene, public-surface hygiene, column-level `birth_date` denial |
 >
-> `npm run test:e2e` — **20 Chromium journeys in ~7 seconds** (§3.3). The app
+> `npm run test:e2e` — **56 Chromium journeys in ~30 seconds** (§3.3). The app
 > under test points at `e2e.invalid` and every Supabase call is intercepted, so
 > they need no secrets and cannot touch real data.
 >

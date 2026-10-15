@@ -1,8 +1,14 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { GameOutcome } from '@/lib/types';
 
-export type GameOutcome = 'win' | 'loss' | 'draw';
+/**
+ * Re-exported for the existing import in `/game-zone/[gameId]` and in
+ * `UnoLite.tsx`. `GameOutcome` is owned by `src/lib/types.ts`, which is also
+ * what `src/lib/games.ts` records results with — there is one definition.
+ */
+export type { GameOutcome };
 
 type Cell = 'X' | 'O' | null;
 type Board = Cell[];

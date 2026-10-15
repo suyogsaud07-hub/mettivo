@@ -2,24 +2,28 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import MobileNav from '../components/layout/MobileNav';
 import { supabase } from '@/lib/supabase';
-import { FEATURED_GAME, fetchGameResults, summariseResults } from '@/lib/games';
+import { FEATURED_GAME, GAMES, fetchGameResults, summariseResults } from '@/lib/games';
 import type { GameStats } from '@/lib/types';
 
 /**
- * Grid content in the owner's original order. Each entry now carries the
- * `game_id` its card routes to, so the tiles are real links instead of alerts.
+ * `/game-zone` — the Game Hub.
+ *
+ * The grid is driven entirely by the `GAMES` catalogue in `src/lib/games.ts`.
+ * It used to be a second hardcoded list living here, plus a `PLAYABLE_IDS`
+ * array, which meant a game could exist in the catalogue (and be accepted by
+ * `record_game_result()` in the database) while being invisible — or shown as
+ * "SOON" long after it became playable. One catalogue, one source of truth.
  */
-const GRID_GAMES = [
-  { id: 'ludo-royale', title: 'Ludo Royale', players: 6, duration: '15m', image: 'https://images.unsplash.com/photo-1605870445919-838d190e8e1b?q=80&w=400&auto=format&fit=crop', icon: '🎲' },
-  { id: 'ludo-dash', title: 'Ludo Dash', players: 8, duration: '8m', image: 'https://images.unsplash.com/photo-1611996575749-79a3a250f948?q=80&w=400&auto=format&fit=crop', icon: '🎲' },
-  { id: 'uno-lite', title: 'UNO', players: 12, duration: '6m', image: 'https://images.unsplash.com/photo-1596451190630-186e58a1e1c6?q=80&w=400&auto=format&fit=crop', icon: '🃏' },
-  { id: 'tic-tac-toe', title: 'Tic Tac Toe', players: 6, duration: '5m', image: 'https://images.unsplash.com/photo-1585504198199-20277593b94f?q=80&w=400&auto=format&fit=crop', icon: '❌' },
-];
 
-/** Games that can actually be launched, for Quick Play. */
-const PLAYABLE_IDS = ['uno-lite', 'tic-tac-toe'];
+/** Section headings for the hub, keyed by catalogue category. */
+const CATEGORY_LABELS: Record<string, string> = {
+  icebreaker: '💬 Icebreakers',
+  competitive: '🏆 Competitive',
+  quick: '⚡ Quick Play',
+};
 
 export default function GameZonePage() {
   const router = useRouter();
@@ -36,7 +40,14 @@ export default function GameZonePage() {
     icon: FEATURED_GAME.icon,
   };
 
-  const allGames = GRID_GAMES;
+  const playableGames = GAMES.filter((game) => game.playable);
+  const allGames = GAMES;
+
+  /** Catalogue categories, in catalogue order, so the hub cannot drift from it. */
+  const categories: string[] = [];
+  for (const game of allGames) {
+    if (!categories.includes(game.category)) categories.push(game.category);
+  }
 
   const howItWorks = [
     { step: '01', title: 'Pick a game', desc: 'Tap Quick Play for a random match, or choose a game from the grid above.', icon: '🎮' },
@@ -91,9 +102,11 @@ export default function GameZonePage() {
     router.push(`/game-zone/${gameId}`);
   };
 
+  /** Quick Play only ever picks a game that is actually launchable. */
   const handleQuickPlay = () => {
-    const pick = PLAYABLE_IDS[Math.floor(Math.random() * PLAYABLE_IDS.length)];
-    openGame(pick);
+    if (playableGames.length === 0) return;
+    const pick = playableGames[Math.floor(Math.random() * playableGames.length)];
+    openGame(pick.id);
   };
 
   const formatWinRate = (): string => {
@@ -126,7 +139,7 @@ export default function GameZonePage() {
     statLabel: { fontSize: '11px', color: '#B58A83', textTransform: 'uppercase' as const, marginTop: '4px', fontWeight: '600' },
 
     // Quick Play
-    quickPlayBtn: { margin: '0 20px 24px 20px', padding: '18px', borderRadius: '20px', background: 'linear-gradient(135deg, #7C3AED, #A855F7)', color: '#FFFFFF', fontSize: '16px', fontWeight: '800', border: 'none', cursor: 'pointer', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '10px', boxShadow: '0 10px 30px rgba(168, 85, 247, 0.4)' },
+    quickPlayBtn: { margin: '0 20px 24px 20px', padding: '18px', borderRadius: '20px', background: 'linear-gradient(135deg, #7C3AED, #A855F7)', color: '#FFFFFF', fontSize: '16px', fontWeight: '800', border: 'none', cursor: 'pointer', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '10px', boxShadow: '0 10px 30px rgba(168, 85, 247, 0.4)', textDecoration: 'none' },
 
     // Featured Game
     sectionTitle: { fontSize: '14px', fontWeight: '800', color: '#B58A83', textTransform: 'uppercase' as const, letterSpacing: '1px', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' },
@@ -137,11 +150,11 @@ export default function GameZonePage() {
     featuredDesc: { fontSize: '13px', color: '#B58A83', lineHeight: '1.5', marginBottom: '16px' },
     featuredBottom: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
     playerCount: { display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: '#10B981', fontWeight: '600' },
-    playNowBtn: { backgroundColor: '#A855F7', color: '#FFFFFF', padding: '10px 20px', borderRadius: '20px', fontSize: '14px', fontWeight: '700', border: 'none', cursor: 'pointer' },
+    playNowBtn: { backgroundColor: '#A855F7', color: '#FFFFFF', padding: '10px 20px', borderRadius: '20px', fontSize: '14px', fontWeight: '700', border: 'none', cursor: 'pointer', textDecoration: 'none', display: 'inline-block' },
 
     // All Games Grid
     grid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', margin: '0 20px 24px 20px' },
-    gameCard: { position: 'relative' as const, height: '180px', borderRadius: '20px', overflow: 'hidden', cursor: 'pointer' },
+    gameCard: { position: 'relative' as const, height: '180px', borderRadius: '20px', overflow: 'hidden', cursor: 'pointer', border: 'none', padding: 0, background: 'none', width: '100%', textAlign: 'left' as const, color: 'inherit' },
     gameCardImage: { width: '100%', height: '100%', objectFit: 'cover' as const },
     gameCardGradient: { position: 'absolute' as const, inset: 0, background: 'linear-gradient(to top, rgba(13,10,16,0.95) 0%, rgba(13,10,16,0.4) 60%, transparent 100%)' },
     gameCardContent: { position: 'absolute' as const, bottom: 0, left: 0, right: 0, padding: '16px' },
@@ -149,6 +162,7 @@ export default function GameZonePage() {
     gameStats: { display: 'flex', gap: '10px', fontSize: '11px', color: '#B58A83', fontWeight: '600' },
     gamePlayIcon: { position: 'absolute' as const, bottom: '16px', right: '16px', width: '36px', height: '36px', borderRadius: '50%', backgroundColor: 'rgba(255,255,255,0.2)', backdropFilter: 'blur(4px)', display: 'flex', justifyContent: 'center', alignItems: 'center', color: '#FFFFFF', border: '1px solid rgba(255,255,255,0.3)' },
     soonBadge: { position: 'absolute' as const, top: '12px', left: '12px', backgroundColor: 'rgba(13,10,16,0.85)', color: '#B58A83', fontSize: '10px', fontWeight: 800, padding: '4px 8px', borderRadius: '10px', letterSpacing: '0.5px' },
+    liveBadge: { position: 'absolute' as const, top: '12px', left: '12px', backgroundColor: 'rgba(16,185,129,0.9)', color: '#04120B', fontSize: '10px', fontWeight: 800, padding: '4px 8px', borderRadius: '10px', letterSpacing: '0.5px' },
 
     // How it works
     howItWorksCard: { margin: '0 20px 24px 20px', backgroundColor: '#1C1822', borderRadius: '24px', padding: '24px', border: '1px solid #29202D' },
@@ -169,7 +183,7 @@ export default function GameZonePage() {
       {/* Header */}
       <div style={styles.header}>
         <div style={styles.headerLeft}>
-          <button style={styles.backBtn} onClick={() => router.back()}>
+          <button style={styles.backBtn} onClick={() => router.back()} aria-label="Back">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
           </button>
           <div>
@@ -217,7 +231,7 @@ export default function GameZonePage() {
         </div>
       </div>
 
-      {/* Quick Play */}
+      {/* Quick Play — a random game from the catalogue that is actually playable. */}
       <button style={styles.quickPlayBtn} onClick={handleQuickPlay}>
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path></svg>
         Quick Play
@@ -235,32 +249,48 @@ export default function GameZonePage() {
             <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#10B981' }} />
             {featuredGame.players} playing
           </div>
-          <button style={styles.playNowBtn} onClick={() => openGame(FEATURED_GAME.id)}>▶ Play Now</button>
+          <Link href={`/game-zone/${FEATURED_GAME.id}`} style={styles.playNowBtn}>▶ Play Now</Link>
         </div>
       </div>
 
-      {/* All Games Grid */}
-      <div style={styles.sectionTitle}>🔥 All Games</div>
-      <div style={styles.grid}>
-        {allGames.map((game) => {
-          const playable = PLAYABLE_IDS.includes(game.id);
-          return (
-            <div key={game.id} style={styles.gameCard} onClick={() => openGame(game.id)}>
-              <img src={game.image} alt={game.title} style={styles.gameCardImage} />
-              <div style={styles.gameCardGradient} />
-              {!playable && <div style={styles.soonBadge}>SOON</div>}
-              <div style={styles.gameCardContent}>
-                <div style={styles.gameTitle}>{game.title}</div>
-                <div style={styles.gameStats}>
-                  <span>👥 {game.players}</span>
-                  <span>⏱ {game.duration}</span>
-                </div>
-              </div>
-              <div style={styles.gamePlayIcon}>▶</div>
+      {/* All Games, grouped by catalogue category */}
+      {categories.map((category) => {
+        const games = allGames.filter((game) => game.category === category);
+        if (games.length === 0) return null;
+
+        return (
+          <div key={category}>
+            <div style={styles.sectionTitle}>{CATEGORY_LABELS[category] ?? category}</div>
+            <div style={styles.grid}>
+              {games.map((game) => (
+                <button
+                  key={game.id}
+                  type="button"
+                  style={styles.gameCard}
+                  onClick={() => openGame(game.id)}
+                  aria-label={`Play ${game.title}`}
+                >
+                  <img src={game.image} alt={game.title} style={styles.gameCardImage} />
+                  <div style={styles.gameCardGradient} />
+                  {game.playable ? (
+                    <div style={styles.liveBadge}>PLAY</div>
+                  ) : (
+                    <div style={styles.soonBadge}>SOON</div>
+                  )}
+                  <div style={styles.gameCardContent}>
+                    <div style={styles.gameTitle}>{game.title}</div>
+                    <div style={styles.gameStats}>
+                      <span>👥 {game.players}</span>
+                      <span>⏱ {game.duration}</span>
+                    </div>
+                  </div>
+                  <div style={styles.gamePlayIcon}>▶</div>
+                </button>
+              ))}
             </div>
-          );
-        })}
-      </div>
+          </div>
+        );
+      })}
 
       {/* How it works */}
       <div style={styles.sectionTitle}>GETTING STARTED</div>

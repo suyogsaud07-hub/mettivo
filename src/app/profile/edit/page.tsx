@@ -13,6 +13,12 @@ import {
   type ProfileDraft,
 } from '@/lib/profile';
 import { MAX_PROMPT_ANSWER_LENGTH, loadCatalogue, type Catalogue } from '@/lib/catalogue';
+import {
+  FIELD_TO_STEP,
+  ONBOARDING_GENDERS,
+  ONBOARDING_TOTAL_STEPS,
+  validateOnboardingStep,
+} from '@/lib/onboarding-steps';
 
 const COUNTRIES = [
   "Afghanistan", "Albania", "Algeria", "Andorra", "Angola", "Argentina", "Armenia", "Australia", "Austria", "Azerbaijan",
@@ -112,19 +118,6 @@ interface FormState {
   prompts: Record<string, string>;
 }
 
-/** Maps a validation field back to the wizard step that owns it. */
-const FIELD_TO_STEP: Record<string, number> = {  displayName: 1,
-  birthDate: 3,
-  age: 3,
-  city: 4,
-  country: 4,
-  intention: 6,
-  interests: 9,
-  hobbies: 9,
-  bio: 14,
-  photos: 1,
-};
-
 export default function EditProfileWizardPage() {
   const router = useRouter();
   const [currentStep, setCurrentStep] = useState(1);
@@ -166,7 +159,16 @@ export default function EditProfileWizardPage() {
     prompts: {},
   });
 
-  const totalSteps = 15;
+  const totalSteps = ONBOARDING_TOTAL_STEPS;
+
+  /**
+   * The current step's contract, derived during render.
+   *
+   * Derived rather than stored so the moment a field changes the `Next →`
+   * button and the inline problem below re-render together — a member never
+   * sees a stale "valid" button.
+   */
+  const stepValidation = validateOnboardingStep(currentStep, formData);
 
   // M8: the curated interest catalogue. A load failure is non-fatal — the
   // wizard falls back to the built-in hobby list rather than blocking onboarding.
@@ -228,7 +230,11 @@ export default function EditProfileWizardPage() {
         if (!isMounted) return;
 
         if (loadError) {
+          // CONSTITUTION Article 2.7: surfaced, never swallowed. The member is
+          // told their saved details did not load, rather than being shown an
+          // innocent-looking empty form they might then overwrite.
           console.error('Failed to load profile:', loadError.message);
+          setError('We could not load your saved profile. Please try again.');
         } else if (data) {
           setFormData((prev) => ({
             ...prev,
@@ -277,7 +283,10 @@ export default function EditProfileWizardPage() {
           );
         }
       } catch (err) {
-        if (isMounted) console.error('Error loading profile:', err);
+        if (isMounted) {
+          console.error('Error loading profile:', err);
+          setError('We could not load your saved profile. Please try again.');
+        }
       } finally {
         if (isMounted) setLoading(false);
       }
@@ -362,26 +371,19 @@ export default function EditProfileWizardPage() {
 
   const handleNext = () => {
     setError(null);
-    if (currentStep === 1 && !formData.displayName.trim()) {
-      setError('Please provide a display name to continue.');
+
+    if (currentStep >= totalSteps) return;
+
+    // Belt and braces: the button is disabled while the step is invalid, but a
+    // programmatic click (or a future caller) must not be able to skip a
+    // blocking step, so the guard is re-run here rather than trusted to the UI.
+    const validation = validateOnboardingStep(currentStep, formData);
+    if (!validation.ok) {
+      setError(validation.problems[0]?.message ?? 'Please complete this step to continue.');
       return;
     }
-    // M7: the 18+ gate. Enforced at the step that collects the date of birth,
-    // so a member cannot walk to step 15 and only then be rejected.
-    if (currentStep === 3) {
-      const trueAge = calculateAge(formData.birthDate);
-      if (trueAge === null) {
-        setError('Please enter your date of birth to continue.');
-        return;
-      }
-      if (trueAge < MIN_AGE) {
-        setError(`Mettivo is for adults only. You must be ${MIN_AGE} or older to continue.`);
-        return;
-      }
-    }
-    if (currentStep < totalSteps) {
-      setCurrentStep((prev) => prev + 1);
-    }
+
+    setCurrentStep((prev) => prev + 1);
   };
 
   const handleBack = () => {
@@ -470,6 +472,14 @@ export default function EditProfileWizardPage() {
 
   const progressPercent = Math.round((currentStep / totalSteps) * 100);
 
+  // Steps 1..14 own an inline blocking message. Step 15's "Next" is the submit
+  // button, which reports through `handleSubmit` instead.
+  const primaryProblem =
+    stepValidation.problems.length > 0 ? stepValidation.problems[0].message : null;
+  const showStepError = primaryProblem !== null && currentStep < totalSteps;
+  const showRecommended =
+    currentStep < totalSteps && stepValidation.missingRecommended.length > 0;
+
   const styles = {
     container: { minHeight: '100vh', backgroundColor: '#0D0A10', color: '#F2E9E4', fontFamily: 'system-ui', padding: '20px', display: 'flex', flexDirection: 'column' as const, justifyContent: 'space-between', boxSizing: 'border-box' as const },
     header: { marginBottom: '20px' },
@@ -492,6 +502,7 @@ export default function EditProfileWizardPage() {
     nextBtn: { flex: 2, padding: '16px', borderRadius: '30px', backgroundColor: '#D4B18A', color: '#17121C', border: 'none', fontWeight: '700', cursor: 'pointer' },
     submitBtn: { flex: 2, padding: '16px', borderRadius: '30px', backgroundColor: '#34D399', color: '#0D0A10', border: 'none', fontWeight: '800', cursor: 'pointer' },
     errorBox: { backgroundColor: '#3B1220', border: '1px solid #7F1D2E', color: '#FCA5B5', padding: '12px 16px', borderRadius: '12px', fontSize: '13px' },
+    recommendedBox: { backgroundColor: '#1C1822', border: '1px dashed #4A1828', color: '#B58A83', padding: '10px 14px', borderRadius: '12px', fontSize: '12px', marginTop: '8px' },
     summaryRow: { display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #29202D', padding: '10px 0', fontSize: '13px' },
   };
 
@@ -508,7 +519,24 @@ export default function EditProfileWizardPage() {
         </div>
       </div>
 
-      {error && <div style={styles.errorBox}>{error}</div>}
+      {showStepError && (
+        <div role="alert" data-testid="step-error" style={styles.errorBox}>
+          {primaryProblem}
+        </div>
+      )}
+
+      {showRecommended && (
+        <div data-testid="step-recommended" style={styles.recommendedBox}>
+          Optional: {stepValidation.missingRecommended.join(', ')} — you can continue without{' '}
+          {stepValidation.missingRecommended.length === 1 ? 'it' : 'them'}.
+        </div>
+      )}
+
+      {error && !showStepError && (
+        <div role="alert" style={styles.errorBox}>
+          {error}
+        </div>
+      )}
 
       {/* Step Content */}
       <div style={styles.contentCard}>
@@ -611,7 +639,7 @@ export default function EditProfileWizardPage() {
             <div style={{ marginBottom: '16px' }}>
               <label style={styles.label}>Gender</label>
               <div style={styles.pillContainer}>
-                {['Woman', 'Man', 'Nonbinary'].map((g) => (
+                {ONBOARDING_GENDERS.map((g) => (
                   <button key={g} type="button" style={{ ...styles.pill, ...(formData.gender === g ? styles.pillActive : {}) }} onClick={() => setFormData({ ...formData, gender: g })}>
                     {g}
                   </button>
@@ -1035,7 +1063,7 @@ export default function EditProfileWizardPage() {
         )}
 
         {currentStep < totalSteps ? (
-          <button type="button" style={styles.nextBtn} onClick={handleNext}>
+          <button type="button" style={styles.nextBtn} onClick={handleNext} disabled={!stepValidation.ok}>
             Next →
           </button>
         ) : (

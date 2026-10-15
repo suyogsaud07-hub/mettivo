@@ -7,6 +7,16 @@ import {
   validateProfileDraft,
   type ProfileDraft,
 } from '@/lib/profile';
+import {
+  FIELD_TO_STEP,
+  MAX_PHOTOS,
+  MIN_PHOTOS,
+  ONBOARDING_GENDERS,
+  ONBOARDING_STEPS,
+  ONBOARDING_TOTAL_STEPS,
+  validateOnboardingStep,
+  type OnboardingState,
+} from '@/lib/onboarding-steps';
 
 /**
  * M7 — profile validation, and the 18+ gate in particular.
@@ -118,5 +128,375 @@ describe('M7 — draft validation', () => {
         expect(result.payload).toEqual({});
       }
     }
+  });
+});
+
+/**
+ * The onboarding step controller.
+ *
+ * The wizard used to accept `Next` on any step and only reject the member at
+ * submit time, so steps 4–14 could be walked empty. `validateOnboardingStep` is
+ * now the single source of truth for "does this step block?"; these tests pin
+ * every rule, including the character-exact photo message the browser suite
+ * matches on.
+ */
+
+const blankState = (): OnboardingState => ({
+  displayName: '',
+  photos: [],
+  gender: '',
+  birthDate: '',
+  country: '',
+  city: '',
+  height: '',
+  physicalAttributes: [],
+  intention: '',
+  lookingFor: [],
+  sexualOrientation: '',
+  mbti: '',
+  prompts: {},
+  interests: [],
+  hobbies: [],
+  pets: [],
+  smoking: '',
+  drinking: '',
+  exercise: '',
+  education: '',
+  profession: '',
+  languagesSpoken: [],
+  bio: '',
+});
+
+const completeState = (overrides: Partial<OnboardingState> = {}): OnboardingState => ({
+  displayName: 'Sujata',
+  photos: ['a', 'b', 'c', 'd'],
+  gender: 'Woman',
+  birthDate: '1998-05-04',
+  country: 'Nepal',
+  city: 'Kathmandu',
+  height: '170 cm',
+  physicalAttributes: ['Slim'],
+  intention: 'dating',
+  lookingFor: ['Women'],
+  sexualOrientation: 'Straight',
+  mbti: 'INFJ',
+  prompts: { 'simple-pleasures': 'Coffee at sunrise' },
+  interests: ['hiking'],
+  hobbies: [],
+  pets: ['Dog lover'],
+  smoking: 'Non-smoker',
+  drinking: 'Social drinker',
+  exercise: 'A few times a week',
+  education: "Bachelor's Degree",
+  profession: 'Engineer',
+  languagesSpoken: ['English'],
+  bio: 'Coffee, mountains and long conversations.',
+  ...overrides,
+});
+
+/** Steps that block locally: 1..14. Step 15 is the submit screen. */
+const BLOCKING_STEPS = ONBOARDING_STEPS.filter(
+  (spec) => spec.step < ONBOARDING_TOTAL_STEPS
+);
+
+describe('onboarding — the step registry', () => {
+  it('registers all fifteen steps, once each, in order', () => {
+    expect(ONBOARDING_TOTAL_STEPS).toBe(15);
+    expect(ONBOARDING_STEPS).toHaveLength(ONBOARDING_TOTAL_STEPS);
+    expect(ONBOARDING_STEPS.map((spec) => spec.step)).toEqual(
+      Array.from({ length: ONBOARDING_TOTAL_STEPS }, (_, index) => index + 1)
+    );
+    expect(new Set(ONBOARDING_STEPS.map((spec) => spec.id)).size).toBe(
+      ONBOARDING_TOTAL_STEPS
+    );
+  });
+
+  it('maps every registered field to the step that owns it', () => {
+    for (const spec of ONBOARDING_STEPS) {
+      for (const field of [...spec.required, ...spec.recommended]) {
+        expect(FIELD_TO_STEP[field.key], `${field.key} -> step ${spec.step}`).toBe(
+          spec.step
+        );
+      }
+    }
+  });
+
+  it('maps the fields the review screen jumps back to', () => {
+    // `handleSubmit` uses this map to send the member back to the offending
+    // step rather than failing on the review screen.
+    const fields = [
+      'displayName',
+      'photos',
+      'gender',
+      'birthDate',
+      'age',
+      'country',
+      'city',
+      'intention',
+      'lookingFor',
+      'mbti',
+      'interests',
+      'hobbies',
+      'bio',
+    ];
+    for (const field of fields) {
+      const step = FIELD_TO_STEP[field];
+      expect(step, `${field} must map to a real step`).toBeGreaterThanOrEqual(1);
+      expect(step).toBeLessThanOrEqual(ONBOARDING_TOTAL_STEPS);
+    }
+  });
+
+  it('re-exports the photo bounds rather than redefining them', () => {
+    expect(MIN_PHOTOS).toBe(4);
+    expect(MAX_PHOTOS).toBe(6);
+    expect(MIN_PHOTOS).toBeLessThanOrEqual(MAX_PHOTOS);
+  });
+});
+
+describe('onboarding — every step blocks when blank, passes when filled', () => {
+  it('blocks all of steps 1..14 for a blank state', () => {
+    for (const spec of BLOCKING_STEPS) {
+      const result = validateOnboardingStep(spec.step, blankState());
+      expect(result.ok, `step ${spec.step} (${spec.id}) must block`).toBe(false);
+      expect(
+        result.problems.length,
+        `step ${spec.step} (${spec.id}) must explain why`
+      ).toBeGreaterThan(0);
+      expect(result.problems[0].message.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('passes all of steps 1..14 for a complete state', () => {
+    for (const spec of BLOCKING_STEPS) {
+      const result = validateOnboardingStep(spec.step, completeState());
+      expect(
+        result.ok,
+        `step ${spec.step} (${spec.id}): ${result.problems[0]?.message ?? ''}`
+      ).toBe(true);
+      expect(result.problems).toEqual([]);
+    }
+  });
+
+  it('reports only problems owned by the step being validated', () => {
+    for (const spec of BLOCKING_STEPS) {
+      for (const problem of validateOnboardingStep(spec.step, blankState()).problems) {
+        expect(
+          FIELD_TO_STEP[problem.field],
+          `step ${spec.step} reported ${problem.field}`
+        ).toBe(spec.step);
+      }
+    }
+  });
+
+  it('tolerates the extra fields the page state carries', () => {
+    // `FormState` additionally holds `age` and `personalityTraits`; the
+    // structural contract ignores them with no cast and no mapping layer. `tsc`
+    // proves the same assignment in src/app/profile/edit/page.tsx.
+    const pageLikeState = { ...completeState(), age: 28, personalityTraits: ['calm'] };
+    expect(validateOnboardingStep(1, pageLikeState).ok).toBe(true);
+  });
+
+  it('imposes no local requirement outside the registry', () => {
+    expect(validateOnboardingStep(0, blankState()).ok).toBe(true);
+    expect(validateOnboardingStep(ONBOARDING_TOTAL_STEPS + 1, blankState()).ok).toBe(true);
+  });
+});
+
+describe('onboarding — step 1, the photo minimum', () => {
+  it('blocks with the character-exact photo message and a live count', () => {
+    for (const photos of [[], ['a'], ['a', 'b', 'c']]) {
+      const result = validateOnboardingStep(1, completeState({ photos }));
+      expect(result.ok).toBe(false);
+      expect(result.problems[0].message).toBe(
+        `Please upload at least 4 profile photos to continue (${photos.length}/4 uploaded)`
+      );
+    }
+  });
+
+  it('does not count blank or whitespace-only photo entries', () => {
+    const result = validateOnboardingStep(
+      1,
+      completeState({ photos: ['a', 'b', 'c', '   '] })
+    );
+    expect(result.ok).toBe(false);
+    expect(result.problems[0].message).toBe(
+      'Please upload at least 4 profile photos to continue (3/4 uploaded)'
+    );
+  });
+
+  it('accepts exactly the minimum and refuses one fewer', () => {
+    expect(validateOnboardingStep(1, completeState()).ok).toBe(true);
+    expect(validateOnboardingStep(1, completeState({ photos: ['a', 'b', 'c'] })).ok).toBe(
+      false
+    );
+  });
+
+  it('reports the missing display name before the missing photos', () => {
+    const result = validateOnboardingStep(1, blankState());
+    expect(result.problems.map((problem) => problem.field)).toEqual([
+      'displayName',
+      'photos',
+    ]);
+    expect(result.problems[0].message).toBe('Please provide a display name to continue.');
+  });
+
+  it('keeps the photo minimum out of the full-draft guard', () => {
+    // The four-photo rule is onboarding-flow only. `validateProfileDraft` has no
+    // minimum (the database caps at MAX_PHOTOS), which is exactly why step 15
+    // delegates to it and why step 1 owns the rule.
+    expect(validateProfileDraft(draft({ photos: [] }), NOW).ok).toBe(true);
+    expect(validateOnboardingStep(1, completeState({ photos: [] })).ok).toBe(false);
+  });
+});
+
+describe('onboarding — step-specific guards', () => {
+  it('step 2 accepts only the declared gender identities', () => {
+    for (const gender of ONBOARDING_GENDERS) {
+      expect(validateOnboardingStep(2, completeState({ gender })).ok).toBe(true);
+    }
+    expect(validateOnboardingStep(2, completeState({ gender: 'Alien' })).ok).toBe(false);
+    expect(validateOnboardingStep(2, completeState({ gender: '   ' })).ok).toBe(false);
+  });
+
+  it('step 3 refuses a minor with the existing 18+ message, never clamping', () => {
+    const minor = validateOnboardingStep(3, completeState({ birthDate: '2015-01-01' }));
+    expect(minor.ok).toBe(false);
+    expect(minor.problems[0].message).toBe(
+      `Mettivo is for adults only. You must be ${MIN_AGE} or older to continue.`
+    );
+
+    expect(
+      validateOnboardingStep(3, completeState({ birthDate: '' })).problems[0].field
+    ).toBe('birthDate');
+    expect(validateOnboardingStep(3, completeState({ birthDate: 'not-a-date' })).ok).toBe(
+      false
+    );
+    expect(validateOnboardingStep(3, completeState()).ok).toBe(true);
+  });
+
+  it('step 4 names the country requirement exactly and still needs a city', () => {
+    const result = validateOnboardingStep(4, completeState({ country: '' }));
+    expect(result.ok).toBe(false);
+    expect(result.problems[0].message).toBe('Please select your country to continue.');
+
+    expect(
+      validateOnboardingStep(4, { ...completeState(), city: '  ' }).problems.map(
+        (problem) => problem.field
+      )
+    ).toContain('city');
+    expect(validateOnboardingStep(4, completeState()).ok).toBe(true);
+  });
+
+  it('step 8 requires both halves of every prompt', () => {
+    const halfAnswered = validateOnboardingStep(
+      8,
+      completeState({ prompts: { 'simple-pleasures': '   ' } })
+    );
+    expect(halfAnswered.ok).toBe(false);
+    expect(halfAnswered.problems.map((problem) => problem.field)).toContain('prompts');
+
+    const noQuestion = validateOnboardingStep(
+      8,
+      completeState({ prompts: { '': 'An answer' } })
+    );
+    expect(noQuestion.ok).toBe(false);
+    expect(noQuestion.problems.map((problem) => problem.field)).toContain('prompts');
+
+    expect(validateOnboardingStep(8, completeState({ prompts: {} })).ok).toBe(true);
+  });
+
+  it('step 9 is satisfied by interests or hobbies, not necessarily both', () => {
+    expect(
+      validateOnboardingStep(9, completeState({ interests: ['hiking'], hobbies: [] })).ok
+    ).toBe(true);
+    expect(
+      validateOnboardingStep(9, completeState({ interests: [], hobbies: ['Music'] })).ok
+    ).toBe(true);
+    expect(
+      validateOnboardingStep(9, completeState({ interests: [], hobbies: [] })).ok
+    ).toBe(false);
+  });
+
+  it('step 11 blocks on smoking, drinking and exercise independently', () => {
+    const cases = [
+      { field: 'smoking', state: completeState({ smoking: '' }) },
+      { field: 'drinking', state: completeState({ drinking: '' }) },
+      { field: 'exercise', state: completeState({ exercise: '' }) },
+    ];
+    for (const { field, state } of cases) {
+      const result = validateOnboardingStep(11, state);
+      expect(result.ok, `${field} must block`).toBe(false);
+      expect(result.problems.map((problem) => problem.field)).toContain(field);
+    }
+    expect(validateOnboardingStep(11, completeState()).ok).toBe(true);
+  });
+
+  it('step 12 needs both education and profession', () => {
+    expect(
+      validateOnboardingStep(12, completeState({ education: '' })).problems.map(
+        (problem) => problem.field
+      )
+    ).toContain('education');
+    expect(
+      validateOnboardingStep(12, completeState({ profession: '  ' })).problems.map(
+        (problem) => problem.field
+      )
+    ).toContain('profession');
+    expect(validateOnboardingStep(12, completeState()).ok).toBe(true);
+  });
+});
+
+describe('onboarding — recommended fields never block', () => {
+  it('hints the optional field on steps 5 and 7 without failing the step', () => {
+    const physical = validateOnboardingStep(5, completeState({ physicalAttributes: [] }));
+    expect(physical.ok).toBe(true);
+    expect(physical.missingRecommended).toEqual(['Physical attributes']);
+
+    const orientation = validateOnboardingStep(7, completeState({ sexualOrientation: '' }));
+    expect(orientation.ok).toBe(true);
+    expect(orientation.missingRecommended).toEqual(['Sexual orientation']);
+  });
+
+  it('hints nothing once the optional field is filled', () => {
+    expect(validateOnboardingStep(5, completeState()).missingRecommended).toEqual([]);
+    expect(validateOnboardingStep(7, completeState()).missingRecommended).toEqual([]);
+  });
+
+  it('hints nothing for steps with no recommended field', () => {
+    for (const spec of BLOCKING_STEPS) {
+      if (spec.recommended.length === 0) {
+        expect(
+          validateOnboardingStep(spec.step, completeState()).missingRecommended
+        ).toEqual([]);
+      }
+    }
+  });
+});
+
+describe('onboarding — step 15 delegates to the full-draft guard', () => {
+  it('blocks an incomplete review state with the draft guard problems', () => {
+    const result = validateOnboardingStep(ONBOARDING_TOTAL_STEPS, blankState());
+    expect(result.ok).toBe(false);
+    const fields = result.problems.map((problem) => problem.field);
+    expect(fields).toContain('displayName');
+    expect(fields).toContain('birthDate');
+  });
+
+  it('uses the draft guard 18+ message, proving the delegation', () => {
+    const minor = validateOnboardingStep(
+      ONBOARDING_TOTAL_STEPS,
+      completeState({ birthDate: '2015-01-01' })
+    );
+    expect(minor.ok).toBe(false);
+    expect(minor.problems).toContainEqual({
+      field: 'birthDate',
+      message: `Mettivo is for adults only. You must be ${MIN_AGE} or older.`,
+    });
+  });
+
+  it('passes the review step for a complete adult profile', () => {
+    const result = validateOnboardingStep(ONBOARDING_TOTAL_STEPS, completeState());
+    expect(result.ok).toBe(true);
+    expect(result.problems).toEqual([]);
   });
 });
