@@ -1,9 +1,22 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { supabase } from '@/lib/supabase'; 
+import { supabase } from '@/lib/supabase';
+import { MAX_BIO_LENGTH, MIN_AGE } from '@/lib/profile';
+import { ONBOARDING_GENDERS } from '@/lib/onboarding-steps';
+import {
+  PROFILE_DRINKING_OPTIONS,
+  PROFILE_INTENTION_OPTIONS,
+  PROFILE_LOOKING_FOR_OPTIONS,
+  PROFILE_PETS_OPTIONS,
+  PROFILE_SMOKING_OPTIONS,
+  intentionLabel,
+} from '@/lib/profile-options';
 import MobileNav from '../../components/layout/MobileNav';
+
+/** The oldest age the dashboard will accept when a member edits their age. */
+const MAX_AGE = 120;
 
 interface Profile {
   id: string;
@@ -14,6 +27,7 @@ interface Profile {
   country: string;
   avatar_url: string;
   photos: string[];
+  bio: string;
   intention: string;
   looking_for: string[];
   hobbies: string[];
@@ -29,6 +43,70 @@ interface Profile {
 }
 
 /**
+ * The subset of `Profile` a member can edit from this screen.
+ *
+ * Email and phone are deliberately absent: they live on the auth user, not the
+ * `profiles` row, and are saved through `supabase.auth.updateUser`.
+ */
+type EditableKey =
+  | 'bio'
+  | 'age'
+  | 'gender'
+  | 'looking_for'
+  | 'intention'
+  | 'drinking'
+  | 'smoking'
+  | 'religion'
+  | 'politics'
+  | 'pets'
+  | 'personality'
+  | 'email'
+  | 'phone';
+
+/** An update payload made only of editable columns. */
+type ProfilePatch = Partial<
+  Pick<
+    Profile,
+    | 'bio'
+    | 'age'
+    | 'gender'
+    | 'looking_for'
+    | 'intention'
+    | 'drinking'
+    | 'smoking'
+    | 'religion'
+    | 'politics'
+    | 'pets'
+    | 'personality'
+  >
+>;
+
+type FieldKind = 'textarea' | 'number' | 'text' | 'tags' | 'select' | 'multi' | 'email' | 'phone';
+
+interface FieldConfig {
+  title: string;
+  hint: string;
+  kind: FieldKind;
+}
+
+/** How each editable field is presented in the editor sheet. */
+const EDITOR_FIELDS: Record<EditableKey, FieldConfig> = {
+  bio: { title: 'Bio', hint: 'Tell people a little about yourself.', kind: 'textarea' },
+  age: { title: 'Age', hint: `Between ${MIN_AGE} and ${MAX_AGE}.`, kind: 'number' },
+  gender: { title: 'Gender', hint: 'How you identify.', kind: 'select' },
+  looking_for: { title: 'Looking for', hint: 'Who you would like to meet.', kind: 'multi' },
+  intention: { title: 'Intention', hint: 'What you are here for.', kind: 'select' },
+  drinking: { title: 'Drinking', hint: 'Your drinking habit.', kind: 'select' },
+  smoking: { title: 'Smoking', hint: 'Your smoking habit.', kind: 'select' },
+  religion: { title: 'Religion', hint: 'Optional — leave blank to hide.', kind: 'text' },
+  politics: { title: 'Politics', hint: 'Optional — leave blank to hide.', kind: 'text' },
+  pets: { title: 'Pets', hint: 'How you feel about animals.', kind: 'multi' },
+  personality: { title: 'Personality', hint: 'Separate traits with commas.', kind: 'tags' },
+  email: { title: 'Email', hint: 'We will email you a link to confirm.', kind: 'email' },
+  phone: { title: 'Phone', hint: 'We will text you a code to verify.', kind: 'phone' },
+};
+
+/**
  * Columns this page may read.
  *
  * An explicit allow-list, not `select *`: `birth_date` carries a column-level
@@ -41,15 +119,34 @@ interface Profile {
  * inference collapses to an error type.
  */
 const PROFILE_COLUMNS =
-  'id, display_name, age, gender, city, country, avatar_url, photos, intention, looking_for, hobbies, pets, personality, religion, politics, drinking, smoking' as const;
+  'id, display_name, age, gender, city, country, avatar_url, photos, bio, intention, looking_for, hobbies, pets, personality, religion, politics, drinking, smoking' as const;
 
 export default function ProfileDashboardPage() {
   const router = useRouter();
   const [profile, setProfile] = useState<Profile | null>(null);
   const [userEmail, setUserEmail] = useState<string>('');
+  const [phone, setPhone] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'about' | 'gallery'>('about');
+
+  // Inline editor state. `editor` is the field being edited, or null when the
+  // sheet is closed. `textDraft` backs the single-value inputs, `listDraft` the
+  // multi-select pills, and `tagDraft` the comma-separated text field.
+  const [editor, setEditor] = useState<EditableKey | null>(null);
+  const [textDraft, setTextDraft] = useState('');
+  const [listDraft, setListDraft] = useState<string[]>([]);
+  const [tagDraft, setTagDraft] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [editorError, setEditorError] = useState<string | null>(null);
+
+  // Phone verification is a two-step flow (request a code, then confirm it), so
+  // the number being verified is held here while the OTP screen is shown.
+  const [phoneStage, setPhoneStage] = useState<'enter' | 'verify'>('enter');
+  const [pendingPhone, setPendingPhone] = useState('');
+
+  const [toast, setToast] = useState<{ message: string; tone: 'success' | 'error' } | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -64,6 +161,7 @@ export default function ProfileDashboardPage() {
           return;
         }
         setUserEmail(user.email || 'Not set');
+        setPhone(user.phone || '');
 
         // maybeSingle(): "zero rows" is a normal outcome for a user who has not
         // onboarded yet, not a failed load.
@@ -109,13 +207,255 @@ export default function ProfileDashboardPage() {
     }
   }, [loading, loadError, profile, router]);
 
+  // Clear the toast timer if the page unmounts mid-countdown, so a dismissed
+  // toast cannot set state on an unmounted component.
+  useEffect(() => {
+    return () => {
+      if (toastTimer.current) clearTimeout(toastTimer.current);
+    };
+  }, []);
+
+  // Escape closes the editor sheet, but never mid-save.
+  useEffect(() => {
+    if (!editor) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !saving) {
+        setEditor(null);
+        setEditorError(null);
+        setPhoneStage('enter');
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [editor, saving]);
+
+  const showToast = (message: string, tone: 'success' | 'error' = 'success') => {
+    setToast({ message, tone });
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 3000);
+  };
+
+  const openEditor = (key: EditableKey) => {
+    if (!profile) return;
+    setEditorError(null);
+    setSaving(false);
+    setEditor(key);
+
+    switch (key) {
+      case 'bio': setTextDraft(profile.bio ?? ''); break;
+      case 'age': setTextDraft(profile.age ? String(profile.age) : ''); break;
+      case 'gender': setTextDraft(profile.gender ?? ''); break;
+      case 'intention': setTextDraft(profile.intention ?? ''); break;
+      case 'drinking': setTextDraft(profile.drinking ?? ''); break;
+      case 'smoking': setTextDraft(profile.smoking ?? ''); break;
+      case 'religion': setTextDraft(profile.religion ?? ''); break;
+      case 'politics': setTextDraft(profile.politics ?? ''); break;
+      case 'looking_for': setListDraft([...(profile.looking_for ?? [])]); break;
+      case 'pets': setListDraft([...(profile.pets ?? [])]); break;
+      case 'personality': setTagDraft((profile.personality ?? []).join(', ')); break;
+      case 'email': setTextDraft(userEmail); break;
+      case 'phone': setTextDraft(''); setPhoneStage('enter'); break;
+    }
+  };
+
+  const closeEditor = () => {
+    setEditor(null);
+    setEditorError(null);
+    setPhoneStage('enter');
+  };
+
+  const toggleListDraft = (value: string) => {
+    setListDraft((prev) =>
+      prev.includes(value) ? prev.filter((entry) => entry !== value) : [...prev, value]
+    );
+  };
+
+  /**
+   * Persists a profile patch and mirrors it into local state.
+   *
+   * `.select('id')` is appended on purpose: with RLS, a denied UPDATE returns
+   * no error but affects zero rows, so without the echoed row a silent failure
+   * would look like success. A zero-row result is treated as a failure.
+   */
+  const persistProfile = async (patch: ProfilePatch): Promise<string | null> => {
+    if (!profile) return 'Your profile is not loaded yet.';
+
+    const { data, error } = await supabase
+      .from('profiles')
+      .update(patch)
+      .eq('id', profile.id)
+      .select('id');
+
+    if (error) {
+      console.error('[profile] update failed:', error.message);
+      return `We could not save that: ${error.message}`;
+    }
+
+    if (!data || data.length === 0) {
+      return 'We could not save that change. Please try again.';
+    }
+
+    setProfile((prev) => (prev ? { ...prev, ...patch } : prev));
+    return null;
+  };
+
+  const handleSave = async () => {
+    if (!profile || !editor) return;
+    setEditorError(null);
+    setSaving(true);
+
+    try {
+      switch (editor) {
+        case 'bio': {
+          const value = textDraft.trim();
+          if (value.length > MAX_BIO_LENGTH) {
+            setEditorError(`Your bio must be ${MAX_BIO_LENGTH} characters or fewer.`);
+            return;
+          }
+          const failure = await persistProfile({ bio: value });
+          if (failure) { setEditorError(failure); return; }
+          showToast('Bio updated');
+          closeEditor();
+          break;
+        }
+
+        case 'age': {
+          const value = Number.parseInt(textDraft, 10);
+          if (!Number.isFinite(value) || value < MIN_AGE || value > MAX_AGE) {
+            setEditorError(`Enter an age between ${MIN_AGE} and ${MAX_AGE}.`);
+            return;
+          }
+          const failure = await persistProfile({ age: value });
+          if (failure) { setEditorError(failure); return; }
+          showToast('Age updated');
+          closeEditor();
+          break;
+        }
+
+        case 'gender': {
+          const failure = await persistProfile({ gender: textDraft.trim() });
+          if (failure) { setEditorError(failure); return; }
+          showToast('Gender updated');
+          closeEditor();
+          break;
+        }
+
+        case 'intention': {
+          const failure = await persistProfile({ intention: textDraft.trim() });
+          if (failure) { setEditorError(failure); return; }
+          showToast('Intention updated');
+          closeEditor();
+          break;
+        }
+
+        case 'drinking': {
+          const failure = await persistProfile({ drinking: textDraft.trim() });
+          if (failure) { setEditorError(failure); return; }
+          showToast('Drinking updated');
+          closeEditor();
+          break;
+        }
+
+        case 'smoking': {
+          const failure = await persistProfile({ smoking: textDraft.trim() });
+          if (failure) { setEditorError(failure); return; }
+          showToast('Smoking updated');
+          closeEditor();
+          break;
+        }
+
+        case 'religion': {
+          const failure = await persistProfile({ religion: textDraft.trim() });
+          if (failure) { setEditorError(failure); return; }
+          showToast('Religion updated');
+          closeEditor();
+          break;
+        }
+
+        case 'politics': {
+          const failure = await persistProfile({ politics: textDraft.trim() });
+          if (failure) { setEditorError(failure); return; }
+          showToast('Politics updated');
+          closeEditor();
+          break;
+        }
+
+        case 'looking_for': {
+          const failure = await persistProfile({ looking_for: [...listDraft] });
+          if (failure) { setEditorError(failure); return; }
+          showToast('Preferences updated');
+          closeEditor();
+          break;
+        }
+
+        case 'pets': {
+          const failure = await persistProfile({ pets: [...listDraft] });
+          if (failure) { setEditorError(failure); return; }
+          showToast('Pets updated');
+          closeEditor();
+          break;
+        }
+
+        case 'personality': {
+          const value = tagDraft
+            .split(',')
+            .map((entry) => entry.trim())
+            .filter((entry) => entry.length > 0);
+          const failure = await persistProfile({ personality: value });
+          if (failure) { setEditorError(failure); return; }
+          showToast('Personality updated');
+          closeEditor();
+          break;
+        }
+
+        case 'email': {
+          const value = textDraft.trim();
+          if (!value) { setEditorError('Enter an email address.'); return; }
+          const { error } = await supabase.auth.updateUser({ email: value });
+          if (error) { setEditorError(error.message); return; }
+          showToast(`Confirmation link sent to ${value}.`);
+          closeEditor();
+          break;
+        }
+
+        case 'phone': {
+          if (phoneStage === 'enter') {
+            const value = textDraft.trim();
+            if (!value) { setEditorError('Enter a phone number with country code.'); return; }
+            const { error } = await supabase.auth.updateUser({ phone: value });
+            if (error) { setEditorError(error.message); return; }
+            setPendingPhone(value);
+            setPhoneStage('verify');
+            setTextDraft('');
+            showToast(`We sent a code to ${value}.`);
+          } else {
+            const token = textDraft.trim();
+            if (!token) { setEditorError('Enter the code we sent you.'); return; }
+            const { error } = await supabase.auth.verifyOtp({
+              phone: pendingPhone,
+              token,
+              type: 'phone_change',
+            });
+            if (error) { setEditorError(error.message); return; }
+            setPhone(pendingPhone);
+            showToast('Phone number verified');
+            closeEditor();
+          }
+          break;
+        }
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const calculateCompletion = () => {
     if (!profile) return 0;
     const fields = [
-      profile.display_name, profile.age, profile.gender, profile.city, 
-      profile.country, profile.avatar_url, profile.intention, 
-      profile.looking_for?.length, profile.hobbies?.length, 
-      profile.pets?.length, profile.personality?.length, 
+      profile.display_name, profile.age, profile.gender, profile.city,
+      profile.country, profile.avatar_url, profile.bio, profile.intention,
+      profile.looking_for?.length, profile.hobbies?.length,
+      profile.pets?.length, profile.personality?.length,
       profile.religion, profile.politics, profile.drinking, profile.smoking
     ];
     const filledFields = fields.filter(field => field !== null && field !== undefined && field !== '' && field !== 0).length;
@@ -183,16 +523,266 @@ export default function ProfileDashboardPage() {
     sectionTitle: { fontSize: '16px', fontWeight: '700', color: '#F2E9E4' },
     infoRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', borderBottom: '1px solid #29202D' },
     infoLabel: { display: 'flex', alignItems: 'center', gap: '10px', fontSize: '14px', color: '#B58A83', fontWeight: '500' },
-    infoValue: { fontSize: '14px', color: '#F2E9E4', fontWeight: '600', textAlign: 'right' as const, maxWidth: '60%' },
+    infoValueButton: { display: 'flex', alignItems: 'center', gap: '8px', background: 'none', border: 'none', padding: '4px', margin: 0, cursor: 'pointer', font: 'inherit', textAlign: 'right' as const, maxWidth: '64%' },
+    infoValue: { fontSize: '14px', color: '#F2E9E4', fontWeight: '600', textAlign: 'right' as const, wordBreak: 'break-word' as const },
+    editIcon: { fontSize: '12px', opacity: 0.6, flexShrink: 0 },
+    editHint: { fontSize: '12px', color: '#B58A83', marginTop: '-8px', marginBottom: '16px' },
     galleryGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' },
     galleryImage: { width: '100%', aspectRatio: '1/1', borderRadius: '16px', objectFit: 'cover' as const, backgroundColor: '#29202D', border: '1px solid #4A1828' },
-    galleryEmpty: { width: '100%', aspectRatio: '1/1', borderRadius: '16px', backgroundColor: '#29202D', border: '2px dashed #4A1828', display: 'flex', justifyContent: 'center', alignItems: 'center', color: '#B58A83', fontSize: '24px' }
+    galleryEmpty: { width: '100%', aspectRatio: '1/1', borderRadius: '16px', backgroundColor: '#29202D', border: '2px dashed #4A1828', display: 'flex', justifyContent: 'center', alignItems: 'center', color: '#B58A83', fontSize: '24px' },
+    overlay: { position: 'fixed' as const, inset: 0, backgroundColor: 'rgba(8, 6, 10, 0.72)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 100, padding: '16px' },
+    modal: { width: '100%', maxWidth: '440px', backgroundColor: '#211A28', borderRadius: '24px', padding: '24px', border: '1px solid #34283F', marginBottom: '16px', maxHeight: '80vh', overflowY: 'auto' as const },
+    modalTitle: { fontSize: '18px', fontWeight: 700, color: '#F2E9E4', marginBottom: '4px' },
+    modalSubtitle: { fontSize: '13px', color: '#B58A83', marginBottom: '18px' },
+    modalInput: { width: '100%', backgroundColor: '#131017', border: '1px solid #34283F', borderRadius: '14px', padding: '14px', color: '#F2E9E4', fontSize: '15px', outline: 'none', boxSizing: 'border-box' as const },
+    modalTextarea: { width: '100%', backgroundColor: '#131017', border: '1px solid #34283F', borderRadius: '14px', padding: '14px', color: '#F2E9E4', fontSize: '15px', outline: 'none', boxSizing: 'border-box' as const, minHeight: '120px', resize: 'vertical' as const, fontFamily: 'inherit' },
+    optionWrap: { display: 'flex', flexWrap: 'wrap' as const, gap: '10px' },
+    optionPill: { padding: '10px 16px', borderRadius: '20px', border: '1px solid #34283F', backgroundColor: '#131017', color: '#D8B38A', fontSize: '13px', fontWeight: 600, cursor: 'pointer' },
+    optionPillActive: { backgroundColor: '#D8B38A', color: '#131017', border: '1px solid #D8B38A' },
+    modalActions: { display: 'flex', gap: '12px', marginTop: '20px' },
+    modalCancel: { flex: 1, padding: '14px', borderRadius: '16px', border: '1px solid #34283F', backgroundColor: 'transparent', color: '#B58A83', fontWeight: 700, fontSize: '14px', cursor: 'pointer' },
+    modalSave: { flex: 1, padding: '14px', borderRadius: '16px', border: 'none', background: 'linear-gradient(135deg, #D8B38A, #B58A83)', color: '#131017', fontWeight: 700, fontSize: '14px', cursor: 'pointer' },
+    modalError: { marginTop: '12px', color: '#F0A6A6', fontSize: '13px' },
+    toast: { position: 'fixed' as const, left: '50%', bottom: '96px', transform: 'translateX(-50%)', zIndex: 110, padding: '12px 20px', borderRadius: '999px', fontSize: '13px', fontWeight: 600, boxShadow: '0 10px 30px rgba(0,0,0,0.4)', maxWidth: '90%', textAlign: 'center' as const },
+    toastSuccess: { backgroundColor: '#D8B38A', color: '#131017' },
+    toastError: { backgroundColor: '#4A1828', color: '#F2CFCF' }
   };
 
   const radius = 20;
   const circumference = 2 * Math.PI * radius;
   const strokeDashoffset = circumference - (completionPercentage / 100) * circumference;
   const displayLocation = profile.city && profile.country ? `${profile.city}, ${profile.country}` : profile.city || profile.country || 'Location not set';
+
+  /**
+   * One tappable fact row. `onEdit` is omitted for read-only rows so the value
+   * is rendered as plain text rather than a button.
+   */
+  const renderInfoRow = (config: {
+    icon: string;
+    label: string;
+    value: string;
+    onEdit?: () => void;
+    last?: boolean;
+  }) => (
+    <div style={{ ...styles.infoRow, ...(config.last ? { borderBottom: 'none' } : {}) }}>
+      <div style={styles.infoLabel}>{config.icon} {config.label}</div>
+      {config.onEdit ? (
+        <button
+          type="button"
+          onClick={config.onEdit}
+          aria-label={`Edit ${config.label}`}
+          style={styles.infoValueButton}
+        >
+          <span style={styles.infoValue}>{config.value}</span>
+          <span style={styles.editIcon} aria-hidden="true">✏️</span>
+        </button>
+      ) : (
+        <div style={styles.infoValue}>{config.value}</div>
+      )}
+    </div>
+  );
+
+  const editorConfig = editor ? EDITOR_FIELDS[editor] : null;
+  const editorTitle = editor === 'phone' && phoneStage === 'verify' ? 'Verify phone' : editorConfig?.title ?? '';
+  const editorHint = editor === 'phone' && phoneStage === 'verify'
+    ? `Enter the code sent to ${pendingPhone}.`
+    : editorConfig?.hint ?? '';
+
+  const renderEditorInput = () => {
+    if (!editor) return null;
+
+    switch (editor) {
+      case 'bio':
+        return (
+          <>
+            <textarea
+              style={styles.modalTextarea}
+              value={textDraft}
+              maxLength={MAX_BIO_LENGTH}
+              onChange={(e) => setTextDraft(e.target.value)}
+              placeholder="Tell others what makes you unique..."
+            />
+            <p style={{ ...styles.editHint, marginTop: '8px', marginBottom: 0 }}>{textDraft.length}/{MAX_BIO_LENGTH}</p>
+          </>
+        );
+
+      case 'personality':
+        return (
+          <input
+            style={styles.modalInput}
+            value={tagDraft}
+            onChange={(e) => setTagDraft(e.target.value)}
+            placeholder="e.g. Adventurous, Kind, Funny"
+          />
+        );
+
+      case 'email':
+        return (
+          <input
+            type="email"
+            autoComplete="email"
+            style={styles.modalInput}
+            value={textDraft}
+            onChange={(e) => setTextDraft(e.target.value)}
+            placeholder="you@example.com"
+          />
+        );
+
+      case 'phone':
+        return phoneStage === 'verify' ? (
+          <input
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            style={styles.modalInput}
+            value={textDraft}
+            onChange={(e) => setTextDraft(e.target.value)}
+            placeholder="6-digit code"
+          />
+        ) : (
+          <input
+            type="tel"
+            autoComplete="tel"
+            style={styles.modalInput}
+            value={textDraft}
+            onChange={(e) => setTextDraft(e.target.value)}
+            placeholder="+977 98XXXXXXXX"
+          />
+        );
+
+      case 'age':
+        return (
+          <input
+            type="number"
+            min={MIN_AGE}
+            max={MAX_AGE}
+            inputMode="numeric"
+            style={styles.modalInput}
+            value={textDraft}
+            onChange={(e) => setTextDraft(e.target.value)}
+            placeholder="e.g. 28"
+          />
+        );
+
+      case 'gender':
+        return (
+          <div style={styles.optionWrap}>
+            {ONBOARDING_GENDERS.map((option) => (
+              <button
+                key={option}
+                type="button"
+                style={{ ...styles.optionPill, ...(textDraft === option ? styles.optionPillActive : {}) }}
+                onClick={() => setTextDraft((prev) => (prev === option ? '' : option))}
+              >
+                {option}
+              </button>
+            ))}
+          </div>
+        );
+
+      case 'intention':
+        return (
+          <div style={styles.optionWrap}>
+            {PROFILE_INTENTION_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                style={{ ...styles.optionPill, ...(textDraft === option.value ? styles.optionPillActive : {}) }}
+                onClick={() => setTextDraft((prev) => (prev === option.value ? '' : option.value))}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        );
+
+      case 'drinking':
+        return (
+          <div style={styles.optionWrap}>
+            {PROFILE_DRINKING_OPTIONS.map((option) => (
+              <button
+                key={option}
+                type="button"
+                style={{ ...styles.optionPill, ...(textDraft === option ? styles.optionPillActive : {}) }}
+                onClick={() => setTextDraft((prev) => (prev === option ? '' : option))}
+              >
+                {option}
+              </button>
+            ))}
+          </div>
+        );
+
+      case 'smoking':
+        return (
+          <div style={styles.optionWrap}>
+            {PROFILE_SMOKING_OPTIONS.map((option) => (
+              <button
+                key={option}
+                type="button"
+                style={{ ...styles.optionPill, ...(textDraft === option ? styles.optionPillActive : {}) }}
+                onClick={() => setTextDraft((prev) => (prev === option ? '' : option))}
+              >
+                {option}
+              </button>
+            ))}
+          </div>
+        );
+
+      case 'looking_for':
+        return (
+          <div style={styles.optionWrap}>
+            {PROFILE_LOOKING_FOR_OPTIONS.map((option) => (
+              <button
+                key={option}
+                type="button"
+                style={{ ...styles.optionPill, ...(listDraft.includes(option) ? styles.optionPillActive : {}) }}
+                onClick={() => toggleListDraft(option)}
+              >
+                {option}
+              </button>
+            ))}
+          </div>
+        );
+
+      case 'pets':
+        return (
+          <div style={styles.optionWrap}>
+            {PROFILE_PETS_OPTIONS.map((option) => (
+              <button
+                key={option}
+                type="button"
+                style={{ ...styles.optionPill, ...(listDraft.includes(option) ? styles.optionPillActive : {}) }}
+                onClick={() => toggleListDraft(option)}
+              >
+                {option}
+              </button>
+            ))}
+          </div>
+        );
+
+      case 'religion':
+        return (
+          <input
+            style={styles.modalInput}
+            value={textDraft}
+            onChange={(e) => setTextDraft(e.target.value)}
+            placeholder="e.g. Hindu, Buddhist, Prefer not to say"
+          />
+        );
+
+      case 'politics':
+        return (
+          <input
+            style={styles.modalInput}
+            value={textDraft}
+            onChange={(e) => setTextDraft(e.target.value)}
+            placeholder="e.g. Moderate, Liberal, Prefer not to say"
+          />
+        );
+
+      default:
+        return null;
+    }
+  };
 
   return (
     <div style={styles.container}>
@@ -209,7 +799,7 @@ export default function ProfileDashboardPage() {
         </div>
         <div style={styles.nameRow}><span style={styles.name}>{profile.display_name}</span><span style={styles.ageBadge}>{profile.age}</span></div>
         <div style={styles.location}>{profile.gender} • {displayLocation}</div>
-        <div style={styles.intentionTag}>{profile.intention || 'Looking for connections'}</div>
+        <div style={styles.intentionTag}>{intentionLabel(profile.intention) || 'Looking for connections'}</div>
       </div>
 
       <div style={styles.statsGrid}>
@@ -236,25 +826,26 @@ export default function ProfileDashboardPage() {
         <div>
           <div style={styles.section}>
             <div style={styles.sectionHeader}><div style={styles.sectionIcon}>👤</div><div style={styles.sectionTitle}>About Me</div></div>
-            <div style={styles.infoRow}><div style={styles.infoLabel}>📝 Bio</div><div style={styles.infoValue}>{profile.intention || 'No bio added yet.'}</div></div>
-            <div style={{ ...styles.infoRow, borderBottom: 'none' }}><div style={styles.infoLabel}>🎂 Age</div><div style={styles.infoValue}>{profile.age ? `${profile.age} years` : 'Not set'}</div></div>
-            <div style={{ ...styles.infoRow, borderBottom: 'none' }}><div style={styles.infoLabel}>👥 Gender</div><div style={styles.infoValue}>{profile.gender || 'Not set'}</div></div>
-            <div style={{ ...styles.infoRow, borderBottom: 'none' }}><div style={styles.infoLabel}>❤️ Looking for</div><div style={styles.infoValue}>{profile.looking_for?.join(', ') || 'Not set'}</div></div>
+            <p style={styles.editHint}>Tap any row to edit it.</p>
+            {renderInfoRow({ icon: '📝', label: 'Bio', value: profile.bio?.trim() || 'No bio added yet.', onEdit: () => openEditor('bio') })}
+            {renderInfoRow({ icon: '🎂', label: 'Age', value: profile.age ? `${profile.age} years` : 'Not set', onEdit: () => openEditor('age') })}
+            {renderInfoRow({ icon: '👥', label: 'Gender', value: profile.gender || 'Not set', onEdit: () => openEditor('gender') })}
+            {renderInfoRow({ icon: '❤️', label: 'Looking for', value: profile.looking_for?.join(', ') || 'Not set', onEdit: () => openEditor('looking_for'), last: true })}
           </div>
           <div style={styles.section}>
             <div style={styles.sectionHeader}><div style={styles.sectionIcon}>✨</div><div style={styles.sectionTitle}>More About Me</div></div>
-            <div style={styles.infoRow}><div style={styles.infoLabel}>💫 Intention</div><div style={styles.infoValue}>{profile.intention || 'Not set'}</div></div>
-            <div style={styles.infoRow}><div style={styles.infoLabel}>🍷 Drinking</div><div style={styles.infoValue}>{profile.drinking || 'Not set'}</div></div>
-            <div style={styles.infoRow}><div style={styles.infoLabel}>🚬 Smoking</div><div style={styles.infoValue}>{profile.smoking || 'Not set'}</div></div>
-            <div style={styles.infoRow}><div style={styles.infoLabel}>🛐 Religion</div><div style={styles.infoValue}>{profile.religion || 'Not set'}</div></div>
-            <div style={styles.infoRow}><div style={styles.infoLabel}>⚖️ Politics</div><div style={styles.infoValue}>{profile.politics || 'Not set'}</div></div>
-            <div style={{ ...styles.infoRow, borderBottom: 'none' }}><div style={styles.infoLabel}>🐾 Pets</div><div style={styles.infoValue}>{profile.pets?.join(', ') || 'Not set'}</div></div>
-            <div style={{ ...styles.infoRow, borderBottom: 'none' }}><div style={styles.infoLabel}>🧠 Personality</div><div style={styles.infoValue}>{profile.personality?.join(', ') || 'Not set'}</div></div>
+            {renderInfoRow({ icon: '💫', label: 'Intention', value: profile.intention ? intentionLabel(profile.intention) : 'Not set', onEdit: () => openEditor('intention') })}
+            {renderInfoRow({ icon: '🍷', label: 'Drinking', value: profile.drinking || 'Not set', onEdit: () => openEditor('drinking') })}
+            {renderInfoRow({ icon: '🚬', label: 'Smoking', value: profile.smoking || 'Not set', onEdit: () => openEditor('smoking') })}
+            {renderInfoRow({ icon: '🛐', label: 'Religion', value: profile.religion || 'Not set', onEdit: () => openEditor('religion') })}
+            {renderInfoRow({ icon: '⚖️', label: 'Politics', value: profile.politics || 'Not set', onEdit: () => openEditor('politics') })}
+            {renderInfoRow({ icon: '🐾', label: 'Pets', value: profile.pets?.join(', ') || 'Not set', onEdit: () => openEditor('pets') })}
+            {renderInfoRow({ icon: '🧠', label: 'Personality', value: profile.personality?.join(', ') || 'Not set', onEdit: () => openEditor('personality'), last: true })}
           </div>
           <div style={styles.section}>
             <div style={styles.sectionHeader}><div style={styles.sectionIcon}>📞</div><div style={styles.sectionTitle}>Contact</div></div>
-            <div style={styles.infoRow}><div style={styles.infoLabel}>📧 Email</div><div style={styles.infoValue}>{userEmail}</div></div>
-            <div style={{ ...styles.infoRow, borderBottom: 'none' }}><div style={styles.infoLabel}>📱 Phone</div><div style={styles.infoValue}>Not set</div></div>
+            {renderInfoRow({ icon: '📧', label: 'Email', value: userEmail || 'Not set', onEdit: () => openEditor('email') })}
+            {renderInfoRow({ icon: '📱', label: 'Phone', value: phone || 'Not set', onEdit: () => openEditor('phone'), last: true })}
           </div>
         </div>
       )}
@@ -267,6 +858,51 @@ export default function ProfileDashboardPage() {
           </div>
         </div>
       )}
+
+      {editor && editorConfig && (
+        <div
+          style={styles.overlay}
+          onClick={() => { if (!saving) closeEditor(); }}
+        >
+          <div
+            style={styles.modal}
+            role="dialog"
+            aria-modal="true"
+            aria-label={editorTitle}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div style={styles.modalTitle}>{editorTitle}</div>
+            <div style={styles.modalSubtitle}>{editorHint}</div>
+            {renderEditorInput()}
+            {editorError && <div style={styles.modalError}>{editorError}</div>}
+            <div style={styles.modalActions}>
+              <button
+                type="button"
+                style={styles.modalCancel}
+                onClick={closeEditor}
+                disabled={saving}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                style={{ ...styles.modalSave, opacity: saving ? 0.7 : 1 }}
+                onClick={handleSave}
+                disabled={saving}
+              >
+                {saving ? 'Saving...' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {toast && (
+        <div style={{ ...styles.toast, ...(toast.tone === 'success' ? styles.toastSuccess : styles.toastError) }}>
+          {toast.message}
+        </div>
+      )}
+
       <MobileNav />
     </div>
   );

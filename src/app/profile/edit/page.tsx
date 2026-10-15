@@ -21,6 +21,13 @@ import {
   ONBOARDING_TOTAL_STEPS,
   validateOnboardingStep,
 } from '@/lib/onboarding-steps';
+import {
+  PROFILE_DRINKING_OPTIONS,
+  PROFILE_INTENTION_OPTIONS as INTENTIONS,
+  PROFILE_LOOKING_FOR_OPTIONS,
+  PROFILE_PETS_OPTIONS as PETS_OPTIONS,
+  PROFILE_SMOKING_OPTIONS,
+} from '@/lib/profile-options';
 
 const COUNTRIES = [
   "Afghanistan", "Albania", "Algeria", "Andorra", "Angola", "Argentina", "Armenia", "Australia", "Austria", "Azerbaijan",
@@ -36,12 +43,6 @@ const COUNTRIES = [
   "Singapore", "Slovakia", "Slovenia", "South Africa", "South Korea", "Spain", "Sri Lanka", "Sweden", "Switzerland", "Syria",
   "Taiwan", "Tanzania", "Thailand", "Tunisia", "Turkey", "Uganda", "Ukraine", "United Arab Emirates", "United Kingdom", "United States",
   "Uruguay", "Uzbekistan", "Venezuela", "Vietnam", "Yemen", "Zambia", "Zimbabwe"
-];
-
-const INTENTIONS = [
-  { value: 'friendship', label: 'Friendship & Networking' },
-  { value: 'dating', label: 'Long-term Relationship / Dating' },
-  { value: 'both', label: 'Casual & Open to Options' },
 ];
 
 const HOBBIES_LIST = [
@@ -70,10 +71,6 @@ const MBTI_TYPES = [
  * are therefore the same string by design, not by accident.
  */
 const LANGUAGES_LIST = LOCALE_OPTIONS.map((option) => option.englishName);
-
-const PETS_OPTIONS = [
-  "Dog lover", "Cat lover", "Have pets", "Allergic to pets", "No pets", "Want pets"
-];
 
 const PHYSICAL_ATTRS = [
   "Athletic", "Average", "Slim", "Muscular", "Curvy", "Tall", "Petite"
@@ -830,7 +827,7 @@ export default function EditProfileWizardPage() {
             <div>
               <label style={styles.label}>Looking to date</label>
               <div style={styles.pillContainer}>
-                {['Men', 'Women', 'Everyone'].map((opt) => (
+                {PROFILE_LOOKING_FOR_OPTIONS.map((opt) => (
                   <button key={opt} type="button" style={{ ...styles.pill, ...(formData.lookingFor.includes(opt) ? styles.pillActive : {}) }} onClick={() => toggleArrayItem('lookingFor', opt)}>
                     {opt}
                   </button>
@@ -994,9 +991,9 @@ export default function EditProfileWizardPage() {
               <label style={styles.label}>Smoking</label>
               <select style={styles.select} value={formData.smoking} onChange={(e) => setFormData({ ...formData, smoking: e.target.value })}>
                 <option value="">-- Select --</option>
-                <option value="Non-smoker">Non-smoker</option>
-                <option value="Social smoker">Social smoker</option>
-                <option value="Regular smoker">Regular smoker</option>
+                {PROFILE_SMOKING_OPTIONS.map((option) => (
+                  <option key={option} value={option}>{option}</option>
+                ))}
               </select>
             </div>
 
@@ -1004,9 +1001,9 @@ export default function EditProfileWizardPage() {
               <label style={styles.label}>Drinking</label>
               <select style={styles.select} value={formData.drinking} onChange={(e) => setFormData({ ...formData, drinking: e.target.value })}>
                 <option value="">-- Select --</option>
-                <option value="Non-drinker">Non-drinker</option>
-                <option value="Social drinker">Social drinker</option>
-                <option value="Regular drinker">Regular drinker</option>
+                {PROFILE_DRINKING_OPTIONS.map((option) => (
+                  <option key={option} value={option}>{option}</option>
+                ))}
               </select>
             </div>
 
