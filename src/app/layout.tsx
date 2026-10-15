@@ -48,7 +48,9 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: '#0D0A10',
+  // Midnight Romance page colour (`--mr-page`). The browser chrome must match
+  // the page it frames, or the installed app shows a band of the wrong plum.
+  themeColor: '#131017',
   colorScheme: 'dark',
   width: 'device-width',
   initialScale: 1,
@@ -65,7 +67,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className="bg-[#0D0A10] text-[#F2E9E4] antialiased">
+      <body className="bg-[#131017] text-[#eae2f0] antialiased">
         <LanguageProvider>
           {children}
           <ServiceWorkerRegistrar />

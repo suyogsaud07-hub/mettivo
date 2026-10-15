@@ -66,8 +66,6 @@ const SEARCH_ALIASES: Partial<Record<LocaleCode, readonly string[]>> = {
   yo: ['yoruba'],
 };
 
-const englishNames = new Intl.DisplayNames(['en'], { type: 'language' });
-
 /** Best-effort name lookup; falls back to the raw code rather than throwing. */
 function displayName(locales: string[], code: string): string {
   try {

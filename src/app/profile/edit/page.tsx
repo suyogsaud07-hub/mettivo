@@ -14,6 +14,7 @@ import {
   type ProfileDraft,
 } from '@/lib/profile';
 import { MAX_PROMPT_ANSWER_LENGTH, loadCatalogue, type Catalogue } from '@/lib/catalogue';
+import { LOCALE_OPTIONS } from '@/lib/locales';
 import {
   FIELD_TO_STEP,
   ONBOARDING_GENDERS,
@@ -56,10 +57,19 @@ const MBTI_TYPES = [
   "ISTP", "ISFP", "ESTP", "ESFP"
 ];
 
-const LANGUAGES_LIST = [
-  "English", "Nepali", "Hindi", "Spanish", "French", "German", "Mandarin",
-  "Japanese", "Korean", "Arabic", "Russian", "Portuguese", "Italian"
-];
+/**
+ * Languages a member may declare on their profile.
+ *
+ * Derived from the global catalogue (`LOCALE_OPTIONS`) instead of a local array,
+ * so this step cannot drift from the language picker again — the two previously
+ * held 13 and 5 entries respectively.
+ *
+ * The stored VALUE stays the English name. `profiles.languages_spoken` is a
+ * `text[]` that past builds already filled with names, so switching to language
+ * codes here would silently orphan every existing row. The label and the value
+ * are therefore the same string by design, not by accident.
+ */
+const LANGUAGES_LIST = LOCALE_OPTIONS.map((option) => option.englishName);
 
 const PETS_OPTIONS = [
   "Dog lover", "Cat lover", "Have pets", "Allergic to pets", "No pets", "Want pets"

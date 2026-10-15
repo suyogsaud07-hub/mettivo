@@ -18,6 +18,7 @@
     "audit": "npm audit --omit=dev --audit-level=high",
     "build:apply-all": "./scripts/build-apply-all.sh",
     "generate:icons": "node scripts/generate-icons.mjs",
+    "generate:locales": "node scripts/generate-locales.mjs",
     "verify": "npm run typecheck && npm run lint && npm run test && npm run audit && npm run build"
   },
   "dependencies": {

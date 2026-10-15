@@ -5,7 +5,12 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { useLanguage } from '@/context/LanguageContext';
-import { type Language } from '@/lib/translations';
+import {
+  LOCALE_OPTIONS,
+  localeNativeName,
+  searchLocales,
+  type LocaleCode,
+} from '@/lib/locales';
 import {
   PrivacyError,
   deleteMyAccount,
@@ -17,22 +22,19 @@ import { TRANSLATION_LANGUAGE_OPTIONS } from '@/lib/translation';
 import { usePreferredTranslationLanguage } from '@/app/components/chat/usePreferredTranslationLanguage';
 
 /**
- * Only languages that actually have translations are offered, so choosing one
- * has a real effect on the UI. Previously this list wrote a key
- * (`mettivo_preferred_lang`) that nothing in the app ever read.
+ * Every language with strings is offered, so choosing one has a real effect on
+ * the UI. The list is derived from `LOCALE_OPTIONS` — the same catalogue the
+ * landing picker uses — rather than a second hand-written array, which is how
+ * the landing page and this screen previously disagreed (5 entries vs 4).
  */
-const LANGUAGES: { code: Language; label: string }[] = [
-  { code: 'en', label: 'English' },
-  { code: 'ne', label: 'Nepali (नेपाली)' },
-  { code: 'hi', label: 'Hindi (हिन्दी)' },
-  { code: 'es', label: 'Spanish (Español)' },
-  { code: 'fr', label: 'French (Français)' },
-];
+const LANGUAGES = LOCALE_OPTIONS;
 
 export default function SettingsPage() {
   const router = useRouter();
   const { language, changeLanguage } = useLanguage();
   const [isLangModalOpen, setIsLangModalOpen] = useState(false);
+  /** Filters the language sheet; 51 rows is too many to scroll blindly. */
+  const [langQuery, setLangQuery] = useState('');
   const [isSigningOut, setIsSigningOut] = useState(false);
   // M15: data-subject rights (export / erasure)
   const [isExporting, setIsExporting] = useState(false);
@@ -78,8 +80,10 @@ export default function SettingsPage() {
     }
   };
 
-  const selectedLang =
-    LANGUAGES.find((entry) => entry.code === language)?.label ?? 'English';
+  // The endonym is what a member recognises: "日本語", not "Japanese".
+  const selectedLang = localeNativeName(language);
+  /** Filtered rows for the open sheet. */
+  const visibleLanguages = searchLocales(langQuery);
   
   // Ref for the avatar upload
   const avatarInputRef = useRef<HTMLInputElement>(null);
@@ -133,9 +137,10 @@ export default function SettingsPage() {
     }
   };
 
-  const handleLanguageSelect = (code: Language) => {
+  const handleLanguageSelect = (code: LocaleCode) => {
     changeLanguage(code);
     setIsLangModalOpen(false);
+    setLangQuery('');
   };
 
   // --- M15: data-subject rights ---------------------------------------------
@@ -211,6 +216,13 @@ export default function SettingsPage() {
     closeBtn: { background: 'none', border: 'none', color: '#B58A83', fontSize: '24px', cursor: 'pointer' },
     langItem: { padding: '16px', fontSize: '15px', color: '#F2E9E4', cursor: 'pointer', borderRadius: '12px', borderBottom: '1px solid #29202D', textAlign: 'center' as const },
     langItemActive: { backgroundColor: '#4A1828', color: '#D4B18A', fontWeight: '700' },
+    langItemSub: { display: 'block', fontSize: '11px', color: '#B58A83', fontWeight: 400, marginTop: '2px' },
+    /** Search field for the ~50-row language sheet. */
+    langSearch: { width: '100%', padding: '12px 14px', borderRadius: '12px', border: '1px solid #3e314b', backgroundColor: '#251d2d', color: '#eae2f0', fontSize: '14px', outline: 'none', boxSizing: 'border-box' as const, marginBottom: '12px' },
+    /** Scrollable row container with a slim scrollbar for the long list. */
+    langList: { maxHeight: '52vh', overflowY: 'auto' as const, overscrollBehavior: 'contain' as const, scrollbarWidth: 'thin' as const, scrollbarColor: '#34283f transparent' },
+    langEmpty: { fontSize: '13px', color: '#B58A83', textAlign: 'center' as const, padding: '18px 0', margin: 0 },
+    langNote: { margin: '12px 0 0', fontSize: '10px', color: '#9b8ba6', lineHeight: 1.5, textAlign: 'center' as const },
     modalHint: { fontSize: '12px', color: '#B58A83', lineHeight: '1.5', margin: '0 0 12px' },
     modalError: { fontSize: '12px', color: '#FCA5A5', margin: '0 0 12px' },
     modalCheck: { color: '#D4B18A', fontWeight: '700' }
@@ -348,23 +360,74 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      {/* Language Selection Modal */}
+      {/* Interface language sheet. Searchable, because the catalogue is ~50
+          languages rather than the four this screen used to hard-code. */}
       {isLangModalOpen && (
-        <div style={styles.modalOverlay}>
+        <div style={styles.modalOverlay} role="dialog" aria-modal="true" aria-label="Select language">
           <div style={styles.modalBox}>
             <div style={styles.modalHeader}>
               <div style={styles.modalTitle}>Select Language</div>
-              <button style={styles.closeBtn} onClick={() => setIsLangModalOpen(false)}>×</button>
-            </div>
-            {LANGUAGES.map((entry) => (
-              <div
-                key={entry.code}
-                style={{ ...styles.langItem, ...(language === entry.code ? styles.langItemActive : {}) }}
-                onClick={() => handleLanguageSelect(entry.code)}
+              <button
+                style={styles.closeBtn}
+                onClick={() => {
+                  setIsLangModalOpen(false);
+                  setLangQuery('');
+                }}
+                aria-label="Close"
               >
-                {entry.label}
-              </div>
-            ))}
+                ×
+              </button>
+            </div>
+
+            <input
+              type="search"
+              data-testid="language-modal-search"
+              autoComplete="off"
+              placeholder="Search languages…"
+              aria-label="Search languages"
+              value={langQuery}
+              onChange={(event) => setLangQuery(event.target.value)}
+              style={styles.langSearch}
+            />
+
+            <div style={styles.langList}>
+              {visibleLanguages.length === 0 && (
+                <p data-testid="language-modal-empty" style={styles.langEmpty}>
+                  No language matches “{langQuery}”.
+                </p>
+              )}
+
+              {visibleLanguages.map((entry) => {
+                const isActive = language === entry.code;
+                return (
+                  <div
+                    key={entry.code}
+                    role="button"
+                    tabIndex={0}
+                    aria-pressed={isActive}
+                    data-testid={`language-modal-option-${entry.code}`}
+                    style={{ ...styles.langItem, ...(isActive ? styles.langItemActive : {}) }}
+                    onClick={() => handleLanguageSelect(entry.code)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        handleLanguageSelect(entry.code);
+                      }
+                    }}
+                  >
+                    <span style={{ display: 'block', fontWeight: 600 }}>{entry.nativeName}</span>
+                    {/* Hidden when the endonym is already the English name. */}
+                    {entry.nativeName !== entry.englishName && (
+                      <span style={styles.langItemSub}>{entry.englishName}</span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            <p style={styles.langNote}>
+              {LANGUAGES.length} languages · translations are machine-generated and being improved
+            </p>
           </div>
         </div>
       )}

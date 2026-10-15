@@ -19,7 +19,7 @@ import { E2E_EMAIL, signedIn, stubSupabase } from './fixtures';
  */
 
 test.describe('§3.3 — the landing page never redirects', () => {
-  test('a signed-out visitor stays on / and gets the "Let\'s get started" CTA', async ({ page }) => {
+  test('a signed-out visitor stays on / and gets the "Let\'s Get Started" CTA', async ({ page }) => {
     await stubSupabase(page, { user: null });
 
     await page.goto('/');
@@ -27,7 +27,7 @@ test.describe('§3.3 — the landing page never redirects', () => {
     // The primary CTA is the signup surface — never the app, never onboarding.
     await expect(page.getByTestId('landing-primary-cta')).toHaveAttribute('href', '/signup');
     await expect(page.getByTestId('landing-primary-cta')).toHaveText(/let'?s get started/i);
-    // Nobody is signed in, so there is no route into the app from here.
+    // There is exactly ONE call to action: no dashboard button to bounce off.
     await expect(page.getByTestId('landing-dashboard-link')).toHaveCount(0);
 
     // Stay put: give any redirect a chance to fire.
@@ -59,7 +59,7 @@ test.describe('§3.3 — the landing page never redirects', () => {
     expect(new URL(page.url()).pathname).toBe('/signup');
   });
 
-  test('a signed-in member stays on /, keeps the signup CTA and gains a deliberate way in', async ({
+  test('a signed-in member stays on / and still gets the signup CTA, with no dashboard button', async ({
     page,
   }) => {
     await signedIn(page);
@@ -73,14 +73,11 @@ test.describe('§3.3 — the landing page never redirects', () => {
 
     // The landing page is REACHABLE while signed in — no bounce to /discover.
     await expect(page.getByTestId('landing-primary-cta')).toBeVisible();
-    // The primary CTA is unchanged for a member: it still opens the auth
-    // surface (where the session choice and sign-out live), not the dashboard.
+    // The CTA is the same for a member: it opens the auth surface, where the
+    // session choice and the sign-out live. No "Go to Dashboard" button.
     await expect(page.getByTestId('landing-primary-cta')).toHaveText(/let'?s get started/i);
     await expect(page.getByTestId('landing-primary-cta')).toHaveAttribute('href', '/signup');
-
-    // The route into the app exists, but it is a separate, explicit link.
-    await expect(page.getByTestId('landing-dashboard-link')).toBeVisible();
-    await expect(page.getByTestId('landing-dashboard-link')).toHaveAttribute('href', '/profile');
+    await expect(page.getByTestId('landing-dashboard-link')).toHaveCount(0);
 
     await page.waitForTimeout(1200);
     expect(new URL(page.url()).pathname).toBe('/');
@@ -105,7 +102,7 @@ test.describe('§3.3 — the landing page never redirects', () => {
     expect(new URL(page.url()).pathname).toBe('/signup');
   });
 
-  test('the explicit dashboard link opens the app', async ({ page }) => {
+  test('the app is still one deliberate choice away, through the auth surface', async ({ page }) => {
     await signedIn(page);
     await stubSupabase(page, {
       tables: {
@@ -114,25 +111,22 @@ test.describe('§3.3 — the landing page never redirects', () => {
     });
 
     await page.goto('/');
-    await expect(page.getByTestId('landing-dashboard-link')).toBeVisible();
-    await page.getByTestId('landing-dashboard-link').click();
+    await page.getByTestId('landing-primary-cta').click();
+    await expect(page.getByTestId('continue-session')).toBeVisible();
+    await page.getByTestId('continue-session').click();
 
     // `/profile` is the onboarding gate; an onboarded member lands on the
-    // dashboard. Explicit click only — this never happens on its own.
+    // dashboard. Explicit choices only — this never happens on its own.
     await expect.poll(() => new URL(page.url()).pathname).toBe('/profile/dashboard');
   });
 
-  test('browser Back from the app returns to the landing page', async ({ page }) => {
+  test('browser Back from the auth surface returns to the landing page', async ({ page }) => {
     await signedIn(page);
-    await stubSupabase(page, {
-      tables: {
-        profiles: { onboarding_completed: true, intention: 'dating', interests: [], prompts: {} },
-      },
-    });
+    await stubSupabase(page, { user: null });
 
     await page.goto('/');
-    await page.getByTestId('landing-dashboard-link').click();
-    await expect.poll(() => new URL(page.url()).pathname).toBe('/profile/dashboard');
+    await page.getByTestId('landing-primary-cta').click();
+    await expect.poll(() => new URL(page.url()).pathname).toBe('/signup');
 
     await page.goBack();
 

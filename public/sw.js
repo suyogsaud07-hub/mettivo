@@ -9,7 +9,16 @@
    cross-origin Supabase/CDN traffic, non-GET requests) are ignored.
    ------------------------------------------------------------------ */
 
-const VERSION = 'v1';
+/*
+ * Bump this whenever a cache-first asset changes.
+ *
+ * `v2` exists because the brand icons in `/icons/` are NOT content-hashed and
+ * are served cache-first: clients that installed the previous version would keep
+ * the old logo in their installed app and tab icon forever. Raising the version
+ * makes `activate` drop `mettivo-static-v1` / `mettivo-pages-v1` on their next
+ * visit.
+ */
+const VERSION = 'v2';
 const STATIC_CACHE = `mettivo-static-${VERSION}`;
 const PAGES_CACHE = `mettivo-pages-${VERSION}`;
 const OFFLINE_URL = '/offline';

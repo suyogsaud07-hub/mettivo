@@ -81,7 +81,7 @@ test.describe('installability — manifest and icons', () => {
     await page.goto('/');
 
     await expect(page.locator('link[rel="manifest"]')).toHaveAttribute('href', MANIFEST);
-    await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute('content', '#0D0A10');
+    await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute('content', '#131017');
 
     // iOS Safari ignores most of the manifest; these two are what actually make
     // "Add to Home Screen" produce a standalone app with a proper icon.

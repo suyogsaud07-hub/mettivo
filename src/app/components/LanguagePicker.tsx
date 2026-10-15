@@ -162,8 +162,6 @@ export default function LanguagePicker({ width = 220, appearance = 'chip' }: Lan
   };
 
   const currentNative = localeNativeName(language);
-  const currentEnglish = localeName(language);
-  const showEnglishHint = currentNative !== currentEnglish;
 
   const isRow = appearance === 'row';
 
@@ -201,7 +199,7 @@ export default function LanguagePicker({ width = 220, appearance = 'chip' }: Lan
         aria-haspopup="listbox"
         aria-expanded={isOpen}
         aria-controls={isOpen ? LIST_ID : undefined}
-        aria-label={`Change language. Current: ${currentEnglish}`}
+        aria-label={`Change language. Current: ${localeName(language)}`}
         onClick={() => (isOpen ? close() : open())}
         style={triggerStyle}
       >
@@ -354,7 +352,11 @@ export default function LanguagePicker({ width = 220, appearance = 'chip' }: Lan
                   >
                     <span style={{ display: 'flex', flexDirection: 'column', gap: '1px', minWidth: 0 }}>
                       <span style={{ fontWeight: isSelected ? 700 : 500 }}>{option.nativeName}</span>
-                      <span style={{ fontSize: '11px', color: mr.muted }}>{option.englishName}</span>
+                      {/* Omitted when the endonym IS the English name ("English",
+                          "Nepali"), which would otherwise print twice. */}
+                      {option.nativeName !== option.englishName && (
+                        <span style={{ fontSize: '11px', color: mr.muted }}>{option.englishName}</span>
+                      )}
                     </span>
                     {isSelected && (
                       <span aria-hidden="true" style={{ color: mr.accent, fontWeight: 700 }}>

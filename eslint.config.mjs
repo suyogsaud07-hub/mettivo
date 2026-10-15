@@ -12,6 +12,15 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Generated artefacts. These are gitignored and are NOT source: linting a
+    // Playwright trace bundle reports hundreds of errors from minified vendored
+    // JS and drowns the real result.
+    "test-results/**",
+    "playwright-report/**",
+    ".playwright-browsers/**",
+    ".vitest/**",
+    ".npm-cache/**",
+    "coverage/**",
   ]),
 ]);
 
