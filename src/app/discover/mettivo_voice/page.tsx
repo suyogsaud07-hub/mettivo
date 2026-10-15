@@ -44,7 +44,7 @@ const tagFor = (id: string): string =>
 // Stable "voice card" length between 3 and 10 seconds.
 const durationFor = (id: string): number => 3 + seedIndex(`${id}:duration`, 8);
 
-export default function MettivoLivePage() {
+export default function MettivoVoicePage() {
   const router = useRouter();
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
@@ -107,7 +107,7 @@ export default function MettivoLivePage() {
           }))
         );
       } catch (err) {
-        console.error('[mettivo-live] failed to load profiles:', err);
+        console.error('[mettivo-voice] failed to load profiles:', err);
       } finally {
         // CONSTITUTION Article 2.8: the loading state must always terminate.
         if (isMounted) setLoading(false);
@@ -193,7 +193,7 @@ export default function MettivoLivePage() {
     <div style={styles.container}>
       <div style={styles.header}>
         <button style={styles.iconBtn} onClick={() => router.back()}>←</button>
-        <div style={styles.headerTitle}>Mettivo Live</div>
+        <div style={styles.headerTitle}>Mettivo Voice</div>
         <div style={styles.headerIcons}>
           <button style={styles.iconBtn}>⏱️</button>
           <button style={styles.iconBtn}>🎧</button>
