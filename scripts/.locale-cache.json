@@ -17,7 +17,8 @@
     "edit_profile": "प्रोफाइल सम्पादन गर्नुहोस्",
     "change_avatar": "अवतार परिवर्तन गर्नुहोस्",
     "language": "भाषा",
-    "sign_out": "साइन आउट गर्नुहोस्"
+    "sign_out": "साइन आउट गर्नुहोस्",
+    "messages": "सन्देशहरू"
   },
   "hi": {
     "discover": "खोजें",
@@ -37,7 +38,8 @@
     "edit_profile": "प्रोफ़ाइल संपादित करें",
     "change_avatar": "अवतार बदलें",
     "language": "भाषा",
-    "sign_out": "साइन आउट"
+    "sign_out": "साइन आउट",
+    "messages": "संदेश"
   },
   "bn": {
     "discover": "আবিষ্কার করুন",
@@ -57,7 +59,8 @@
     "edit_profile": "প্রোফাইল এডিট করুন",
     "change_avatar": "অবতার পরিবর্তন করুন",
     "language": "ভাষা",
-    "sign_out": "সাইন আউট"
+    "sign_out": "সাইন আউট",
+    "messages": "বার্তা"
   },
   "ur": {
     "discover": "دریافت کریں",
@@ -77,7 +80,8 @@
     "edit_profile": "پروفائل میں ترمیم کریں",
     "change_avatar": "اوتار تبدیل کریں",
     "language": "زبان",
-    "sign_out": "سائن آؤٹ کریں"
+    "sign_out": "سائن آؤٹ کریں",
+    "messages": "پیغامات"
   },
   "ta": {
     "discover": "கண்டறியவும்",
@@ -97,7 +101,8 @@
     "edit_profile": "சுயவிவரத்தைத் திருத்தவும்",
     "change_avatar": "அவதாரை மாற்றவும்",
     "language": "மொழி",
-    "sign_out": "வெளியேறு"
+    "sign_out": "வெளியேறு",
+    "messages": "செய்திகள்"
   },
   "te": {
     "discover": "కనుగొనండి",
@@ -117,7 +122,8 @@
     "edit_profile": "ప్రొఫైల్ ‌ ను సవరించండి",
     "change_avatar": "అవతార్ ‌ ను మార్చండి",
     "language": "భాష",
-    "sign_out": "సైన్ అవుట్"
+    "sign_out": "సైన్ అవుట్",
+    "messages": "సందేశాలు"
   },
   "mr": {
     "discover": "शोधा",
@@ -137,7 +143,8 @@
     "edit_profile": "प्रोफाइल संपादित करा",
     "change_avatar": "अवतार बदला",
     "language": "भाषा",
-    "sign_out": "साइन आउट करा"
+    "sign_out": "साइन आउट करा",
+    "messages": "संदेश"
   },
   "gu": {
     "discover": "ડિસ્કવર કરો",
@@ -157,7 +164,8 @@
     "edit_profile": "પ્રોફાઇલમાં ફેરફાર કરો",
     "change_avatar": "અવતાર બદલો",
     "language": "ભાષા",
-    "sign_out": "સાઇન આઉટ કરો"
+    "sign_out": "સાઇન આઉટ કરો",
+    "messages": "સંદેશા"
   },
   "pa": {
     "discover": "ਖੋਜ",
@@ -177,7 +185,8 @@
     "edit_profile": "ਪਰੋਫਾਇਲ ਸੰਪਾਦਿਤ ਕਰੋ",
     "change_avatar": "ਅਵਤਾਰ ਬਦਲੋ",
     "language": "ਭਾਸ਼ਾ",
-    "sign_out": "ਸਾਈਨ ਆਉਟ ਕਰੋ"
+    "sign_out": "ਸਾਈਨ ਆਉਟ ਕਰੋ",
+    "messages": "ਸੁਨੇਹੇ"
   },
   "es": {
     "discover": "Descubrir",
@@ -197,7 +206,8 @@
     "edit_profile": "Editar perfil",
     "change_avatar": "Cambiar avatar",
     "language": "Idioma",
-    "sign_out": "Cerrar sesión"
+    "sign_out": "Cerrar sesión",
+    "messages": "Mensajes"
   },
   "fr": {
     "discover": "Découvrir",
@@ -217,7 +227,8 @@
     "edit_profile": "Modifier le profil",
     "change_avatar": "Changer d'avatar",
     "language": "Langue",
-    "sign_out": "Se déconnecter"
+    "sign_out": "Se déconnecter",
+    "messages": "Messages"
   },
   "pt": {
     "discover": "Descobrir",
@@ -237,7 +248,8 @@
     "edit_profile": "Editar perfil",
     "change_avatar": "Alterar Avatar",
     "language": "Idioma",
-    "sign_out": "Terminar sessão"
+    "sign_out": "Terminar sessão",
+    "messages": "Mensagens"
   },
   "it": {
     "discover": "Scopri",
@@ -257,7 +269,8 @@
     "edit_profile": "Modifica profilo",
     "change_avatar": "Cambia avatar",
     "language": "Lingua",
-    "sign_out": "Disconnetti"
+    "sign_out": "Disconnetti",
+    "messages": "Messaggi"
   },
   "ro": {
     "discover": "Descoperă",
@@ -277,7 +290,8 @@
     "edit_profile": "Editează profilul",
     "change_avatar": "Schimbare avatar",
     "language": "Limbă",
-    "sign_out": "Deconectare"
+    "sign_out": "Deconectare",
+    "messages": "Mesaje"
   },
   "de": {
     "discover": "Entdecken",
@@ -297,7 +311,8 @@
     "edit_profile": "Profil bearbeiten",
     "change_avatar": "Avatar ändern",
     "language": "Sprache",
-    "sign_out": "Abmelden"
+    "sign_out": "Abmelden",
+    "messages": "Nachrichten"
   },
   "nl": {
     "discover": "Ontdek",
@@ -317,7 +332,8 @@
     "edit_profile": "Profiel bewerken",
     "change_avatar": "Avatar wijzigen",
     "language": "Taal",
-    "sign_out": "Afmelden"
+    "sign_out": "Afmelden",
+    "messages": "Berichten"
   },
   "sv": {
     "discover": "Upptäck",
@@ -337,7 +353,8 @@
     "edit_profile": "Redigera profil",
     "change_avatar": "Ändra avatar",
     "language": "Språk",
-    "sign_out": "Logga ut"
+    "sign_out": "Logga ut",
+    "messages": "Meddelanden"
   },
   "no": {
     "discover": "Oppdag",
@@ -357,7 +374,8 @@
     "edit_profile": "Rediger",
     "change_avatar": "Endre avatar",
     "language": "Språk",
-    "sign_out": "Logg ut"
+    "sign_out": "Logg ut",
+    "messages": "Meldinger"
   },
   "da": {
     "discover": "Discover",
@@ -377,7 +395,8 @@
     "edit_profile": "Rediger profil",
     "change_avatar": "Skift avatar",
     "language": "Sprog",
-    "sign_out": "Log ud"
+    "sign_out": "Log ud",
+    "messages": "Beskeder"
   },
   "fi": {
     "discover": "Tutustu",
@@ -397,7 +416,8 @@
     "edit_profile": "Muokkaa profiilia",
     "change_avatar": "Vaihda avatar",
     "language": "Kieli",
-    "sign_out": "Kirjaudu ulos"
+    "sign_out": "Kirjaudu ulos",
+    "messages": "Viestit"
   },
   "pl": {
     "discover": "Odkrywaj",
@@ -417,7 +437,8 @@
     "edit_profile": "Edytuj profil",
     "change_avatar": "Zmień awatar",
     "language": "Język",
-    "sign_out": "Wyloguj się"
+    "sign_out": "Wyloguj się",
+    "messages": "Wiadomości"
   },
   "cs": {
     "discover": "Discover",
@@ -437,7 +458,8 @@
     "edit_profile": "Upravit profil",
     "change_avatar": "Změnit avatara",
     "language": "Jazyk",
-    "sign_out": "Odhlásit se"
+    "sign_out": "Odhlásit se",
+    "messages": "Zprávy"
   },
   "hu": {
     "discover": "Felfedezés",
@@ -457,7 +479,8 @@
     "edit_profile": "Profil szerkesztése",
     "change_avatar": "Avatar módosítása",
     "language": "Nyelv",
-    "sign_out": "Kijelentkezés"
+    "sign_out": "Kijelentkezés",
+    "messages": "Üzenetek"
   },
   "el": {
     "discover": "Discover",
@@ -477,7 +500,8 @@
     "edit_profile": "Επεξεργασία προφίλ",
     "change_avatar": "Αλλαγή Avatar",
     "language": "Γλώσσα",
-    "sign_out": "Αποσύνδεση"
+    "sign_out": "Αποσύνδεση",
+    "messages": "Μηνύματα"
   },
   "ru": {
     "discover": "Откройте для себя",
@@ -497,7 +521,8 @@
     "edit_profile": "Редактировать профиль",
     "change_avatar": "Изменить аватар",
     "language": "Язык",
-    "sign_out": "Выйти"
+    "sign_out": "Выйти",
+    "messages": "Сообщения"
   },
   "uk": {
     "discover": "Відкрийте для себе",
@@ -517,7 +542,8 @@
     "edit_profile": "Редагувати профіль",
     "change_avatar": "Змінити аватар",
     "language": "Мова",
-    "sign_out": "Вийти"
+    "sign_out": "Вийти",
+    "messages": "Повідомлення"
   },
   "bg": {
     "discover": "Открийте",
@@ -537,7 +563,8 @@
     "edit_profile": "Редактиране на профил",
     "change_avatar": "Промяна на аватар",
     "language": "Език",
-    "sign_out": "Изход"
+    "sign_out": "Изход",
+    "messages": "Съобщения"
   },
   "tr": {
     "discover": "Keşfet",
@@ -557,7 +584,8 @@
     "edit_profile": "Profili Düzenle",
     "change_avatar": "Avatarı Değiştir",
     "language": "Dil",
-    "sign_out": "Oturumu Kapat"
+    "sign_out": "Oturumu Kapat",
+    "messages": "Mesajlar"
   },
   "az": {
     "discover": "Kəşf et",
@@ -577,7 +605,8 @@
     "edit_profile": "Profili redaktə et",
     "change_avatar": "Avatarı dəyişin",
     "language": "Dil",
-    "sign_out": "Çıxış"
+    "sign_out": "Çıxış",
+    "messages": "Mesajlar"
   },
   "kk": {
     "discover": "Ашу",
@@ -597,7 +626,8 @@
     "edit_profile": "Профильді өңдеу",
     "change_avatar": "Аватарды өзгерту",
     "language": "Тіл",
-    "sign_out": "Шығу"
+    "sign_out": "Шығу",
+    "messages": "Хабарламалар"
   },
   "uz": {
     "discover": "Kashf eting",
@@ -617,7 +647,8 @@
     "edit_profile": "Profilni tahrirlash",
     "change_avatar": "Изменить главную фотографию",
     "language": "Til",
-    "sign_out": "Chiqish"
+    "sign_out": "Chiqish",
+    "messages": "Xabarlar"
   },
   "ar": {
     "discover": "اكتشف",
@@ -637,7 +668,8 @@
     "edit_profile": "تعديل الملف الشخصي",
     "change_avatar": "تغيير الصورة الرمزية",
     "language": "اللغة",
-    "sign_out": "تسجيل الخروج"
+    "sign_out": "تسجيل الخروج",
+    "messages": "الرسائل"
   },
   "he": {
     "discover": "לגלות",
@@ -657,7 +689,8 @@
     "edit_profile": "עריכת הפרופיל",
     "change_avatar": "שנה אווטאר",
     "language": "שפה",
-    "sign_out": "התנתקות"
+    "sign_out": "התנתקות",
+    "messages": "הודעות"
   },
   "fa": {
     "discover": "ادامه مطلب",
@@ -677,7 +710,8 @@
     "edit_profile": "ویرایش نمایه",
     "change_avatar": "تغییر آواتار",
     "language": "زبان",
-    "sign_out": "خروج از سیستم"
+    "sign_out": "خروج از سیستم",
+    "messages": "پیام‌ها"
   },
   "sw": {
     "discover": "Gundua",
@@ -697,7 +731,8 @@
     "edit_profile": "Hariri Wasifu",
     "change_avatar": "Badilisha Avatar",
     "language": "Lugha",
-    "sign_out": "Toka"
+    "sign_out": "Toka",
+    "messages": "Ujumbe"
   },
   "am": {
     "discover": "ያግኙ",
@@ -717,7 +752,8 @@
     "edit_profile": "መገለጫ አርትዕ",
     "change_avatar": "አቫታር ይቀይሩ",
     "language": "ቋንቋ",
-    "sign_out": "ይመዝገቡ"
+    "sign_out": "ይመዝገቡ",
+    "messages": "መልዕክቶች"
   },
   "ha": {
     "discover": "Gano",
@@ -737,7 +773,8 @@
     "edit_profile": "Shirya Profile",
     "change_avatar": "Canza Avatar",
     "language": "Harshe",
-    "sign_out": "Shiga"
+    "sign_out": "Shiga",
+    "messages": "Saƙonni"
   },
   "yo": {
     "discover": "Ṣàwárí",
@@ -757,7 +794,8 @@
     "edit_profile": "Ṣatunkọ Profaili",
     "change_avatar": "Yí Avatar padà",
     "language": "Èdè",
-    "sign_out": "Wọlé"
+    "sign_out": "Wọlé",
+    "messages": "Ìfiránṣẹ́"
   },
   "zu": {
     "discover": "Thola",
@@ -777,7 +815,8 @@
     "edit_profile": "Hlela Iphrofayili",
     "change_avatar": "Shintsha i-Avatar",
     "language": "Ulimi",
-    "sign_out": "Phuma"
+    "sign_out": "Phuma",
+    "messages": "Imilayezo"
   },
   "id": {
     "discover": "Temukan",
@@ -797,7 +836,8 @@
     "edit_profile": "Edit Profil",
     "change_avatar": "Ubah Avatar",
     "language": "Bahasa",
-    "sign_out": "Keluar"
+    "sign_out": "Keluar",
+    "messages": "Pesan"
   },
   "ms": {
     "discover": "Discover",
@@ -817,7 +857,8 @@
     "edit_profile": "Edit Profil",
     "change_avatar": "Tukar Avatar",
     "language": "Bahasa",
-    "sign_out": "Log Keluar"
+    "sign_out": "Log Keluar",
+    "messages": "Mesej"
   },
   "tl": {
     "discover": "Tuklasin",
@@ -837,7 +878,8 @@
     "edit_profile": "I - edit ang Profile",
     "change_avatar": "Palitan ang Avatar",
     "language": "Wika",
-    "sign_out": "Mag - sign Out"
+    "sign_out": "Mag - sign Out",
+    "messages": "Mga Mensahe"
   },
   "vi": {
     "discover": "Khám phá",
@@ -857,7 +899,8 @@
     "edit_profile": "Chỉnh sửa hồ sơ",
     "change_avatar": "Thay đổi hình đại diện",
     "language": "Ngôn ngữ",
-    "sign_out": "Đăng xuất"
+    "sign_out": "Đăng xuất",
+    "messages": "Tin nhắn"
   },
   "th": {
     "discover": "ค้นพบ",
@@ -877,7 +920,8 @@
     "edit_profile": "แก้ไขโปรไฟล์",
     "change_avatar": "เปลี่ยนรูปประจำตัว",
     "language": "ภาษา",
-    "sign_out": "ออกจากระบบ"
+    "sign_out": "ออกจากระบบ",
+    "messages": "ข้อความ"
   },
   "my": {
     "discover": "စူးစမ်းရှာဖွေပါ",
@@ -897,7 +941,8 @@
     "edit_profile": "ပရိုဖိုင်ကို တည်းဖြတ်ပါ",
     "change_avatar": "Avatar ကိုပြောင်းပါ",
     "language": "ဘာသာစကား",
-    "sign_out": "ထွက်ရန်"
+    "sign_out": "ထွက်ရန်",
+    "messages": "စာများ"
   },
   "km": {
     "discover": "ស្វែងយល់",
@@ -917,7 +962,8 @@
     "edit_profile": "កែសម្រួលប្រវត្តិរូប",
     "change_avatar": "ផ្លាស់ប្តូរអវតារ",
     "language": "ភាសា",
-    "sign_out": "ចាកចេញ"
+    "sign_out": "ចាកចេញ",
+    "messages": "សារ"
   },
   "si": {
     "discover": "සොයා ගන්න",
@@ -937,7 +983,8 @@
     "edit_profile": "පැතිකඩ සංස්කරණය කරන්න",
     "change_avatar": "අවතාරය වෙනස් කරන්න",
     "language": "භාෂාව",
-    "sign_out": "ඉවත් වන්න"
+    "sign_out": "ඉවත් වන්න",
+    "messages": "පණිවිඩ"
   },
   "zh": {
     "discover": "发现",
@@ -957,7 +1004,8 @@
     "edit_profile": "编辑个人资料",
     "change_avatar": "更改头像",
     "language": "语言",
-    "sign_out": "退出"
+    "sign_out": "退出",
+    "messages": "消息"
   },
   "ja": {
     "discover": "発見",
@@ -977,7 +1025,8 @@
     "edit_profile": "プロフィールを編集",
     "change_avatar": "アバターを変更",
     "language": "言語",
-    "sign_out": "サインアウト"
+    "sign_out": "サインアウト",
+    "messages": "メッセージ"
   },
   "ko": {
     "discover": "둘러보기",
@@ -997,6 +1046,7 @@
     "edit_profile": "프로필 수정",
     "change_avatar": "아바타 변경",
     "language": "언어",
-    "sign_out": "로그아웃"
+    "sign_out": "로그아웃",
+    "messages": "메시지"
   }
 }

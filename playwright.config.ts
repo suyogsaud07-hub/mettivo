@@ -31,6 +31,11 @@ export default defineConfig({
     baseURL: `http://localhost:${PORT}`,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
+    // The intro splash plays on every full load by design. It is decorative and
+    // honours `prefers-reduced-motion` by rendering nothing, so emulating that
+    // preference keeps each journey on the app content instead of behind a
+    // 3.4-second curtain that would intercept clicks on repeated `page.goto`s.
+    reducedMotion: 'reduce',
     // The PWA install prompt is Chromium-only; a mobile-sized viewport also
     // exercises the bottom navigation, which is the primary way members move
     // around the product.

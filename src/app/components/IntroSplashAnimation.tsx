@@ -22,11 +22,14 @@ import Logo from '@/components/Logo';
  *   not `lockup`: a nested `<svg>` inside another `<svg>` does not render, and
  *   the wordmark belongs to the page this curtain lifts onto anyway.
  *
- * WHY IT PLAYS ONCE, AND WHY IT CAN BE SKIPPED
- *   `sessionStorage` records the play, so it is once per browser SESSION rather
- *   than once per page — otherwise it would sit in front of every in-app
- *   navigation. A visible Skip control is present from the first frame, because
- *   a multi-second unskippable overlay is hostile on a repeat visit.
+ * WHEN IT PLAYS, AND WHY IT CAN BE SKIPPED
+ *   Every full load of the app. There is no `sessionStorage` / `localStorage`
+ *   flag: the intro is not cached or suppressed. Because this component lives in
+ *   the root layout, it runs on the first paint of any entry point — the landing
+ *   page or a deep link such as `/chat/...` — and does NOT re-run on client-side
+ *   navigation, where the layout is preserved rather than remounted. A visible
+ *   Skip control is present from the first frame, because a multi-second
+ *   unskippable overlay is hostile on a repeat visit.
  *
  * REDUCED MOTION IS A HARD GATE, NOT A POLISH ITEM
  *   A full-screen sweeping animation is exactly the pattern that triggers
@@ -35,8 +38,6 @@ import Logo from '@/components/Logo';
  *   mounted, so no frames are committed and no work is done. A CSS `@media`
  *   fallback would not be enough.
  */
-
-const SESSION_KEY = 'mettivo_intro_played';
 
 /** Scene cues in seconds. One place, so the whole story reads at a glance. */
 const T = {
@@ -213,17 +214,11 @@ function Figures({ morphed }: { morphed: boolean }) {
 }
 
 export interface IntroSplashAnimationProps {
-  /**
-   * Play even if this session already saw the intro. Used by the browser
-   * journey; the app itself never passes it.
-   */
-  forcePlay?: boolean;
   /** Called once the curtain has lifted. */
   onDone?: () => void;
 }
 
 export default function IntroSplashAnimation({
-  forcePlay = false,
   onDone,
 }: IntroSplashAnimationProps) {
   /** `null` = undecided. Keeps the server and first client render identical. */
@@ -233,20 +228,14 @@ export default function IntroSplashAnimation({
   const timers = useRef<number[]>([]);
 
   const finish = useCallback(() => {
-    try {
-      window.sessionStorage.setItem(SESSION_KEY, '1');
-    } catch {
-      // Private mode / storage disabled: the intro plays again next load, which
-      // is a far better failure than a blank screen.
-    }
     setIsVisible(false);
     onDone?.();
   }, [onDone]);
 
   useEffect(() => {
-    // Decided on the CLIENT only. Choosing during render would differ between
-    // the server (no sessionStorage) and the client — a hydration mismatch — so
-    // the first paint is always "undecided".
+    // Decided on the CLIENT only. `prefers-reduced-motion` is a browser API, so
+    // it cannot be read during render (the server would disagree and hydration
+    // would mismatch); the first paint is therefore always "undecided".
     if (typeof window === 'undefined') return;
 
     // The decision is made inside a frame callback rather than synchronously in
@@ -257,24 +246,14 @@ export default function IntroSplashAnimation({
     // the server's.
     const decide = () => {
       if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-        // Reveal immediately, and do NOT record it: a member who later turns
-        // reduced motion off should still get the intro once.
+        // Reveal immediately: the timeline is never mounted, so no frames are
+        // committed and no work is done.
         setIsVisible(false);
         return;
       }
 
-      let alreadyPlayed = false;
-      try {
-        alreadyPlayed = window.sessionStorage.getItem(SESSION_KEY) === '1';
-      } catch {
-        alreadyPlayed = false;
-      }
-
-      if (alreadyPlayed && !forcePlay) {
-        setIsVisible(false);
-        return;
-      }
-
+      // Always play. There is no "already seen" check — the intro runs on every
+      // full load of the app.
       setIsVisible(true);
 
       // Scene cues as timers rather than an animation-complete chain, so the
@@ -293,7 +272,7 @@ export default function IntroSplashAnimation({
       timers.current.forEach(window.clearTimeout);
       timers.current = [];
     };
-  }, [finish, forcePlay]);
+  }, [finish]);
 
   const skip = () => {
     timers.current.forEach(window.clearTimeout);

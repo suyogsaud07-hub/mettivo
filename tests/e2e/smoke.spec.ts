@@ -18,6 +18,7 @@ const NAV_HREFS = [
   '/discover',
   '/people',
   '/notifications',
+  '/chat',
   '/moments',
   '/game-zone',
   '/profile/dashboard',
@@ -71,7 +72,7 @@ test.describe('§3.3 — protected navigation and routes (R-12)', () => {
     });
   });
 
-  test('keeps all six bottom-nav destinations, including the three owner-added ones', async ({
+  test('keeps all seven bottom-nav destinations, including the three owner-added ones', async ({
     page,
   }) => {
     await page.goto('/discover');
@@ -142,7 +143,15 @@ test.describe('§3.3 — protected navigation and routes (R-12)', () => {
   test('no protected route renders a bare navigation shell', async ({ page }) => {
     // The general form of the bug above: a route that technically returns 200
     // and paints the nav, but no content of its own.
-    const NAV_LABELS = ['Discover', 'People', 'Notifications', 'Moments', 'Games', 'Profile'];
+    const NAV_LABELS = [
+      'Discover',
+      'People',
+      'Notifications',
+      'Messages',
+      'Moments',
+      'Games',
+      'Profile',
+    ];
 
     for (const path of ['/people', '/notifications', '/moments', '/game-zone']) {
       await page.goto(path);
