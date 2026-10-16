@@ -78,11 +78,11 @@ export default function LandingPage() {
 
   const styles = {
     container: { minHeight: '100vh', backgroundColor: mr.page, color: mr.heading, fontFamily: 'system-ui', display: 'flex', flexDirection: 'column' as const },
-    // `flexWrap` lets the header's right-hand group (language picker + letter
-    // pill) drop below the logo on a narrow phone instead of overflowing.
+    // `flexWrap` lets the header's right-hand group (the language picker) drop
+    // below the logo on a narrow phone instead of overflowing.
     topBar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap' as const, rowGap: '12px', padding: '24px 30px', zIndex: 50 },
-    // The grouped right side: language picker then Founder's Letter, `gap-3`
-    // (12px) apart so the two pills sit as one cluster.
+    // The right-hand cluster. The Founder's Letter is no longer duplicated here;
+    // its single landing-page trigger is the floating bottom-left pill below.
     topBarActions: { display: 'flex', alignItems: 'center', gap: '12px' },
     logoWrapper: { display: 'flex', alignItems: 'center', gap: '12px' },
     logoText: { display: 'flex', flexDirection: 'column' as const, gap: '2px' },
@@ -118,13 +118,6 @@ export default function LandingPage() {
             changes immediately — it is not a decorative menu.
           */}
           <LanguagePicker />
-
-          {/*
-            The founder's Welcome Letter, sitting right beside the language
-            picker so the two pills form one right-hand group. The floating
-            corner pill below points at the same `/letter` route.
-          */}
-          <FounderLetterLink variant="header" label="Letter" />
         </div>
       </div>
 
@@ -176,8 +169,9 @@ export default function LandingPage() {
       </div>
 
       {/*
-        The second entry point to the letter: a floating pill in the bottom-left
-        corner, so it stays visible wherever the visitor has scrolled to.
+        The single landing-page entry point to the letter: a floating pill in the
+        bottom-left corner, so it stays visible wherever the visitor has scrolled
+        to. The former header duplicate beside the language picker was removed.
       */}
       <FounderLetterLink variant="corner" />
     </div>

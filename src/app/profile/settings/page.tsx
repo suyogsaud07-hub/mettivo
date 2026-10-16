@@ -157,7 +157,14 @@ export default function SettingsPage() {
   const handleSignOut = async () => {
     setIsSigningOut(true);
     try {
-      await supabase.auth.signOut();
+      const { error } = await supabase.auth.signOut();
+      // `signOut()` reports failure in `error`, it does not throw. Navigating
+      // regardless would strand the member on /auth while still signed in.
+      if (error) {
+        console.error('Sign out failed:', error.message);
+        showToast('Could not sign you out. Please try again.', 'error');
+        return;
+      }
       router.push('/auth');
     } finally {
       // Loading states must always terminate (AGENTS.md hard constraint 7).

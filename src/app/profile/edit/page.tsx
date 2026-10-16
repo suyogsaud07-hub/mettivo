@@ -358,6 +358,9 @@ export default function EditProfileWizardPage() {
       };
       reader.readAsDataURL(file);
     }
+
+    // Allow re-selecting the same file, which `change` otherwise suppresses.
+    e.target.value = '';
   };
 
   const handleGalleryUpload = (e: React.ChangeEvent<HTMLInputElement>) => {

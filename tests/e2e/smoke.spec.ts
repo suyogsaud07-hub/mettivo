@@ -71,13 +71,13 @@ test.describe('§3.3 — the founder welcome letter', () => {
     await expect(page.getByText('Suyog Saund.')).toBeVisible();
   });
 
-  test('both landing triggers open the letter', async ({ page }) => {
+  test('the landing letter is reachable only from the corner pill', async ({ page }) => {
     await page.goto('/');
 
-    await page.getByTestId('founder-letter-header').click();
-    await expect.poll(() => new URL(page.url()).pathname).toBe('/letter');
+    // The redundant header trigger beside the language picker was removed; the
+    // floating bottom-left pill is the single landing-page entry point.
+    await expect(page.getByTestId('founder-letter-header')).toHaveCount(0);
 
-    await page.goBack();
     await page.getByTestId('founder-letter-corner').click();
     await expect.poll(() => new URL(page.url()).pathname).toBe('/letter');
   });

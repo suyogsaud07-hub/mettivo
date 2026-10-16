@@ -8,13 +8,36 @@ import type { LiveChatMessage } from '@/lib/live/signaling';
  *
  * Messages travel over the same Realtime channel as the call and are never
  * persisted, so closing the call forgets the conversation — the live experience
- * is meant to be ephemeral. The drawer is collapsed by default so it never
- * covers the video until the member wants it.
+ * is meant to be ephemeral. The session hook clears its `messages` array on both
+ * "Next" and "Stop", and this drawer unmounts the instant `phase` leaves `live`,
+ * so the thread and the draft reset together with no extra bookkeeping here.
+ *
+ * The drawer is collapsed by default so it never covers the video until the
+ * member wants it; the toggle carries a badge for messages received while it is
+ * closed.
  */
 
 export interface LiveChatDrawerProps {
   messages: LiveChatMessage[];
   onSend: (text: string) => void;
+}
+
+function ChatBubbleIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+    </svg>
+  );
 }
 
 export default function LiveChatDrawer({ messages, onSend }: LiveChatDrawerProps) {
@@ -61,7 +84,7 @@ export default function LiveChatDrawer({ messages, onSend }: LiveChatDrawerProps
           boxShadow: '0 8px 24px rgba(0,0,0,0.45)',
         }}
       >
-        <span aria-hidden>💬</span> Chat
+        <ChatBubbleIcon /> Chat
         {messages.length > 0 && (
           <span style={{
             minWidth: '18px',
@@ -124,6 +147,9 @@ export default function LiveChatDrawer({ messages, onSend }: LiveChatDrawerProps
       <div
         ref={listRef}
         data-testid="live-chat-messages"
+        role="log"
+        aria-live="polite"
+        aria-label="Live chat messages"
         style={{ flex: 1, overflowY: 'auto', padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: '8px' }}
       >
         {messages.length === 0 ? (
@@ -159,6 +185,7 @@ export default function LiveChatDrawer({ messages, onSend }: LiveChatDrawerProps
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
           placeholder="Type a message…"
+          aria-label="Live chat message"
           maxLength={280}
           style={{
             flex: 1,

@@ -48,6 +48,15 @@ export default function PublicProfilePage({ params }: { params: Promise<{ userId
     let cancelled = false;
 
     async function load() {
+      // Navigating between two member profiles reuses this component, so every
+      // piece of the previous member's state is cleared before the new load,
+      // otherwise the old profile flashes (or sticks) under the new URL.
+      setLoading(true);
+      setLoadError(null);
+      setNotFound(false);
+      setProfile(null);
+      setFollowing(false);
+
       try {
         const {
           data: { user },
@@ -95,6 +104,11 @@ export default function PublicProfilePage({ params }: { params: Promise<{ userId
     let cancelled = false;
 
     async function loadPosts() {
+      // Same reasoning as the profile effect: drop the prior member's posts.
+      setPostsLoading(true);
+      setPostsError(null);
+      setPosts([]);
+
       try {
         const rows = await fetchUserMoments(userId);
         if (!cancelled) {

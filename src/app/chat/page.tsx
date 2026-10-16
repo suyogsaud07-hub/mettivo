@@ -47,56 +47,61 @@ export default function ChatListPage() {
     let isMounted = true;
 
     const loadConversations = async () => {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      try {
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
 
-      if (!isMounted) return;
+        if (!isMounted) return;
 
-      if (!user) {
-        router.replace('/auth');
-        return;
+        if (!user) {
+          router.replace('/auth');
+          return;
+        }
+
+        const { data, error } = await supabase
+          .from('messages')
+          .select('id, match_id, sender_id, content, created_at')
+          .order('created_at', { ascending: false })
+          .limit(200);
+
+        if (!isMounted) return;
+
+        if (error) {
+          console.error('Failed to load conversations:', error.message);
+          return;
+        }
+
+        // Rows arrive newest-first, so the first row seen per match is the latest.
+        const seen = new Set<string>();
+        const summaries: ConversationSummary[] = [];
+
+        for (const row of (data ?? []) as MessageRow[]) {
+          if (seen.has(row.match_id)) continue;
+          seen.add(row.match_id);
+          summaries.push({
+            matchId: row.match_id,
+            lastMessage: row.content,
+            lastMessageAt: row.created_at,
+            isMine: row.sender_id === user.id,
+            unread: 0,
+          });
+        }
+
+        // M11: the badge comes from `unread_counts()` in the database, so it
+        // agrees with the messages RLS actually lets this member see.
+        const counts = await fetchUnreadCounts();
+        if (!isMounted) return;
+
+        setConversations(
+          summaries.map((summary) => ({ ...summary, unread: counts[summary.matchId] ?? 0 }))
+        );
+      } catch (err) {
+        // A rejected auth/unread call must not leave the list spinning forever.
+        console.error('Failed to load conversations:', err);
+      } finally {
+        if (isMounted) setLoading(false);
       }
-
-      const { data, error } = await supabase
-        .from('messages')
-        .select('id, match_id, sender_id, content, created_at')
-        .order('created_at', { ascending: false })
-        .limit(200);
-
-      if (!isMounted) return;
-
-      if (error) {
-        console.error('Failed to load conversations:', error.message);
-        setLoading(false);
-        return;
-      }
-
-      // Rows arrive newest-first, so the first row seen per match is the latest.
-      const seen = new Set<string>();
-      const summaries: ConversationSummary[] = [];
-
-      for (const row of (data ?? []) as MessageRow[]) {
-        if (seen.has(row.match_id)) continue;
-        seen.add(row.match_id);
-        summaries.push({
-          matchId: row.match_id,
-          lastMessage: row.content,
-          lastMessageAt: row.created_at,
-          isMine: row.sender_id === user.id,
-          unread: 0,
-        });
-      }
-
-      // M11: the badge comes from `unread_counts()` in the database, so it
-      // agrees with the messages RLS actually lets this member see.
-      const counts = await fetchUnreadCounts();
-      if (!isMounted) return;
-
-      setConversations(
-        summaries.map((summary) => ({ ...summary, unread: counts[summary.matchId] ?? 0 }))
-      );
-      setLoading(false);
     };
 
     void loadConversations();

@@ -397,6 +397,8 @@ export function useLiveSession(): UseLiveSession {
     async (message: AnswerMessage) => {
       const me = myPeerId();
       if (!isAddressedTo(message, me)) return;
+      // Only the peer we are currently negotiating with may answer us.
+      if (message.from !== partnerRef.current) return;
       const pc = pcRef.current;
       if (!pc) return;
       try {
@@ -415,6 +417,9 @@ export function useLiveSession(): UseLiveSession {
     async (message: IceMessage) => {
       const me = myPeerId();
       if (!isAddressedTo(message, me)) return;
+      // ICE is only meaningful from the peer we currently hold a connection to;
+      // any other sender is ignored so a third party cannot poison the stream.
+      if (message.from !== partnerRef.current) return;
       const pc = pcRef.current;
       if (!pc || !pc.remoteDescription) {
         pendingCandidatesRef.current.push(message.candidate);
@@ -449,6 +454,9 @@ export function useLiveSession(): UseLiveSession {
     (message: ChatSignalMessage) => {
       const me = myPeerId();
       if (!isAddressedTo(message, me)) return;
+      // Chat is scoped to the live session: accept text only from the peer we
+      // are actually connected to, never from an unrelated room participant.
+      if (message.from !== partnerRef.current) return;
       setMessages((prev) => [
         ...prev,
         {
@@ -466,6 +474,15 @@ export function useLiveSession(): UseLiveSession {
 
   const ensureChannel = useCallback(async (): Promise<RealtimeChannel | null> => {
     if (channelRef.current && subscribedRef.current) return channelRef.current;
+
+    // Reaching here means there is no channel, or the previous one never
+    // subscribed (subscribe errored/timed out). Remove any stale channel before
+    // replacing it: overwriting `channelRef` alone leaks the dead socket.
+    if (channelRef.current) {
+      void supabase.removeChannel(channelRef.current);
+      channelRef.current = null;
+      subscribedRef.current = false;
+    }
 
     const me = myPeerId();
     const channel = supabase.channel(LIVE_CHANNEL_NAME, {
@@ -525,6 +542,12 @@ export function useLiveSession(): UseLiveSession {
           settle();
         } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
           console.error('[live] realtime channel status:', status);
+          // Leave no dead channel behind, or a later retry silently leaks it.
+          if (channelRef.current === channel) {
+            channelRef.current = null;
+            subscribedRef.current = false;
+          }
+          void supabase.removeChannel(channel);
           settle();
         }
       });

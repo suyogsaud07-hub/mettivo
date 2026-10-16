@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useState, use, useSyncExternalStore } from 'react';
+import { useEffect, useState, use, useRef, useSyncExternalStore } from 'react';
 import type { RealtimePostgresChangesPayload } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { markConversationRead } from '@/lib/messages';
+import { blockMember, BlockingError } from '@/lib/blocking';
 import { type MessageRow } from '@/lib/types';
 import {
   NO_RESTRICTIONS,
@@ -82,8 +83,25 @@ export default function ChatPage({
     () => null
   );
 
+  /**
+   * Stable references to the identities the realtime handler needs.
+   *
+   * The subscription effect may only depend on `matchId`: if it depended on
+   * `currentUserId`/`otherUserId` — which the effect itself sets — every message
+   * that resolved `otherUserId` would tear the channel down and rebuild it, and
+   * the fresh `init()` would overwrite `messages` with the first fetch, erasing
+   * realtime additions. Refs keep the handler current without re-subscribing.
+   */
+  const currentUserIdRef = useRef<string | null>(null);
+  const otherUserIdRef = useRef<string | null>(null);
+
   useEffect(() => {
     let isMounted = true;
+
+    const applyOtherUserId = (id: string) => {
+      otherUserIdRef.current = id;
+      if (isMounted) setOtherUserId(id);
+    };
 
     const init = async () => {
       const {
@@ -91,6 +109,7 @@ export default function ChatPage({
       } = await supabase.auth.getUser();
 
       if (!isMounted) return;
+      currentUserIdRef.current = user?.id ?? null;
       if (user) setCurrentUserId(user.id);
 
       // M21: a banned or suspended member can read but not compose. The
@@ -118,15 +137,30 @@ export default function ChatPage({
 
       // M11: opening a thread reads it. The badge is computed server-side from
       // `last_read_at`, so it must be stamped here or the count never clears.
-      void markConversationRead(matchId);
+      // `markConversationRead` throws only when there is no session; this is a
+      // best-effort side effect and must never surface as an unhandled rejection.
+      markConversationRead(matchId).catch(() => undefined);
 
-      // Determine the other user in the match
-      if (user && messagesData.length > 0) {
-        const otherSender = messagesData.find(m => m.sender_id !== user.id);
-        if (otherSender) {
-          setOtherUserId(otherSender.sender_id);
-        }
+      if (!user) return;
+
+      // Resolve the other participant. Prefer the messages we already have, but
+      // fall back to the match row so a brand-new, empty conversation still has
+      // a report/block target (otherwise Report is disabled and Block is a no-op).
+      const otherSender = messagesData.find((m) => m.sender_id !== user.id);
+      if (otherSender) {
+        applyOtherUserId(otherSender.sender_id);
+        return;
       }
+
+      const { data: matchRow } = await supabase
+        .from('matches')
+        .select('user_a, user_b')
+        .eq('id', matchId)
+        .maybeSingle();
+
+      if (!isMounted || !matchRow) return;
+      const other = matchRow.user_a === user.id ? matchRow.user_b : matchRow.user_a;
+      if (other) applyOtherUserId(other);
     };
 
     void init();
@@ -143,11 +177,14 @@ export default function ChatPage({
         },
         (payload: RealtimePostgresChangesPayload<MessageRow>) => {
           const inserted = payload.new as MessageRow;
-          setMessages((prev) => [...prev, inserted]);
+          // De-dupe: the sender appends locally on a successful insert, so the
+          // same row can arrive twice (once from the send, once from realtime).
+          setMessages((prev) =>
+            prev.some((m) => m.id === inserted.id) ? prev : [...prev, inserted]
+          );
 
-          // Also update otherUserId if we haven't set it yet
-          if (!otherUserId && inserted.sender_id !== currentUserId) {
-            setOtherUserId(inserted.sender_id);
+          if (!otherUserIdRef.current && inserted.sender_id !== currentUserIdRef.current) {
+            applyOtherUserId(inserted.sender_id);
           }
         }
       )
@@ -155,26 +192,41 @@ export default function ChatPage({
 
     return () => {
       isMounted = false;
-      supabase.removeChannel(channel);
+      void supabase.removeChannel(channel);
     };
-  }, [matchId, currentUserId, otherUserId]);
+  }, [matchId]);
 
   const sendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
 
     const content = newMessage.trim();
-    if (!content || !currentUserId) return;
+    const me = currentUserIdRef.current;
+    if (!content || !me) return;
 
-    const { error: insertError } = await supabase.from('messages').insert({
-      match_id: matchId,
-      sender_id: currentUserId,
-      content,
-    });
+    // `.select().single()` returns the stored row so it can be shown at once,
+    // independently of whether Realtime is enabled for `messages`. The realtime
+    // INSERT de-dupes by id, so there is no double bubble either way.
+    const { data, error: insertError } = await supabase
+      .from('messages')
+      .insert({
+        match_id: matchId,
+        sender_id: me,
+        content,
+      })
+      .select('id, match_id, sender_id, content, created_at')
+      .single();
 
     if (insertError) {
       console.error('Failed to send message:', insertError.message);
       setError('Message could not be sent.');
       return;
+    }
+
+    const inserted = data as MessageRow | null;
+    if (inserted) {
+      setMessages((prev) =>
+        prev.some((m) => m.id === inserted.id) ? prev : [...prev, inserted]
+      );
     }
 
     setError(null);
@@ -187,40 +239,26 @@ export default function ChatPage({
   };
 
   const handleBlock = async () => {
-    if (!otherUserId) return;
+    const target = otherUserIdRef.current;
+    if (!target) return;
 
     setBlocking(true);
     setError(null);
 
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        setError('You must be signed in to block a user.');
-        return;
-      }
-
-      const { error: insertError } = await supabase
-        .from('blocked_users')
-        .insert({
-          blocker_id: user.id,
-          blocked_user_id: otherUserId,
-        });
-
-      if (insertError) {
-        if (insertError.code === '23505') {
-          setError('You have already blocked this user.');
-        } else {
-          console.error('Failed to block user:', insertError.message);
-          setError(`Could not block user: ${insertError.message}`);
-        }
-        return;
-      }
-
+      // `blockMember` records the block AND severs the match in one transaction.
+      // Inserting straight into `blocked_users` skipped that severing, leaving a
+      // dead conversation that still listed the member.
+      await blockMember(target);
       setMenuOpen(false);
       alert('User blocked successfully. They will no longer appear in your discover feed or messages.');
     } catch (err) {
-      console.error('Unexpected error blocking user:', err);
-      setError('An unexpected error occurred. Please try again.');
+      if (err instanceof BlockingError) {
+        setError(err.message);
+      } else {
+        console.error('Unexpected error blocking user:', err);
+        setError('An unexpected error occurred. Please try again.');
+      }
     } finally {
       setBlocking(false);
     }
