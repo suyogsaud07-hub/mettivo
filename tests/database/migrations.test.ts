@@ -16,6 +16,7 @@ import {
   queryAs,
   rowCount,
   scalarAs,
+  seed,
 } from './harness';
 
 /**
@@ -124,7 +125,7 @@ describe('M6 — row level security', () => {
   });
 });
 
-describe('M10 — likes and mutual matching', () => {
+describe('M10 — likes record interest but never match (M23: follows only)', () => {
   let db: PGlite;
   beforeAll(async () => {
     db = await createTestDb();
@@ -144,11 +145,12 @@ describe('M10 — likes and mutual matching', () => {
     expect(result.match_id).toBeNull();
   });
 
-  it('creates exactly one match when the interest is mutual', async () => {
+  it('does not create a match from a mutual like (follows only)', async () => {
+    // The interest is mutual, but matching is follow-only as of M23.
     const result = await like(USER_B, USER_A);
-    expect(result.matched).toBe(true);
-    expect(typeof result.match_id).toBe('string');
-    expect(await rowCount(db, 'matches')).toBe(1);
+    expect(result.matched).toBe(false);
+    expect(result.match_id).toBeNull();
+    expect(await rowCount(db, 'matches')).toBe(0);
   });
 
   it('creates no match for a pass', async () => {
@@ -183,7 +185,9 @@ describe('M10 — likes and mutual matching', () => {
     const seen = (userId: string) =>
       scalarAs(db, userId, `select count(*)::int as n from public.matches`);
 
-    expect(await seen(USER_A)).toBe(1);
+    // No matches exist yet (likes never match); both members still see nothing
+    // that belongs to anyone else.
+    expect(await seen(USER_A)).toBe(0);
     expect(await seen(USER_D)).toBe(0);
   });
 });
@@ -192,15 +196,25 @@ describe('notifications', () => {
   let db: PGlite;
   beforeAll(async () => {
     db = await createTestDb();
-    // A likes B, B likes back (mutual -> match), a follow, and a message.
+    // A and B follow each other (mutual -> match), C follows B one-way, and A
+    // likes B (interest, no match).
     await asUser(db, USER_A, () =>
-      db.query(`select public.record_like('${USER_B}'::uuid, true)`)
+      db.exec(
+        `insert into public.follows (follower_id, following_id)
+         values ('${USER_A}','${USER_B}') on conflict do nothing`
+      )
     );
     await asUser(db, USER_B, () =>
-      db.query(`select public.record_like('${USER_A}'::uuid, true)`)
+      db.exec(
+        `insert into public.follows (follower_id, following_id)
+         values ('${USER_B}','${USER_A}') on conflict do nothing`
+      )
     );
     await asUser(db, USER_C, () =>
       db.exec(`insert into public.follows values ('${USER_C}','${USER_B}')`)
+    );
+    await asUser(db, USER_A, () =>
+      db.query(`select public.record_like('${USER_B}'::uuid, true)`)
     );
   });
 
@@ -387,6 +401,162 @@ describe('moments feed', () => {
         )
       )
     ).rejects.toThrow();
+  });
+});
+
+describe('M22 — post privacy and archive', () => {
+  let db: PGlite;
+
+  beforeAll(async () => {
+    db = await createTestDb();
+  });
+
+  const addPost = async (
+    author: string,
+    visibility: string,
+    mediaType: string | null = null
+  ): Promise<string> => {
+    const rows = await queryAs<{ id: string }>(
+      db,
+      author,
+      `insert into public.moments (author_id, caption, visibility, media_type)
+       values ('${author}', 'p', '${visibility}', ${
+         mediaType === null ? 'null' : `'${mediaType}'`
+       }) returning id`
+    );
+    return rows[0].id;
+  };
+
+  const inFeed = (userId: string, id: string) =>
+    scalarAs(db, userId, `select count(*)::int as n from public.moment_feed where id = '${id}'`);
+  const inArchive = (userId: string, id: string) =>
+    scalarAs(db, userId, `select count(*)::int as n from public.moment_archive where id = '${id}'`);
+
+  it('shows a public post to any signed-in member', async () => {
+    const id = await addPost(USER_A, 'public');
+    expect(await inFeed(USER_B, id)).toBe(1);
+  });
+
+  it('hides an only_me post from everyone but the author', async () => {
+    const id = await addPost(USER_A, 'only_me');
+    expect(await inFeed(USER_B, id)).toBe(0);
+    expect(await inFeed(USER_A, id)).toBe(1);
+  });
+
+  it('shows a matches-tier post to a follower but not a stranger', async () => {
+    const id = await addPost(USER_A, 'matches');
+    expect(await inFeed(USER_B, id)).toBe(0);
+
+    await seed(
+      db,
+      `insert into public.follows (follower_id, following_id)
+       values ('${USER_C}','${USER_A}')`
+    );
+    expect(await inFeed(USER_C, id)).toBe(1);
+  });
+
+  it('shows a matches-tier post to a mutual match', async () => {
+    const id = await addPost(USER_A, 'matches');
+    await seed(
+      db,
+      `insert into public.matches (user_a, user_b) values ('${USER_D}','${USER_A}')`
+    );
+    expect(await inFeed(USER_D, id)).toBe(1);
+  });
+
+  it('keeps an archived post out of the feed and off a stranger’s view', async () => {
+    const id = await addPost(USER_D, 'public');
+    const rows = await queryAs<{ moved: boolean }>(
+      db,
+      USER_D,
+      `select public.archive_moment('${id}') as moved`
+    );
+    expect(rows[0].moved).toBe(true);
+
+    expect(await inFeed(USER_D, id)).toBe(0);
+    expect(await inFeed(USER_A, id)).toBe(0);
+    expect(await inArchive(USER_D, id)).toBe(1);
+    expect(await inArchive(USER_A, id)).toBe(0);
+  });
+
+  it('restores a post to the profile and the public tier', async () => {
+    const id = await addPost(USER_D, 'only_me');
+    await queryAs(db, USER_D, `select public.archive_moment('${id}') as moved`);
+    const rows = await queryAs<{ moved: boolean }>(
+      db,
+      USER_D,
+      `select public.restore_moment('${id}') as moved`
+    );
+    expect(rows[0].moved).toBe(true);
+    expect(await inFeed(USER_D, id)).toBe(1);
+
+    const tier = await queryAs<{ visibility: string }>(
+      db,
+      USER_D,
+      `select visibility from public.moments where id = '${id}'`
+    );
+    expect(tier[0].visibility).toBe('public');
+  });
+
+  it('refuses to archive or restore another member’s post', async () => {
+    const id = await addPost(USER_A, 'public');
+    const archived = await queryAs<{ moved: boolean }>(
+      db,
+      USER_B,
+      `select public.archive_moment('${id}') as moved`
+    );
+    const restored = await queryAs<{ moved: boolean }>(
+      db,
+      USER_D,
+      `select public.restore_moment('${id}') as moved`
+    );
+    expect(archived[0].moved).toBe(false);
+    expect(restored[0].moved).toBe(false);
+    expect(await inFeed(USER_A, id)).toBe(1);
+  });
+
+  it('caps the archive at five photos and two videos', async () => {
+    const archive = async (mediaType: string) => {
+      const id = await addPost(USER_C, 'public', mediaType);
+      return queryAs<{ moved: boolean }>(
+        db,
+        USER_C,
+        `select public.archive_moment('${id}') as moved`
+      );
+    };
+
+    for (let i = 0; i < 5; i += 1) {
+      expect((await archive('image'))[0].moved).toBe(true);
+    }
+    await expect(archive('image')).rejects.toThrow(/archive_limit:photo/);
+
+    for (let i = 0; i < 2; i += 1) {
+      expect((await archive('video'))[0].moved).toBe(true);
+    }
+    await expect(archive('video')).rejects.toThrow(/archive_limit:video/);
+  });
+
+  it('reports archive usage for the capacity meter', async () => {
+    const rows = await queryAs<{
+      photo_count: number;
+      video_count: number;
+      photo_limit: number;
+      video_limit: number;
+    }>(
+      db,
+      USER_C,
+      `select photo_count, video_count, photo_limit, video_limit from public.moment_archive_counts()`
+    );
+    expect(rows[0]).toMatchObject({
+      photo_count: 5,
+      video_count: 2,
+      photo_limit: 5,
+      video_limit: 2,
+    });
+  });
+
+  it('never exposes the archive to anonymous callers', async () => {
+    expect(await anonReadCount(db, `select count(*)::int as n from public.moment_archive`)).toBe(0);
   });
 });
 

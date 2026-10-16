@@ -1,3 +1,4 @@
+import { isMissingColumnError } from '@/lib/postgrest-errors';
 import { supabase } from '@/lib/supabase';
 import type { NotificationActor, NotificationRow, NotificationType } from '@/lib/types';
 
@@ -110,18 +111,86 @@ export function formatRelativeTime(iso: string, now: number = Date.now()): strin
 
 /** Newest first. RLS restricts the result to the caller's own rows. */
 export async function fetchNotifications(limit = 100): Promise<NotificationRow[]> {
-  const { data, error } = await supabase
+  // `body` arrived in a later migration (M21). A deployment that is behind would
+  // otherwise fail the whole read with 42703, so degrade to the columns that
+  // exist rather than blanking the page.
+  const withBody = await supabase
     .from('notifications')
     .select('id, user_id, actor_id, type, entity_id, body, read_at, created_at')
     .order('created_at', { ascending: false })
     .limit(limit);
 
-  if (error) {
-    console.error('[notifications] load failed:', error.message);
-    throw new NotificationError(error.message, error.code);
+  if (!withBody.error) return (withBody.data ?? []) as NotificationRow[];
+
+  if (!isMissingColumnError(withBody.error)) {
+    console.error('[notifications] load failed:', withBody.error.message);
+    throw new NotificationError(withBody.error.message, withBody.error.code);
   }
 
-  return (data ?? []) as NotificationRow[];
+  const withoutBody = await supabase
+    .from('notifications')
+    .select('id, user_id, actor_id, type, entity_id, read_at, created_at')
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  if (withoutBody.error) {
+    console.error('[notifications] load failed:', withoutBody.error.message);
+    throw new NotificationError(withoutBody.error.message, withoutBody.error.code);
+  }
+
+  return ((withoutBody.data ?? []) as Omit<NotificationRow, 'body'>[]).map((row) => ({
+    ...row,
+    body: null,
+  }));
+}
+
+/**
+ * Unread count for the signed-in member, used by the navigation badge.
+ *
+ * There is no INSERT policy on `notifications`, so this only ever counts the
+ * caller's own rows; a failure degrades to 0 rather than breaking the nav.
+ */
+export async function fetchUnreadNotificationCount(): Promise<number> {
+  const { count, error } = await supabase
+    .from('notifications')
+    .select('id', { count: 'exact', head: true })
+    .is('read_at', null);
+
+  if (error) {
+    console.error('[notifications] unread count failed:', error.message);
+    return 0;
+  }
+
+  return count ?? 0;
+}
+
+/**
+ * Streams INSERT and UPDATE notifications for the signed-in member.
+ *
+ * The badge uses this so a new notification appears — and a read one is
+ * cleared — without a refresh. Returns an unsubscribe function.
+ */
+export function subscribeToNotificationChanges(
+  userId: string,
+  onChange: () => void
+): () => void {
+  const channel = supabase
+    .channel(`notifications-count:${userId}`)
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'notifications',
+        filter: `user_id=eq.${userId}`,
+      },
+      () => onChange()
+    )
+    .subscribe();
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
 }
 
 /** Display data for the members referenced by a notification list. */

@@ -13,14 +13,27 @@ import {
   PROFILE_PETS_OPTIONS,
   PROFILE_SMOKING_OPTIONS,
 } from '@/lib/profile-options';
-import { MomentError, fetchUserMoments, likeMoment, unlikeMoment } from '@/lib/moments';
+import {
+  MomentError,
+  deleteMoment,
+  archiveMoment,
+  fetchUserMoments,
+  likeMoment,
+  setMomentVisibility,
+  unlikeMoment,
+  updateMomentCaption,
+} from '@/lib/moments';
 import { isMissingColumnError } from '@/lib/postgrest-errors';
-import type { MomentAuthor, MomentFeedRow } from '@/lib/types';
+import type { MomentAuthor, MomentFeedRow, MomentVisibility } from '@/lib/types';
 import MobileNav from '../../components/layout/MobileNav';
 import ProfileHeader from '../../components/profile/ProfileHeader';
 import ProfileTabs, { type ProfileTab } from '../../components/profile/ProfileTabs';
 import ProfileDetails from '../../components/profile/ProfileDetails';
 import ProfileMoments from '../../components/profile/ProfileMoments';
+import ProfileActionMenu from '../../components/profile/ProfileActionMenu';
+import ProfileViewAsBanner from '../../components/profile/ProfileViewAsBanner';
+import ArchivePanel from '../../components/profile/ArchivePanel';
+import PostOptionsMenu from '../../components/profile/PostOptionsMenu';
 
 /** The oldest age the dashboard will accept when a member edits their age. */
 const MAX_AGE = 120;
@@ -44,6 +57,8 @@ interface Profile {
   politics: string;
   drinking: string;
   smoking: string;
+  /** M22 short headline, shown under the name. Optional. */
+  status: string | null;
   followers_count: number;
   following_count: number;
   matches_count: number;
@@ -140,18 +155,23 @@ const EDITOR_FIELDS: Record<EditableKey, FieldConfig> = {
 const PROFILE_CORE_COLUMNS =
   'id, display_name, age, gender, city, country, avatar_url, photos, bio, intention, looking_for, hobbies, pets, personality, religion, politics, drinking, smoking' as const;
 
-const PROFILE_COUNT_COLUMNS =
-  'followers_count, following_count, matches_count, profile_likes_count' as const;
+/**
+ * The M18 counters and the M22 status headline. Both are opt-in for the same
+ * reason: on a deployment behind these migrations, naming them fails with
+ * `42703`, so they are dropped together and the profile still renders.
+ */
+const PROFILE_OPTIONAL_COLUMNS =
+  'followers_count, following_count, matches_count, profile_likes_count, status' as const;
 
-const PROFILE_COLUMNS = `${PROFILE_CORE_COLUMNS}, ${PROFILE_COUNT_COLUMNS}` as const;
+const PROFILE_COLUMNS = `${PROFILE_CORE_COLUMNS}, ${PROFILE_OPTIONAL_COLUMNS}` as const;
 
-/** The row shape when the optional counter columns are not available. */
+/** The row shape when the optional counter/status columns are not available. */
 type ProfileCoreRow = Omit<
   Profile,
-  'followers_count' | 'following_count' | 'matches_count' | 'profile_likes_count'
+  'followers_count' | 'following_count' | 'matches_count' | 'profile_likes_count' | 'status'
 >;
 
-/** Fills the counters with zero so a partially migrated row still renders. */
+/** Fills the counters and status so a partially migrated row still renders. */
 function withDefaultCounts(row: ProfileCoreRow): Profile {
   return {
     ...row,
@@ -159,6 +179,7 @@ function withDefaultCounts(row: ProfileCoreRow): Profile {
     following_count: 0,
     matches_count: 0,
     profile_likes_count: 0,
+    status: null,
   };
 }
 
@@ -175,6 +196,17 @@ export default function ProfileDashboardPage() {
   const [posts, setPosts] = useState<MomentFeedRow[]>([]);
   const [postsLoading, setPostsLoading] = useState(true);
   const [postsError, setPostsError] = useState<string | null>(null);
+
+  // M22 profile management: a visitor preview, post search, the status headline
+  // editor and the archive sheet.
+  const [viewAs, setViewAs] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusOpen, setStatusOpen] = useState(false);
+  const [statusDraft, setStatusDraft] = useState('');
+  const [statusSaving, setStatusSaving] = useState(false);
+  const [statusError, setStatusError] = useState<string | null>(null);
+  const [archiveOpen, setArchiveOpen] = useState(false);
 
   // Inline editor state. `editor` is the field being edited, or null when the
   // sheet is closed. `textDraft` backs the single-value inputs, `listDraft` the
@@ -331,6 +363,16 @@ export default function ProfileDashboardPage() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [editor, saving]);
+
+  // Same for the profile-status sheet.
+  useEffect(() => {
+    if (!statusOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !statusSaving) setStatusOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [statusOpen, statusSaving]);
 
   const showToast = (message: string, tone: 'success' | 'error' = 'success') => {
     setToast({ message, tone });
@@ -603,6 +645,90 @@ export default function ProfileDashboardPage() {
   // Comments and shares are owned by MomentCard itself; the dashboard only owns
   // the optimistic like state shared across the list.
 
+  // --- M22 profile management ---------------------------------------------- //
+
+  const refreshPosts = async () => {
+    if (!profileId) return;
+    try {
+      const rows = await fetchUserMoments(profileId);
+      setPosts(rows);
+      setPostsError(null);
+    } catch (err) {
+      console.error('Failed to refresh your posts:', err);
+      showToast('Could not refresh your posts.', 'error');
+    }
+  };
+
+  // These four are passed to `PostOptionsMenu`, which surfaces any thrown error
+  // in its own sheet. They update local state only after the write is confirmed.
+  const handleArchivePost = async (post: MomentFeedRow) => {
+    const moved = await archiveMoment(post.id);
+    if (!moved) throw new MomentError('That post could not be archived.');
+    setPosts((prev) => prev.filter((item) => item.id !== post.id));
+    showToast('Moved to archive');
+  };
+
+  const handleDeletePost = async (post: MomentFeedRow) => {
+    await deleteMoment(post.id);
+    setPosts((prev) => prev.filter((item) => item.id !== post.id));
+    showToast('Post deleted');
+  };
+
+  const handleEditCaption = async (post: MomentFeedRow, caption: string) => {
+    await updateMomentCaption(post.id, caption);
+    setPosts((prev) =>
+      prev.map((item) => (item.id === post.id ? { ...item, caption: caption.trim() || null } : item))
+    );
+    showToast('Caption updated');
+  };
+
+  const handleChangeVisibility = async (post: MomentFeedRow, visibility: MomentVisibility) => {
+    await setMomentVisibility(post.id, visibility);
+    setPosts((prev) => prev.map((item) => (item.id === post.id ? { ...item, visibility } : item)));
+    showToast('Privacy updated');
+  };
+
+  const openStatus = () => {
+    setStatusDraft(profile?.status ?? '');
+    setStatusError(null);
+    setStatusOpen(true);
+  };
+
+  const handleSaveStatus = async () => {
+    if (!profile) return;
+    const value = statusDraft.trim();
+    setStatusSaving(true);
+    setStatusError(null);
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .update({ status: value || null })
+        .eq('id', profile.id)
+        .select('id');
+
+      if (error) {
+        setStatusError(`We could not save that: ${error.message}`);
+        return;
+      }
+      if (!data || data.length === 0) {
+        setStatusError('We could not save that change. Please try again.');
+        return;
+      }
+      setProfile((prev) => (prev ? { ...prev, status: value || null } : prev));
+      showToast('Status updated');
+      setStatusOpen(false);
+    } finally {
+      setStatusSaving(false);
+    }
+  };
+
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+  const displayedPosts = posts
+    .filter((post) => (viewAs ? post.visibility === 'public' : true))
+    .filter((post) =>
+      normalizedQuery ? (post.caption ?? '').toLowerCase().includes(normalizedQuery) : true
+    );
+
   const calculateCompletion = () => {
     if (!profile) return 0;
     const fields = [
@@ -691,6 +817,11 @@ export default function ProfileDashboardPage() {
     postsEmpty: { margin: '0 20px', backgroundColor: '#211A28', border: '1px dashed #4A1828', borderRadius: '20px', padding: '40px 24px', textAlign: 'center' as const, color: '#B58A83', fontSize: '14px' },
     postsEmptyTitle: { fontSize: '16px', fontWeight: 700, color: '#EAE2F0', marginBottom: '8px' },
     postsError: { margin: '0 20px 16px 20px', backgroundColor: '#3B1220', border: '1px solid #7F1D2E', color: '#FCA5B5', borderRadius: '14px', padding: '12px 16px', fontSize: '13px' },
+    statusPill: { display: 'flex', alignItems: 'center', gap: '8px', alignSelf: 'center', margin: '0 20px 20px 20px', padding: '8px 16px', borderRadius: '999px', backgroundColor: '#241C2C', border: '1px solid #4A1828', color: '#D8B38A', fontSize: '13px', fontWeight: 600, maxWidth: 'calc(100% - 40px)' },
+    searchWrap: { display: 'flex', alignItems: 'center', gap: '10px', margin: '0 20px 16px 20px', padding: '4px 8px 4px 14px', borderRadius: '16px', backgroundColor: '#211A28', border: '1px solid #34283F' },
+    searchIcon: { fontSize: '15px', flexShrink: 0 },
+    searchInput: { flex: 1, minWidth: 0, backgroundColor: 'transparent', border: 'none', outline: 'none', color: '#EAE2F0', fontSize: '14px', padding: '12px 0' },
+    searchClear: { width: '32px', height: '32px', borderRadius: '50%', border: 'none', backgroundColor: 'rgba(255,255,255,0.08)', color: '#EAE2F0', fontSize: '18px', cursor: 'pointer', flexShrink: 0 },
     overlay: { position: 'fixed' as const, inset: 0, backgroundColor: 'rgba(8, 6, 10, 0.72)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 100, padding: '16px' },
     modal: { width: '100%', maxWidth: '440px', backgroundColor: '#211A28', borderRadius: '24px', padding: '24px', border: '1px solid #34283F', marginBottom: '16px', maxHeight: '80vh', overflowY: 'auto' as const },
     modalTitle: { fontSize: '18px', fontWeight: 700, color: '#EAE2F0', marginBottom: '4px' },
@@ -944,7 +1075,17 @@ export default function ProfileDashboardPage() {
       <div style={styles.topBar}>
         <button style={styles.iconButton} onClick={() => router.back()} aria-label="Back"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M15 18l-6-6 6-6"/></svg></button>
         <div style={styles.title}>My Profile</div>
-        <button style={styles.iconButton} onClick={() => router.push('/profile/settings')} aria-label="Settings"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg></button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          {!viewAs && (
+            <ProfileActionMenu
+              onViewAs={() => setViewAs(true)}
+              onSearch={() => setSearchOpen(true)}
+              onProfileStatus={openStatus}
+              onArchive={() => setArchiveOpen(true)}
+            />
+          )}
+          <button style={styles.iconButton} onClick={() => router.push('/profile/settings')} aria-label="Settings"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg></button>
+        </div>
       </div>
 
       <ProfileHeader
@@ -962,6 +1103,41 @@ export default function ProfileDashboardPage() {
         likes={profile.profile_likes_count}
         onStatNavigate={(key) => router.push(`/profile/stats/${key}`)}
       />
+
+      {viewAs && <ProfileViewAsBanner onExit={() => setViewAs(false)} />}
+
+      {!viewAs && profile.status?.trim() ? (
+        <div style={styles.statusPill} data-testid="profile-status-pill">
+          <span aria-hidden>💬</span>
+          <span>{profile.status}</span>
+        </div>
+      ) : null}
+
+      {!viewAs && searchOpen && (
+        <div style={styles.searchWrap}>
+          <span aria-hidden style={styles.searchIcon}>🔍</span>
+          <input
+            style={styles.searchInput}
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            placeholder="Search your posts by caption…"
+            aria-label="Search your posts"
+            data-testid="profile-search-input"
+            autoFocus
+          />
+          <button
+            type="button"
+            style={styles.searchClear}
+            onClick={() => {
+              setSearchQuery('');
+              setSearchOpen(false);
+            }}
+            aria-label="Close search"
+          >
+            ×
+          </button>
+        </div>
+      )}
 
       <div style={styles.section}>
         <div style={styles.sectionHeader}>
@@ -985,21 +1161,44 @@ export default function ProfileDashboardPage() {
 
       {activeTab === 'feed' && (
         <ProfileMoments
-          posts={posts}
+          posts={displayedPosts}
           author={author}
           isOwn
           currentUserId={profile.id}
           loading={postsLoading}
           error={postsError}
-          title="Your Posts"
+          title={viewAs ? 'Posts' : 'Your Posts'}
           action={
-            <button type="button" style={styles.newPostBtn} onClick={() => router.push('/moments')}>
-              + New Post
-            </button>
+            !viewAs ? (
+              <button type="button" style={styles.newPostBtn} onClick={() => router.push('/moments')}>
+                + New Post
+              </button>
+            ) : undefined
           }
-          emptyTitle="No posts yet"
-          emptyBody="Share photos, videos and updates in Moments and they will appear here."
+          emptyTitle={
+            normalizedQuery ? 'No matching posts' : viewAs ? 'No public posts' : 'No posts yet'
+          }
+          emptyBody={
+            normalizedQuery
+              ? 'Try a different search.'
+              : viewAs
+                ? 'Nothing you have shared is public yet.'
+                : 'Share photos, videos and updates in Moments and they will appear here.'
+          }
           onLike={(item) => void handleLikePost(item)}
+          headerAction={
+            viewAs
+              ? undefined
+              : (post) => (
+                  <PostOptionsMenu
+                    post={post}
+                    onEditCaption={(caption) => handleEditCaption(post, caption)}
+                    onChangeVisibility={(visibility) => handleChangeVisibility(post, visibility)}
+                    onArchive={() => handleArchivePost(post)}
+                    onDelete={() => handleDeletePost(post)}
+                  />
+                )
+          }
         />
       )}
 
@@ -1060,6 +1259,61 @@ export default function ProfileDashboardPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {statusOpen && (
+        <div
+          style={styles.overlay}
+          onClick={() => { if (!statusSaving) setStatusOpen(false); }}
+        >
+          <div
+            style={styles.modal}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Profile status"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div style={styles.modalTitle}>Profile status</div>
+            <div style={styles.modalSubtitle}>A short headline shown under your name.</div>
+            <input
+              style={styles.modalInput}
+              value={statusDraft}
+              maxLength={100}
+              onChange={(event) => setStatusDraft(event.target.value)}
+              placeholder="e.g. Chasing sunsets 🌅"
+              autoFocus
+            />
+            <p style={{ ...styles.editHint, marginTop: '8px', marginBottom: 0 }}>
+              {statusDraft.length}/100
+            </p>
+            {statusError && <div style={styles.modalError}>{statusError}</div>}
+            <div style={styles.modalActions}>
+              <button
+                type="button"
+                style={styles.modalCancel}
+                onClick={() => setStatusOpen(false)}
+                disabled={statusSaving}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                style={{ ...styles.modalSave, opacity: statusSaving ? 0.7 : 1 }}
+                onClick={() => void handleSaveStatus()}
+                disabled={statusSaving}
+              >
+                {statusSaving ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {archiveOpen && (
+        <ArchivePanel
+          onClose={() => setArchiveOpen(false)}
+          onChanged={() => { void refreshPosts(); }}
+        />
       )}
 
       {toast && (

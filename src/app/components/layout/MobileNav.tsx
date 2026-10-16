@@ -1,8 +1,14 @@
 'use client';
 
 import Link from 'next/link';
+import { useEffect, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { useLanguage } from '@/context/LanguageContext';
+import { supabase } from '@/lib/supabase';
+import {
+  fetchUnreadNotificationCount,
+  subscribeToNotificationChanges,
+} from '@/lib/notifications';
 
 interface NavItem {
   name: string;
@@ -15,6 +21,37 @@ interface NavItem {
 export default function MobileNav() {
   const pathname = usePathname();
   const { t } = useLanguage();
+  const [unread, setUnread] = useState(0);
+
+  // Keep the notifications badge live. The count is derived from `auth.uid()`
+  // under RLS, so it only ever reflects the signed-in member's own rows.
+  useEffect(() => {
+    let cancelled = false;
+    let unsubscribe: (() => void) | null = null;
+
+    const attach = async () => {
+      const { data } = await supabase.auth.getUser();
+      const user = data.user;
+      if (cancelled || !user) return;
+
+      const refresh = async () => {
+        const count = await fetchUnreadNotificationCount();
+        if (!cancelled) setUnread(count);
+      };
+
+      await refresh();
+      unsubscribe = subscribeToNotificationChanges(user.id, () => {
+        void refresh();
+      });
+    };
+
+    void attach();
+
+    return () => {
+      cancelled = true;
+      unsubscribe?.();
+    };
+  }, []);
 
   // Owner-specified order, left to right: Discover, People, Moments, Mettivo
   // Live (the highlighted centre slot), Games, Notifications, Messages, Profile.
@@ -57,6 +94,28 @@ export default function MobileNav() {
                     animation: 'mr-live-pulse 1.4s ease-in-out infinite',
                   }}
                 />
+              )}
+              {item.path === '/notifications' && unread > 0 && (
+                <span
+                  aria-label={`${unread} unread notifications`}
+                  style={{
+                    position: 'absolute',
+                    top: '-5px',
+                    right: '-9px',
+                    minWidth: '14px',
+                    height: '14px',
+                    padding: '0 3px',
+                    borderRadius: '7px',
+                    backgroundColor: '#e05a6d',
+                    color: '#ffffff',
+                    fontSize: '9px',
+                    fontWeight: 700,
+                    lineHeight: '14px',
+                    textAlign: 'center',
+                  }}
+                >
+                  {unread > 99 ? '99+' : unread}
+                </span>
               )}
             </span>
             <span style={{ fontSize: '9px', marginTop: '4px', fontWeight: isActive ? '700' : '500', textAlign: 'center', lineHeight: '1.1' }}>

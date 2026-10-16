@@ -51,14 +51,28 @@ describe('M12 — server-side blocking and unmatching', () => {
     );
     await seed(
       db,
-      `update public.profiles set gender = 'Man' where id in ('${USER_B}','${USER_C}','${USER_D}')`
+      `update public.profiles set gender = 'Woman' where id = '${USER_C}'`
+    );
+    await seed(
+      db,
+      `update public.profiles set gender = 'Man' where id in ('${USER_B}','${USER_D}')`
     );
   });
 
-  /** Makes A and B mutually matched and returns the match id. */
+  /** Makes A and B mutually matched (reciprocal follow) and returns the match id. */
   async function createMatch(): Promise<string> {
-    await asUser(db, USER_A, () => db.query(`select public.record_like('${USER_B}'::uuid, true)`));
-    await asUser(db, USER_B, () => db.query(`select public.record_like('${USER_A}'::uuid, true)`));
+    await asUser(db, USER_A, () =>
+      db.exec(
+        `insert into public.follows (follower_id, following_id)
+         values ('${USER_A}','${USER_B}') on conflict do nothing`
+      )
+    );
+    await asUser(db, USER_B, () =>
+      db.exec(
+        `insert into public.follows (follower_id, following_id)
+         values ('${USER_B}','${USER_A}') on conflict do nothing`
+      )
+    );
     const result = await db.query<{ id: string }>(
       `select id from public.matches
         where user_a = least('${USER_A}'::uuid,'${USER_B}'::uuid)
@@ -139,8 +153,18 @@ describe('M12 — server-side blocking and unmatching', () => {
   it('refuses message delivery to a blocked pair', async () => {
     // Build a match, then insert the block directly so the match row survives,
     // isolating the message trigger from block_member's cleanup.
-    await asUser(db, USER_C, () => db.query(`select public.record_like('${USER_B}'::uuid, true)`));
-    await asUser(db, USER_B, () => db.query(`select public.record_like('${USER_C}'::uuid, true)`));
+    await asUser(db, USER_C, () =>
+      db.exec(
+        `insert into public.follows (follower_id, following_id)
+         values ('${USER_C}','${USER_B}') on conflict do nothing`
+      )
+    );
+    await asUser(db, USER_B, () =>
+      db.exec(
+        `insert into public.follows (follower_id, following_id)
+         values ('${USER_B}','${USER_C}') on conflict do nothing`
+      )
+    );
 
     const result = await db.query<{ id: string }>(
       `select id from public.matches

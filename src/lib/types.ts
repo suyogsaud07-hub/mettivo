@@ -141,6 +141,18 @@ export interface NotificationActor {
 /** The kinds of media a Moment can carry. `null` means a legacy inline image. */
 export type MomentMediaType = 'image' | 'video';
 
+/**
+ * Who may see a Moment (M22 post privacy).
+ *
+ *   only_me  the author alone
+ *   matches  members who follow the author or share a mutual match
+ *   public   any signed-in member
+ *
+ * Enforced in the database by `can_view_moment()` and repeated in the
+ * `moment_feed` view predicate; the client only ever reads what RLS returns.
+ */
+export type MomentVisibility = 'only_me' | 'matches' | 'public';
+
 /** A row from the `moments` table. */
 export interface MomentRow {
   id: string;
@@ -164,6 +176,14 @@ export interface MomentFeedRow extends MomentRow {
   like_count: number;
   comment_count: number;
   liked_by_me: boolean;
+  /** M22 privacy tier; absent on a legacy view is treated as `public`. */
+  visibility: MomentVisibility;
+}
+
+/** A row from the `moment_archive` view — an archived post (author only). */
+export interface MomentArchiveRow extends MomentFeedRow {
+  /** Always set: the moment left the profile at this time. */
+  archived_at: string;
 }
 
 /** A row from the `moment_comments` table. */

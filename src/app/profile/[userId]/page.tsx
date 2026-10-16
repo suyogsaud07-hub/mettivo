@@ -4,7 +4,7 @@ import { useEffect, useState, use } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { fetchUserMoments, likeMoment, unlikeMoment } from '@/lib/moments';
-import { isFollowing } from '@/lib/follows';
+import { isFollowing, findMatchId } from '@/lib/follows';
 import { fetchPublicProfile, PublicProfileError, type PublicProfile } from '@/lib/public-profiles';
 import type { MomentAuthor, MomentFeedRow } from '@/lib/types';
 import MobileNav from '../../components/layout/MobileNav';
@@ -38,6 +38,8 @@ export default function PublicProfilePage({ params }: { params: Promise<{ userId
 
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [following, setFollowing] = useState(false);
+  const [matchId, setMatchId] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<ProfileTab>('feed');
 
   const [posts, setPosts] = useState<MomentFeedRow[]>([]);
@@ -56,6 +58,8 @@ export default function PublicProfilePage({ params }: { params: Promise<{ userId
       setNotFound(false);
       setProfile(null);
       setFollowing(false);
+      setMatchId(null);
+      setNotice(null);
 
       try {
         const {
@@ -80,6 +84,11 @@ export default function PublicProfilePage({ params }: { params: Promise<{ userId
 
         const followState = user.id === userId ? false : await isFollowing(userId);
         if (!cancelled) setFollowing(followState);
+
+        // Messaging is unlocked only by a match (reciprocal cross-gender
+        // follow, or a mutual like). Look it up so the profile can offer a chat.
+        const connectionId = user.id === userId ? null : await findMatchId(userId);
+        if (!cancelled) setMatchId(connectionId);
       } catch (err) {
         console.error('[public-profile] load failed:', err);
         if (!cancelled) {
@@ -162,6 +171,14 @@ export default function PublicProfilePage({ params }: { params: Promise<{ userId
         )
       );
     }
+  };
+
+  const handleSendText = () => {
+    if (matchId) {
+      router.push(`/chat/${matchId}`);
+      return;
+    }
+    setNotice('You can only message once you match — follow each other to connect.');
   };
 
   if (loading) {
@@ -247,12 +264,27 @@ export default function PublicProfilePage({ params }: { params: Promise<{ userId
         following={profile.following_count ?? 0}
         followers={profile.followers_count ?? 0}
         likes={profile.profile_likes_count ?? 0}
+        onStatNavigate={(key) => {
+          // Only Followers is browsable on another member's profile. Matches,
+          // Following and Likes stay informational (see the list privacy RPCs).
+          if (key === 'followers') {
+            router.push(`/profile/stats/followers?user=${profile.id}`);
+          }
+        }}
+        navigableStats={['followers']}
         actions={
           !isOwn ? (
-            <FollowButton targetUserId={profile.id} initialFollowing={following} size="md" />
+            <>
+              <FollowButton targetUserId={profile.id} initialFollowing={following} size="md" />
+              <button type="button" onClick={handleSendText} style={styles.sendTextButton}>
+                Send Text
+              </button>
+            </>
           ) : null
         }
       />
+
+      {notice && <div style={styles.notice}>{notice}</div>}
 
       <div style={styles.section}>
         <div style={styles.sectionHeader}>
@@ -389,5 +421,25 @@ const styles = {
     fontWeight: 700,
     border: 'none',
     cursor: 'pointer',
+  },
+  sendTextButton: {
+    backgroundColor: '#211A28',
+    color: '#D8B38A',
+    padding: '12px 24px',
+    borderRadius: '30px',
+    fontSize: '14px',
+    fontWeight: 700,
+    border: '1px solid #4A1828',
+    cursor: 'pointer',
+  },
+  notice: {
+    margin: '0 20px 16px 20px',
+    padding: '12px 16px',
+    borderRadius: '14px',
+    backgroundColor: '#211A28',
+    border: '1px solid #4A1828',
+    color: '#D8B38A',
+    fontSize: '13px',
+    textAlign: 'center' as const,
   },
 };

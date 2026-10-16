@@ -102,15 +102,31 @@ describe('M18 — profile social counts and follows writes', () => {
     expect(await likesOf(USER_B)).toBe(2);
   });
 
-  it('counts a match for both participants once it is mutual', async () => {
-    // A already likes B; B now likes A -> match created.
-    await asUser(db, USER_B, () => db.query(`select public.record_like('${USER_A}'::uuid, true)`));
+  it('counts a match for both participants once the follow is mutual', async () => {
+    // Matching is follows-only: a reciprocal cross-gender follow, not a like.
+    await asUser(db, USER_A, () =>
+      db.exec(
+        `insert into public.follows (follower_id, following_id)
+         values ('${USER_A}','${USER_B}') on conflict do nothing`
+      )
+    );
+    await asUser(db, USER_B, () =>
+      db.exec(
+        `insert into public.follows (follower_id, following_id)
+         values ('${USER_B}','${USER_A}') on conflict do nothing`
+      )
+    );
 
     expect(await matchesOf(USER_A)).toBe(1);
     expect(await matchesOf(USER_B)).toBe(1);
 
-    // Idempotent: a repeat like does not create a second match or increment.
-    await asUser(db, USER_B, () => db.query(`select public.record_like('${USER_A}'::uuid, true)`));
+    // Idempotent: re-inserting the same edge does not create a second match.
+    await asUser(db, USER_B, () =>
+      db.exec(
+        `insert into public.follows (follower_id, following_id)
+         values ('${USER_B}','${USER_A}') on conflict do nothing`
+      )
+    );
     expect(await matchesOf(USER_A)).toBe(1);
   });
 

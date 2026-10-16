@@ -27,6 +27,12 @@ export interface ProfileMomentsProps {
   emptyTitle: string;
   emptyBody: string;
   onLike: (post: MomentFeedRow) => void;
+  /**
+   * Renders a trailing control in each card's header (the owner's per-post
+   * options menu). Omitted on a public profile and while previewing as a
+   * visitor, which is how owner-only controls are kept off that surface.
+   */
+  headerAction?: (post: MomentFeedRow) => ReactNode;
 }
 
 export default function ProfileMoments({
@@ -41,6 +47,7 @@ export default function ProfileMoments({
   emptyTitle,
   emptyBody,
   onLike,
+  headerAction,
 }: ProfileMomentsProps) {
   return (
     <div>
@@ -71,6 +78,7 @@ export default function ProfileMoments({
             isOwn={isOwn}
             currentUserId={currentUserId}
             onLike={onLike}
+            headerAction={headerAction?.(post)}
           />
         ))
       )}

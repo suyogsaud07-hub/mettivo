@@ -18,6 +18,12 @@ export interface ProfileStatCardsProps {
   followers: number;
   likes: number;
   onNavigate?: (key: ProfileStatKey) => void;
+  /**
+   * Which counters open a list. Omitted means "all of them" (your own profile).
+   * On another member's profile only Followers is viewable, so the caller passes
+   * `['followers']` and the rest stay informational.
+   */
+  navigableStats?: ProfileStatKey[];
 }
 
 interface StatDefinition {
@@ -33,6 +39,7 @@ export default function ProfileStatCards({
   followers,
   likes,
   onNavigate,
+  navigableStats,
 }: ProfileStatCardsProps) {
   const stats: StatDefinition[] = [
     { key: 'matches', icon: '🤝', label: 'Matches', value: matches },
@@ -40,6 +47,9 @@ export default function ProfileStatCards({
     { key: 'followers', icon: '👥', label: 'Followers', value: followers },
     { key: 'likes', icon: '💛', label: 'Profile Likes', value: likes },
   ];
+
+  const canNavigate = (key: ProfileStatKey) =>
+    Boolean(onNavigate) && (!navigableStats || navigableStats.includes(key));
 
   return (
     <div style={styles.grid}>
@@ -52,18 +62,18 @@ export default function ProfileStatCards({
           </>
         );
 
-        return onNavigate ? (
+        return canNavigate(stat.key) ? (
           <button
             key={stat.key}
             type="button"
-            onClick={() => onNavigate(stat.key)}
+            onClick={() => onNavigate?.(stat.key)}
             style={styles.card}
             aria-label={`${stat.label}: ${stat.value || 0}`}
           >
             {content}
           </button>
         ) : (
-          <div key={stat.key} style={styles.card} aria-label={`${stat.label}: ${stat.value || 0}`}>
+          <div key={stat.key} style={{ ...styles.card, cursor: 'default' }} aria-label={`${stat.label}: ${stat.value || 0}`}>
             {content}
           </div>
         );

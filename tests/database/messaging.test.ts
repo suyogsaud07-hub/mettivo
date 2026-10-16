@@ -28,10 +28,20 @@ describe('M11 — messaging privacy and unread state', () => {
   let matchAb = '';
   let matchCd = '';
 
-  /** Mutually matches two members and returns the match id. */
+  /** Mutually matches two members (reciprocal follow) and returns the match id. */
   async function pair(a: string, b: string): Promise<string> {
-    await asUser(db, a, () => db.query(`select public.record_like('${b}'::uuid, true)`));
-    await asUser(db, b, () => db.query(`select public.record_like('${a}'::uuid, true)`));
+    await asUser(db, a, () =>
+      db.exec(
+        `insert into public.follows (follower_id, following_id)
+         values ('${a}','${b}') on conflict do nothing`
+      )
+    );
+    await asUser(db, b, () =>
+      db.exec(
+        `insert into public.follows (follower_id, following_id)
+         values ('${b}','${a}') on conflict do nothing`
+      )
+    );
     const result = await db.query<{ id: string }>(
       `select id from public.matches
         where user_a = least('${a}'::uuid,'${b}'::uuid)

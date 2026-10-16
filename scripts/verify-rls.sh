@@ -56,6 +56,14 @@ TABLES=(
   "notifications"
   "user_roles"
   "admin_audit_log"
+  # M19/M22 Moments. The feed and archive are owner-rights VIEWS — they bypass
+  # table RLS by design, so the anonymous check here is the only thing that
+  # proves their predicate actually gates a caller without a session.
+  "moments"
+  "moment_likes"
+  "moment_comments"
+  "moment_feed"
+  "moment_archive"
   # M21 moderation enforcement. These name members and measure their behaviour,
   # so an anonymous caller must never see a row. `moderation_secrets` holds the
   # worker bearer token and has no SELECT grant at all.

@@ -1,10 +1,12 @@
 import { supabase } from '@/lib/supabase';
 import { isMissingColumnError } from '@/lib/postgrest-errors';
 import type {
+  MomentArchiveRow,
   MomentAuthor,
   MomentCommentRow,
   MomentFeedRow,
   MomentMediaType,
+  MomentVisibility,
 } from '@/lib/types';
 
 /**
@@ -47,6 +49,35 @@ export const MOMENT_EMOJI = [
 
 /** The maximum number of tags a moment may carry (mirrors the SQL constraint). */
 export const MAX_MOMENT_TAGS = 6;
+
+/**
+ * The archive caps, mirrored from the `enforce_archive_capacity` trigger.
+ *
+ * The database is the authority — these exist so the UI can warn *before* a
+ * write is rejected, not to replace the check.
+ */
+export const ARCHIVE_LIMITS = { photo: 5, video: 2 } as const;
+
+/** The three privacy tiers in the order the picker shows them. */
+export const MOMENT_VISIBILITIES: readonly MomentVisibility[] = [
+  'public',
+  'matches',
+  'only_me',
+] as const;
+
+/** Human labels for the privacy tiers. */
+export const MOMENT_VISIBILITY_LABELS: Record<MomentVisibility, string> = {
+  public: 'Public',
+  matches: 'Followers & matches',
+  only_me: 'Only me',
+};
+
+/** One-line explanations shown under each tier in the privacy picker. */
+export const MOMENT_VISIBILITY_HELP: Record<MomentVisibility, string> = {
+  public: 'Anyone signed in to Mettivo',
+  matches: 'People who follow you or share a match',
+  only_me: 'Only you can see this',
+};
 
 /**
  * Pulls `#hashtags` out of a caption, de-duplicated and bounded.
@@ -133,16 +164,22 @@ export interface FetchFeedOptions {
 const MOMENT_FEED_CORE_COLUMNS =
   'id, author_id, caption, media, tags, shares, created_at, updated_at, like_count, comment_count, liked_by_me' as const;
 
-const MOMENT_FEED_ENGAGEMENT_COLUMNS = 'media_type, views_count, unique_views' as const;
+const MOMENT_FEED_ENGAGEMENT_COLUMNS = 'media_type, views_count, unique_views, visibility' as const;
 
 const MOMENT_FEED_COLUMNS = `${MOMENT_FEED_CORE_COLUMNS}, ${MOMENT_FEED_ENGAGEMENT_COLUMNS}` as const;
 
-/** A feed row without the optional media/engagement columns. */
-type MomentFeedCoreRow = Omit<MomentFeedRow, 'media_type' | 'views_count' | 'unique_views'>;
+/** `moment_archive` adds the archival timestamp to the feed shape. */
+const MOMENT_ARCHIVE_COLUMNS = `${MOMENT_FEED_COLUMNS}, archived_at` as const;
 
-/** Defaults the M19 columns so a legacy view row still renders. */
+/** A feed row without the optional media/engagement/privacy columns. */
+type MomentFeedCoreRow = Omit<
+  MomentFeedRow,
+  'media_type' | 'views_count' | 'unique_views' | 'visibility'
+>;
+
+/** Defaults the optional columns so a legacy view row still renders. */
 function withDefaultEngagement(row: MomentFeedCoreRow): MomentFeedRow {
-  return { ...row, media_type: null, views_count: 0, unique_views: 0 };
+  return { ...row, media_type: null, views_count: 0, unique_views: 0, visibility: 'public' };
 }
 
 interface FeedQueryOptions {
@@ -357,6 +394,171 @@ export async function createMoment(
     console.error('[moments] create failed:', error.message);
     throw new MomentError(error.message, error.code);
   }
+}
+
+/**
+ * Edits the caption of a post the caller authored.
+ *
+ * Owner-only. A bare `.update()` would silently match nothing if the id were not
+ * the caller's, so the affected rows are requested and a zero-row result is
+ * reported as a failure rather than a silent no-op.
+ */
+export async function updateMomentCaption(momentId: string, caption: string): Promise<void> {
+  const text = caption.trim();
+
+  const { data, error } = await supabase
+    .from('moments')
+    .update({ caption: text || null, updated_at: new Date().toISOString() })
+    .eq('id', momentId)
+    .select('id');
+
+  if (error) {
+    console.error('[moments] edit caption failed:', error.message);
+    throw new MomentError(error.message, error.code);
+  }
+  if (!data || data.length === 0) {
+    throw new MomentError('That post could not be updated.', 'PGRST116');
+  }
+}
+
+/** Changes a post's privacy tier. Owner-only, same zero-row guard as the caption. */
+export async function setMomentVisibility(
+  momentId: string,
+  visibility: MomentVisibility
+): Promise<void> {
+  const { data, error } = await supabase
+    .from('moments')
+    .update({ visibility, updated_at: new Date().toISOString() })
+    .eq('id', momentId)
+    .select('id');
+
+  if (error) {
+    console.error('[moments] set visibility failed:', error.message);
+    throw new MomentError(error.message, error.code);
+  }
+  if (!data || data.length === 0) {
+    throw new MomentError('That post could not be updated.', 'PGRST116');
+  }
+}
+
+/** Permanently deletes a post the caller authored. */
+export async function deleteMoment(momentId: string): Promise<void> {
+  const { data, error } = await supabase
+    .from('moments')
+    .delete()
+    .eq('id', momentId)
+    .select('id');
+
+  if (error) {
+    console.error('[moments] delete failed:', error.message);
+    throw new MomentError(error.message, error.code);
+  }
+  if (!data || data.length === 0) {
+    throw new MomentError('That post could not be deleted.', 'PGRST116');
+  }
+}
+
+/**
+ * Translates the archive-capacity trigger's error into a friendly sentence.
+ *
+ * The trigger raises `archive_limit:photo` / `archive_limit:video` (errcode
+ * P0001); Postgres wraps it in the returned `message`. Anything else passes
+ * through untouched so a genuine failure is not mislabelled.
+ */
+function archiveLimitError(error: { message: string; code?: string }): MomentError {
+  const which = /archive_limit:(photo|video)/.exec(error.message)?.[1];
+  if (which === 'photo') {
+    return new MomentError(
+      `Your archive is full — it holds at most ${ARCHIVE_LIMITS.photo} photo posts. Delete or restore one first.`,
+      error.code
+    );
+  }
+  if (which === 'video') {
+    return new MomentError(
+      `Your archive is full — it holds at most ${ARCHIVE_LIMITS.video} video posts. Delete or restore one first.`,
+      error.code
+    );
+  }
+  return new MomentError(error.message, error.code);
+}
+
+/** Moves a post off the profile and into the archive. Returns false if not owned. */
+export async function archiveMoment(momentId: string): Promise<boolean> {
+  const { data, error } = await supabase.rpc('archive_moment', { p_moment_id: momentId });
+
+  if (error) {
+    console.error('[moments] archive failed:', error.message);
+    throw archiveLimitError(error);
+  }
+
+  return data === true;
+}
+
+/** Returns an archived post to the profile (public tier). False if not owned. */
+export async function restoreMoment(momentId: string): Promise<boolean> {
+  const { data, error } = await supabase.rpc('restore_moment', { p_moment_id: momentId });
+
+  if (error) {
+    console.error('[moments] restore failed:', error.message);
+    throw new MomentError(error.message, error.code);
+  }
+
+  return data === true;
+}
+
+/** One member's archived posts, newest first (visible only to that member). */
+export async function fetchArchivedMoments(limit = 60): Promise<MomentArchiveRow[]> {
+  const { data, error } = await supabase
+    .from('moment_archive')
+    .select(MOMENT_ARCHIVE_COLUMNS)
+    .order('archived_at', { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    console.error('[moments] load archive failed:', error.message);
+    throw new MomentError(error.message, error.code);
+  }
+
+  return (data ?? []) as MomentArchiveRow[];
+}
+
+/** Archive usage for the capacity meter. */
+export interface ArchiveCounts {
+  photoCount: number;
+  videoCount: number;
+  photoLimit: number;
+  videoLimit: number;
+}
+
+/** Reads the caller's archive usage and the hard caps from the database. */
+export async function fetchArchiveCounts(): Promise<ArchiveCounts | null> {
+  const { data, error } = await supabase.rpc('moment_archive_counts');
+
+  if (error) {
+    console.error('[moments] load archive counts failed:', error.message);
+    return null;
+  }
+
+  const row = (Array.isArray(data) ? data[0] : data) as
+    | {
+        photo_count?: unknown;
+        video_count?: unknown;
+        photo_limit?: unknown;
+        video_limit?: unknown;
+      }
+    | undefined;
+
+  if (!row || typeof row !== 'object') return null;
+
+  const num = (value: unknown, fallback: number) =>
+    typeof value === 'number' ? value : fallback;
+
+  return {
+    photoCount: num(row.photo_count, 0),
+    videoCount: num(row.video_count, 0),
+    photoLimit: num(row.photo_limit, ARCHIVE_LIMITS.photo),
+    videoLimit: num(row.video_limit, ARCHIVE_LIMITS.video),
+  };
 }
 
 /** View totals returned by `record_moment_view()`. */

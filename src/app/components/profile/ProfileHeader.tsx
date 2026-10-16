@@ -26,6 +26,8 @@ export interface ProfileHeaderProps {
   followers: number;
   likes: number;
   onStatNavigate?: (key: ProfileStatKey) => void;
+  /** Counters that open a list. On another member's profile, Followers only. */
+  navigableStats?: ProfileStatKey[];
   /** Extra controls rendered under the intention pill (e.g. Follow). */
   actions?: ReactNode;
 }
@@ -44,6 +46,7 @@ export default function ProfileHeader({
   followers,
   likes,
   onStatNavigate,
+  navigableStats,
   actions,
 }: ProfileHeaderProps) {
   const displayLocation =
@@ -82,6 +85,7 @@ export default function ProfileHeader({
         followers={followers}
         likes={likes}
         onNavigate={onStatNavigate}
+        navigableStats={navigableStats}
       />
     </>
   );

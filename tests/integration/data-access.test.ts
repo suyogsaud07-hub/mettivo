@@ -36,7 +36,7 @@ const h = vi.hoisted(() => {
     const passthrough = () => chain;
     for (const method of [
       'select', 'insert', 'update', 'upsert', 'eq', 'neq', 'in',
-      'order', 'limit', 'gte', 'lte', 'or',
+      'order', 'limit', 'gte', 'lte', 'or', 'delete',
     ]) {
       chain[method] = passthrough;
     }
@@ -77,7 +77,18 @@ import {
 import { DiscoveryError, fetchDiscoveryCandidates } from '@/lib/discovery';
 import { CatalogueError, loadCatalogue } from '@/lib/catalogue';
 import { saveProfile } from '@/lib/profile';import { ModerationError, fetchReportQueue, resolveReport } from '@/lib/admin';
-import { fetchMomentFeed, fetchUserMoments } from '@/lib/moments';
+import {
+  MomentError,
+  archiveMoment,
+  deleteMoment,
+  fetchArchiveCounts,
+  fetchArchivedMoments,
+  fetchMomentFeed,
+  fetchUserMoments,
+  restoreMoment,
+  setMomentVisibility,
+  updateMomentCaption,
+} from '@/lib/moments';
 import { fetchPublicProfile } from '@/lib/public-profiles';
 import { isMissingColumnError, isMissingRelationError } from '@/lib/postgrest-errors';
 
@@ -521,5 +532,82 @@ describe('§3.2 — schema drift does not blank a profile surface', () => {
       matches_count: 0,
       profile_likes_count: 0,
     });
+  });
+});
+
+describe('§3.2 — M22 profile management', () => {
+  it('reports a successful archive', async () => {
+    h.state.rpc = { data: true, error: null };
+    await expect(archiveMoment('mo1')).resolves.toBe(true);
+  });
+
+  it('reports a refused archive rather than claiming success', async () => {
+    h.state.rpc = { data: false, error: null };
+    await expect(archiveMoment('mo1')).resolves.toBe(false);
+  });
+
+  it('turns the photo capacity refusal into a friendly sentence', async () => {
+    h.state.rpc = {
+      data: null,
+      error: { message: 'archive_limit:photo', code: 'P0001' },
+    };
+    await expect(archiveMoment('mo1')).rejects.toThrow(/photo posts/i);
+  });
+
+  it('turns the video capacity refusal into a friendly sentence', async () => {
+    h.state.rpc = {
+      data: null,
+      error: { message: 'archive_limit:video', code: 'P0001' },
+    };
+    await expect(archiveMoment('mo1')).rejects.toThrow(/video posts/i);
+  });
+
+  it('passes an unrelated archive failure through untouched', async () => {
+    h.state.rpc = { data: null, error: { message: 'permission denied', code: '42501' } };
+    await expect(archiveMoment('mo1')).rejects.toThrow(/permission denied/i);
+  });
+
+  it('surfaces a restore failure', async () => {
+    h.state.rpc = { data: null, error: { message: 'boom', code: 'XX000' } };
+    await expect(restoreMoment('mo1')).rejects.toBeInstanceOf(MomentError);
+  });
+
+  it('maps the archive counts payload to camelCase', async () => {
+    h.state.rpc = {
+      data: [{ photo_count: 3, video_count: 1, photo_limit: 5, video_limit: 2 }],
+      error: null,
+    };
+    await expect(fetchArchiveCounts()).resolves.toEqual({
+      photoCount: 3,
+      videoCount: 1,
+      photoLimit: 5,
+      videoLimit: 2,
+    });
+  });
+
+  it('falls back to the built-in caps when counts are unavailable', async () => {
+    h.state.rpc = { data: null, error: { message: 'not found', code: 'PGRST202' } };
+    await expect(fetchArchiveCounts()).resolves.toBeNull();
+  });
+
+  it('returns archived rows', async () => {
+    h.state.table = { data: [{ id: 'mo1', archived_at: '2026-01-01T00:00:00Z' }], error: null };
+    const rows = await fetchArchivedMoments();
+    expect(rows).toHaveLength(1);
+  });
+
+  it('throws when an edit changes zero rows (a denied write looks like success otherwise)', async () => {
+    h.state.table = { data: [], error: null };
+    await expect(updateMomentCaption('mo1', 'hi')).rejects.toThrow(/could not be updated/i);
+  });
+
+  it('throws when a visibility change changes zero rows', async () => {
+    h.state.table = { data: [], error: null };
+    await expect(setMomentVisibility('mo1', 'only_me')).rejects.toThrow(/could not be updated/i);
+  });
+
+  it('throws when a delete affects zero rows', async () => {
+    h.state.table = { data: [], error: null };
+    await expect(deleteMoment('mo1')).rejects.toThrow(/could not be deleted/i);
   });
 });

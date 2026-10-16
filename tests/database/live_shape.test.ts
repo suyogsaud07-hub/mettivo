@@ -61,9 +61,19 @@ describe('live-shaped database (match_id as uuid)', () => {
     expect(result.rows[0]?.data_type).toBe('uuid');
   });
 
-  it('creates a match through record_like with uuid match ids', async () => {
-    await asUser(db, USER_A, () => db.query(`select public.record_like('${USER_B}'::uuid, true)`));
-    await asUser(db, USER_B, () => db.query(`select public.record_like('${USER_A}'::uuid, true)`));
+  it('creates a match through mutual follows with uuid match ids', async () => {
+    await asUser(db, USER_A, () =>
+      db.exec(
+        `insert into public.follows (follower_id, following_id)
+         values ('${USER_A}','${USER_B}') on conflict do nothing`
+      )
+    );
+    await asUser(db, USER_B, () =>
+      db.exec(
+        `insert into public.follows (follower_id, following_id)
+         values ('${USER_B}','${USER_A}') on conflict do nothing`
+      )
+    );
 
     const matches = await db.query<{ n: number }>(`select count(*)::int as n from public.matches`);
     expect(matches.rows[0].n).toBeGreaterThan(0);

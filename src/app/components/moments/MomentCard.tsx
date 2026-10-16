@@ -1,8 +1,15 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import type { MomentAuthor, MomentFeedRow } from '@/lib/types';
-import { countryFlag, genderIcon, recordMomentView, shareMoment } from '@/lib/moments';
+import {
+  MOMENT_VISIBILITY_LABELS,
+  countryFlag,
+  genderIcon,
+  recordMomentView,
+  shareMoment,
+} from '@/lib/moments';
 import { formatCount, formatDuration, resolveMediaType } from '@/lib/media';
 import { ReportButton } from '@/app/components/moderation/ReportButton';
 import CommentSheet from './CommentSheet';
@@ -30,6 +37,12 @@ export interface MomentCardProps {
   isOwn?: boolean;
   onLike: (post: MomentFeedRow) => void;
   onFollow?: (authorId: string) => void;
+  /**
+   * Trailing slot in the card header, used by the owner's profile to mount the
+   * per-post options menu. Kept as a slot so the card stays unaware of profile
+   * management.
+   */
+  headerAction?: ReactNode;
 }
 
 /** How long a single tap waits to be sure a second one is not coming. */
@@ -45,6 +58,7 @@ export default function MomentCard({
   isOwn = false,
   onLike,
   onFollow,
+  headerAction,
 }: MomentCardProps) {
   const mediaUrl = post.media[0];
   const mediaType = resolveMediaType(post.media_type, mediaUrl);
@@ -239,7 +253,11 @@ export default function MomentCard({
             <span style={styles.name}>{author.displayName}</span>
             <span style={styles.genderIcon}>{genderIcon(author.gender)}</span>
           </div>
-          <div style={styles.activeNow}>Active now</div>
+          <div style={styles.activeNow}>
+            {isOwn && post.visibility !== 'public'
+              ? `${post.visibility === 'only_me' ? '🔒' : '👥'} ${MOMENT_VISIBILITY_LABELS[post.visibility]}`
+              : 'Active now'}
+          </div>
         </div>
         {showFollow && (
           <button
@@ -250,6 +268,7 @@ export default function MomentCard({
             Follow
           </button>
         )}
+        {headerAction}
       </div>
 
       {caption && (
