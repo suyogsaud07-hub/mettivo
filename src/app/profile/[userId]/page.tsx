@@ -290,6 +290,15 @@ export default function PublicProfilePage({ params }: { params: Promise<{ userId
         <div style={styles.sectionHeader}>
           <div style={styles.sectionIcon}>📝</div>
           <div style={styles.sectionTitle}>Bio</div>
+          {!isOwn && profile.bio?.trim() ? (
+            <ReportButton
+              targetUserId={profile.id}
+              targetType="bio"
+              title={`Report ${displayName}'s bio`}
+              ariaLabel={`Report ${displayName}'s bio`}
+              className="ml-auto"
+            />
+          ) : null}
         </div>
         {profile.bio?.trim() ? (
           <p style={styles.bioText}>{profile.bio}</p>

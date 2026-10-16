@@ -12,6 +12,10 @@ export interface MessageRow {
   sender_id: string;
   content: string;
   created_at: string;
+  /** M26: when the OTHER participant's device received the message. */
+  delivered_at?: string | null;
+  /** M26: when the OTHER participant read the message. */
+  seen_at?: string | null;
 }
 
 /** Minimal profile fields used by list views. */
@@ -21,11 +25,55 @@ export interface ProfileSummary {
   avatar_url: string | null;
 }
 
-/** The four categories a report can carry (M21 `reports.category` CHECK). */
-export type ReportCategory = 'nudity' | 'harassment' | 'underage' | 'spam';
+/** The categories a report can carry (M25 `reports.category` CHECK). */
+export type ReportCategory =
+  | 'abuse_text'
+  | 'explicit_media'
+  | 'indecent_live'
+  | 'underage'
+  | 'other'
+  | 'nudity'
+  | 'harassment'
+  | 'spam';
 
-/** What a report points at (M21 `reports.target_type`). */
-export type ReportTargetType = 'user' | 'message' | 'moment' | 'comment' | 'live';
+/** What a report points at (M25 `reports.target_type`). */
+export type ReportTargetType =
+  | 'user'
+  | 'message'
+  | 'moment'
+  | 'comment'
+  | 'live'
+  | 'bio'
+  | 'photo'
+  | 'chat'
+  | 'voice';
+
+/** A disappearing chat media row (M25/M26 `chat_media`). */
+export interface ChatMediaRow {
+  id: string;
+  message_id: string;
+  match_id: string;
+  sender_id: string;
+  storage_path: string;
+  media_type: MomentMediaType;
+  /** M25 legacy flag; superseded by `view_limit`/`view_count` in M26. */
+  view_once: boolean;
+  /** M26: how many times the recipient may open the item. */
+  view_limit: number;
+  /** M26: how many times the recipient has opened it. */
+  view_count: number;
+  expires_at: string;
+  viewed_at: string | null;
+  created_at: string;
+}
+
+/** A per-conversation retention setting (M26 `chat_settings`). */
+export interface ChatSettingsRow {
+  match_id: string;
+  /** Non-null enables disappearing mode; the window in seconds. */
+  disappear_after_seconds: number | null;
+  updated_at: string;
+}
 
 /** A row from the `reports` table. */
 export interface ReportRow {

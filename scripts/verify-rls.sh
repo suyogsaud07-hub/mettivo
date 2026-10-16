@@ -79,6 +79,9 @@ TABLES=(
   "moderation_emails"
   "moderation_settings"
   "moderation_secrets"
+  # M25 disappearing chat media. The ledger names the match and the sender and
+  # is participant-readable only; the bytes live in a private Storage bucket.
+  "chat_media"
 )
 
 failures=0

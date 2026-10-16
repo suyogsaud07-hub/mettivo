@@ -3,6 +3,14 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase'; 
 import { fetchDiscoveryCandidates, rankDiscovery } from '@/lib/discovery';
+import { ReportButton } from '@/app/components/moderation/ReportButton';
+import {
+  NO_RESTRICTIONS,
+  describeRestriction,
+  fetchMyRestrictions,
+  isAccountRestricted,
+  type MyRestrictions,
+} from '@/lib/reports';
 
 import { useRouter } from 'next/navigation';
 
@@ -49,6 +57,7 @@ export default function MettivoVoicePage() {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('For you');
+  const [restrictions, setRestrictions] = useState<MyRestrictions>(NO_RESTRICTIONS);
 
   const [isRecording, setIsRecording] = useState(false);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
@@ -64,6 +73,14 @@ export default function MettivoVoicePage() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!isMounted) return;
       if (!user) { router.push('/auth'); return; }
+
+      // M25: a paused account can browse Voice but not start a call or record.
+      try {
+        const mine = await fetchMyRestrictions();
+        if (isMounted) setRestrictions(mine);
+      } catch {
+        // A read-only notice; never block browsing on it.
+      }
 
       try {
         // M9/M12: this surface used to read the plain `public_profiles` view, so
@@ -186,8 +203,14 @@ export default function MettivoVoicePage() {
     name: { fontSize: '18px', fontWeight: '700', color: '#F2E9E4' },
     statusText: { fontSize: '12px', color: '#B58A83' },
     voiceCardBtn: { display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#A855F7', color: '#FFFFFF', border: 'none', padding: '6px 12px', borderRadius: '16px', fontSize: '12px', fontWeight: '600', cursor: 'pointer', alignSelf: 'flex-start', marginTop: '4px' },
-    callBtn: { width: '48px', height: '48px', borderRadius: '50%', backgroundColor: '#A855F7', border: 'none', display: 'flex', justifyContent: 'center', alignItems: 'center', cursor: 'pointer', boxShadow: '0 4px 15px rgba(168, 85, 247, 0.4)' }
+    callBtn: { width: '48px', height: '48px', borderRadius: '50%', backgroundColor: '#A855F7', border: 'none', display: 'flex', justifyContent: 'center', alignItems: 'center', cursor: 'pointer', boxShadow: '0 4px 15px rgba(168, 85, 247, 0.4)' },
+    callBtnDisabled: { opacity: 0.4, cursor: 'not-allowed' },
+    cardActions: { display: 'flex', flexDirection: 'column' as const, alignItems: 'center', gap: '8px' },
+    restriction: { margin: '0 20px 16px 20px', backgroundColor: '#2A1420', border: '1px solid #542036', color: '#F3C9D3', borderRadius: '14px', padding: '12px 14px', fontSize: '13px', lineHeight: 1.5 }
   };
+
+  const restrictionMessage = describeRestriction(restrictions);
+  const paused = isAccountRestricted(restrictions);
 
   return (
     <div style={styles.container}>
@@ -199,6 +222,12 @@ export default function MettivoVoicePage() {
           <button style={styles.iconBtn}>🎧</button>
         </div>
       </div>
+
+      {restrictionMessage && (
+        <div role="status" style={styles.restriction}>
+          {restrictionMessage}
+        </div>
+      )}
 
       <div style={styles.tabsContainer}>
         {tabs.map(tab => (
@@ -216,8 +245,12 @@ export default function MettivoVoicePage() {
       <div style={styles.recordBanner}>
         <span style={styles.recordText}>🎤 Record a voice intro to start calling!</span>
         <button 
-          style={{ ...styles.recordBtn, ...(isRecording ? styles.recordBtnActive : {}) }} 
-          onClick={handleRecordClick}
+          style={{ ...styles.recordBtn, ...(isRecording ? styles.recordBtnActive : {}), ...(paused ? styles.callBtnDisabled : {}) }} 
+          onClick={() => {
+            if (paused) return;
+            handleRecordClick();
+          }}
+          aria-disabled={paused}
         >
           {isRecording ? 'Stop' : 'Record'}
         </button>
@@ -263,9 +296,25 @@ export default function MettivoVoicePage() {
                 </button>
               </div>
 
-              <button style={styles.callBtn} onClick={() => alert(`Calling ${profile.display_name}...`)}>
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
-              </button>
+              <div style={styles.cardActions}>
+                <ReportButton
+                  targetUserId={profile.id}
+                  targetType="voice"
+                  title="Report this voice profile"
+                  ariaLabel={`Report ${profile.display_name}`}
+                />
+                <button
+                  style={{ ...styles.callBtn, ...(paused ? styles.callBtnDisabled : {}) }}
+                  onClick={() => {
+                    if (paused) return;
+                    alert(`Calling ${profile.display_name}...`);
+                  }}
+                  aria-label={`Call ${profile.display_name}`}
+                  aria-disabled={paused}
+                >
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
+                </button>
+              </div>
             </div>
           ))}
         </div>

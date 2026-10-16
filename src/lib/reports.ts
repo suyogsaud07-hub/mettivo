@@ -13,23 +13,40 @@ import { supabase } from '@/lib/supabase';
  *   every touchpoint imports.
  *
  * THE CATEGORIES ARE THE DATABASE'S
- *   `reports.category` has a CHECK of nudity | harassment | underage | spam
- *   (M21). The labels below are the human phrasing of exactly those four values
- *   — there is deliberately no fifth "other", because an unclassified report is
- *   one the enforcement triggers cannot route.
+ *   `reports.category` accepts abuse_text | explicit_media | indecent_live |
+ *   underage | other (M25) plus the legacy M21 values nudity | harassment |
+ *   spam. The labels below are the human phrasing of exactly those values.
  */
 
-/** The four categories the `reports.category` CHECK accepts. */
+/**
+ * The report vocabulary the `reports.category` CHECK accepts (M25).
+ *
+ * The four product buckets map to the account-pause tiers:
+ *   abuse_text     -> 7 days
+ *   explicit_media -> 15 days
+ *   indecent_live  -> 30 days
+ *   other          -> 7 days
+ * `underage` is kept because it is a safety escalation, not a tier.
+ *
+ * Legacy M21 values (nudity | harassment | spam) are still valid in the
+ * database and still carry a label, so a moderator reading an older report sees
+ * real text — they are simply no longer offered on the form.
+ */
 export const REPORT_CATEGORIES = [
   {
-    value: 'harassment',
-    label: 'Harassment or hate speech',
-    hint: 'Threats, slurs, or repeated unwanted contact.',
+    value: 'abuse_text',
+    label: 'Abusive language, text or bio',
+    hint: 'Threats, slurs, hate speech, or a profile bio that crosses the line.',
   },
   {
-    value: 'nudity',
-    label: 'Nudity or sexual content',
-    hint: 'Explicit images or sexual messages.',
+    value: 'explicit_media',
+    label: 'Nudes or explicit photos',
+    hint: 'Someone sent an explicit image in a chat or posted one.',
+  },
+  {
+    value: 'indecent_live',
+    label: 'Indecent behaviour on Live or Voice',
+    hint: 'Private parts or a rude gesture shown on a call or voice card.',
   },
   {
     value: 'underage',
@@ -37,16 +54,33 @@ export const REPORT_CATEGORIES = [
     hint: 'Someone who appears to be under 17.',
   },
   {
-    value: 'spam',
-    label: 'Spam or scam',
-    hint: 'Fake profiles, requests for money, or advertising.',
+    value: 'other',
+    label: 'Something else',
+    hint: 'Spam, a fake profile, or anything that does not fit above.',
   },
 ] as const;
 
 export type ReportCategory = (typeof REPORT_CATEGORIES)[number]['value'];
 
+/** Labels for categories that older rows may still carry. */
+const LEGACY_CATEGORY_LABELS: Record<string, string> = {
+  nudity: 'Nudity or sexual content',
+  harassment: 'Harassment or hate speech',
+  spam: 'Spam or scam',
+};
+
 /** What the member is pointing at when they report. */
-export const REPORT_TARGET_TYPES = ['user', 'message', 'moment', 'comment', 'live'] as const;
+export const REPORT_TARGET_TYPES = [
+  'user',
+  'message',
+  'moment',
+  'comment',
+  'live',
+  'bio',
+  'photo',
+  'chat',
+  'voice',
+] as const;
 
 export type ReportTargetType = (typeof REPORT_TARGET_TYPES)[number];
 
@@ -126,7 +160,20 @@ function readBoolean(record: Record<string, unknown>, key: string): boolean {
 
 /** The human label for a stored category value, falling back to the raw value. */
 export function categoryLabel(value: string): string {
-  return REPORT_CATEGORIES.find((c) => c.value === value)?.label ?? value;
+  return (
+    REPORT_CATEGORIES.find((c) => c.value === value)?.label ??
+    LEGACY_CATEGORY_LABELS[value] ??
+    value
+  );
+}
+
+/**
+ * Whether the member is under an account-wide pause. M25 made every punishment
+ * account-wide, so this is the single flag the UI needs: it disables chat,
+ * Live, Voice and posting to Moments all at once.
+ */
+export function isAccountRestricted(restrictions: MyRestrictions): boolean {
+  return restrictions.suspended;
 }
 
 /** A short, local date/time for a restriction end. */

@@ -28,6 +28,13 @@ import {
   type PreparedMedia,
 } from '@/lib/media';
 import { FollowError, followUser } from '@/lib/follows';
+import {
+  NO_RESTRICTIONS,
+  describeRestriction,
+  fetchMyRestrictions,
+  isAccountRestricted,
+  type MyRestrictions,
+} from '@/lib/reports';
 
 export default function MomentsPage() {
   const router = useRouter();
@@ -45,6 +52,7 @@ export default function MomentsPage() {
   const [posting, setPosting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [restrictions, setRestrictions] = useState<MyRestrictions>(NO_RESTRICTIONS);
 
   const tabs = ['Following', 'For You', 'Latest'];
 
@@ -87,6 +95,10 @@ export default function MomentsPage() {
       }
 
       setCurrentUserId(user.id);
+
+      // M25: a paused account can read Moments but not post to them. The
+      // database enforces this too; the notice just explains the locked +.
+      setRestrictions(await fetchMyRestrictions());
 
       unsubscribe = subscribeToMoments(() => {
         void loadFeed(activeTab, activeTag);
@@ -251,6 +263,9 @@ export default function MomentsPage() {
     }
   };
 
+  const restrictionMessage = describeRestriction(restrictions);
+  const paused = isAccountRestricted(restrictions);
+
   return (
     <div style={styles.container}>
       <div style={styles.header}>
@@ -289,6 +304,12 @@ export default function MomentsPage() {
       )}
       {notice && <div style={styles.notice}>{notice}</div>}
 
+      {restrictionMessage && (
+        <div role="status" style={styles.restriction}>
+          {restrictionMessage}
+        </div>
+      )}
+
       {loading ? (
         <div style={styles.empty}>Loading Moments...</div>
       ) : posts.length === 0 ? (
@@ -322,7 +343,15 @@ export default function MomentsPage() {
         })
       )}
 
-      <button style={styles.fab} onClick={() => setIsCreateOpen(true)} aria-label="New Moment">
+      <button
+        style={{ ...styles.fab, ...(paused ? styles.fabDisabled : {}) }}
+        onClick={() => {
+          if (paused) return;
+          setIsCreateOpen(true);
+        }}
+        aria-label="New Moment"
+        aria-disabled={paused}
+      >
         <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
           <line x1="12" y1="5" x2="12" y2="19"></line>
           <line x1="5" y1="12" x2="19" y2="12"></line>
@@ -453,6 +482,8 @@ const styles = {
   tagActive: { backgroundColor: '#4A1828', color: '#D8B38A', borderColor: '#D8B38A' },
 
   fab: { position: 'fixed' as const, bottom: '110px', right: '24px', width: '60px', height: '60px', borderRadius: '50%', background: 'linear-gradient(135deg, #D8B38A, #B58A83)', color: '#131017', display: 'flex', justifyContent: 'center', alignItems: 'center', boxShadow: '0 10px 30px rgba(216, 179, 138, 0.45)', cursor: 'pointer', border: 'none', zIndex: 200 },
+  fabDisabled: { opacity: 0.4, cursor: 'not-allowed' },
+  restriction: { margin: '16px 20px', backgroundColor: '#33240F', border: '1px solid #8A5A16', color: '#F5D08A', borderRadius: '14px', padding: '12px 16px', fontSize: '13px', lineHeight: 1.5 },
 
   modalOverlay: { position: 'fixed' as const, inset: 0, backgroundColor: 'rgba(13, 10, 16, 0.9)', backdropFilter: 'blur(8px)', display: 'flex', justifyContent: 'center', alignItems: 'flex-end', zIndex: 1000 },
   modalBox: { backgroundColor: '#211A28', width: '100%', maxWidth: '500px', maxHeight: '92vh', overflowY: 'auto' as const, borderTopLeftRadius: '30px', borderTopRightRadius: '30px', padding: '24px', borderTop: '1px solid #4A1828' },

@@ -81,7 +81,9 @@ export default function ChatListPage() {
           seen.add(row.match_id);
           summaries.push({
             matchId: row.match_id,
-            lastMessage: row.content,
+            // A media message carries empty content; name it so the list is not
+            // a blank row.
+            lastMessage: row.content || 'Photo',
             lastMessageAt: row.created_at,
             isMine: row.sender_id === user.id,
             unread: 0,

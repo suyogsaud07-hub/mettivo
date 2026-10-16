@@ -3,19 +3,38 @@
 import { useEffect, useState, use, useRef, useSyncExternalStore } from 'react';
 import type { RealtimePostgresChangesPayload } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
-import { markConversationRead } from '@/lib/messages';
+import {
+  markConversationRead,
+  markMessagesDelivered,
+  fetchChatSettings,
+  setDisappearingMessages,
+  purgeExpiredChatContent,
+} from '@/lib/messages';
 import { blockMember, BlockingError } from '@/lib/blocking';
 import { type MessageRow } from '@/lib/types';
+import {
+  fetchChatMedia,
+  sendChatMedia,
+  subscribeToChatMedia,
+  isGone,
+  ChatMediaError,
+  type ChatMediaByMessage,
+} from '@/lib/chatMedia';
+import ChatMediaMessage, { ChatMediaReport } from '@/app/components/chat/ChatMediaMessage';
+import MessageStatus from '@/app/components/chat/MessageStatus';
 import {
   NO_RESTRICTIONS,
   describeRestriction,
   fetchMyRestrictions,
   type MyRestrictions,
 } from '@/lib/reports';
-import { ReportButton } from '@/app/components/moderation/ReportButton';
 import { ReportModal } from '@/app/components/moderation/ReportModal';
+import { ReportButton } from '@/app/components/moderation/ReportButton';
 import TranslatableMessage from '@/app/components/chat/TranslatableMessage';
 import { usePreferredTranslationLanguage } from '@/app/components/chat/usePreferredTranslationLanguage';
+
+/** The 24-hour window offered by the disappearing-chat toggle. */
+const DISAPPEARING_SECONDS = 86_400;
 
 /**
  * The browser's language, as an external store.
@@ -51,8 +70,15 @@ export default function ChatPage({
   const [error, setError] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [blocking, setBlocking] = useState(false);
+  const [blocked, setBlocked] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
+  const [reportTargetType, setReportTargetType] = useState<'user' | 'chat'>('user');
   const [restrictions, setRestrictions] = useState<MyRestrictions>(NO_RESTRICTIONS);
+  const [chatMedia, setChatMedia] = useState<ChatMediaByMessage>({});
+  const [sendingMedia, setSendingMedia] = useState(false);
+  const [disappearing, setDisappearing] = useState<number | null>(null);
+  const [togglingDisappearing, setTogglingDisappearing] = useState(false);
+  const mediaInputRef = useRef<HTMLInputElement | null>(null);
 
   /**
    * The language this member wants incoming messages translated into.
@@ -103,6 +129,12 @@ export default function ChatPage({
       if (isMounted) setOtherUserId(id);
     };
 
+    const refreshMedia = () => {
+      void fetchChatMedia(matchId).then((map) => {
+        if (isMounted) setChatMedia(map);
+      });
+    };
+
     const init = async () => {
       const {
         data: { user },
@@ -120,7 +152,7 @@ export default function ChatPage({
 
       const { data, error: fetchError } = await supabase
         .from('messages')
-        .select('id, match_id, sender_id, content, created_at')
+        .select('id, match_id, sender_id, content, created_at, delivered_at, seen_at')
         .eq('match_id', matchId)
         .order('created_at', { ascending: true });
 
@@ -135,11 +167,25 @@ export default function ChatPage({
       const messagesData = (data ?? []) as MessageRow[];
       setMessages(messagesData);
 
+      // The media ledger is fetched alongside the thread. A media message has an
+      // empty `content`, so without this the bubble would render blank.
+      const mediaMap = await fetchChatMedia(matchId);
+      if (isMounted) setChatMedia(mediaMap);
+
+      // M26: the retention setting drives the header toggle and banner.
+      const window = await fetchChatSettings(matchId);
+      if (isMounted) setDisappearing(window);
+
       // M11: opening a thread reads it. The badge is computed server-side from
       // `last_read_at`, so it must be stamped here or the count never clears.
-      // `markConversationRead` throws only when there is no session; this is a
-      // best-effort side effect and must never surface as an unhandled rejection.
+      // M26: the same call stamps the "seen" receipts on incoming messages.
       markConversationRead(matchId).catch(() => undefined);
+
+      // Best-effort: acknowledge delivery and sweep anything that has aged out
+      // of a disappearing window. RLS already hides expired rows, so neither can
+      // fail visibly.
+      void markMessagesDelivered(matchId);
+      void purgeExpiredChatContent();
 
       if (!user) return;
 
@@ -183,15 +229,47 @@ export default function ChatPage({
             prev.some((m) => m.id === inserted.id) ? prev : [...prev, inserted]
           );
 
+          // A media message arrives as an empty-content row; pull its ledger
+          // entry so the bubble can render and be opened.
+          if (inserted.content === '') refreshMedia();
+
           if (!otherUserIdRef.current && inserted.sender_id !== currentUserIdRef.current) {
             applyOtherUserId(inserted.sender_id);
           }
+
+          // An incoming message while the thread is open is delivered at once,
+          // and — because the member is looking at it — seen as well.
+          if (inserted.sender_id !== currentUserIdRef.current) {
+            void markMessagesDelivered(matchId);
+            markConversationRead(matchId).catch(() => undefined);
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'messages',
+          filter: `match_id=eq.${matchId}`,
+        },
+        (payload: RealtimePostgresChangesPayload<MessageRow>) => {
+          const updated = payload.new as MessageRow;
+          // Receipt timestamps land here; merge them into the existing bubble so
+          // the ticks flip from delivered to seen live.
+          setMessages((prev) =>
+            prev.map((m) => (m.id === updated.id ? { ...m, ...updated } : m))
+          );
         }
       )
       .subscribe();
 
+    // An item the recipient exhausts must vanish on the sender's screen too.
+    const unsubscribeMedia = subscribeToChatMedia(matchId, refreshMedia);
+
     return () => {
       isMounted = false;
+      unsubscribeMedia();
       void supabase.removeChannel(channel);
     };
   }, [matchId]);
@@ -213,7 +291,7 @@ export default function ChatPage({
         sender_id: me,
         content,
       })
-      .select('id, match_id, sender_id, content, created_at')
+      .select('id, match_id, sender_id, content, created_at, delivered_at, seen_at')
       .single();
 
     if (insertError) {
@@ -231,6 +309,59 @@ export default function ChatPage({
 
     setError(null);
     setNewMessage('');
+  };
+
+  const handleMediaPicked = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    // Snapshot BEFORE clearing: emptying `value` clears the live FileList.
+    const files = event.target.files ? Array.from(event.target.files) : [];
+    event.target.value = '';
+    const picked = files[0];
+    const me = currentUserIdRef.current;
+    if (!picked || !me) return;
+
+    setSendingMedia(true);
+    setError(null);
+    try {
+      // Every chat item is a strict 2-view; videos are capped at 10s by
+      // `prepareMedia`, which rejects a longer clip before anything uploads.
+      const sent = await sendChatMedia(matchId, me, picked);
+      const now = new Date();
+      const messageRow: MessageRow = {
+        id: sent.messageId,
+        match_id: matchId,
+        sender_id: me,
+        content: '',
+        created_at: now.toISOString(),
+        delivered_at: null,
+        seen_at: null,
+      };
+      setMessages((prev) =>
+        prev.some((m) => m.id === messageRow.id) ? prev : [...prev, messageRow]
+      );
+      setChatMedia((prev) => ({
+        ...prev,
+        [sent.messageId]: {
+          id: sent.mediaId,
+          message_id: sent.messageId,
+          match_id: matchId,
+          sender_id: me,
+          storage_path: '',
+          media_type: sent.media.mediaType,
+          view_once: false,
+          view_limit: sent.viewLimit,
+          view_count: 0,
+          expires_at: new Date(now.getTime() + 86_400_000).toISOString(),
+          viewed_at: null,
+          created_at: now.toISOString(),
+        },
+      }));
+    } catch (err) {
+      const message =
+        err instanceof ChatMediaError ? err.message : 'The media could not be sent.';
+      setError(message);
+    } finally {
+      setSendingMedia(false);
+    }
   };
 
   const handleReported = () => {
@@ -251,7 +382,7 @@ export default function ChatPage({
       // dead conversation that still listed the member.
       await blockMember(target);
       setMenuOpen(false);
-      alert('User blocked successfully. They will no longer appear in your discover feed or messages.');
+      setBlocked(true);
     } catch (err) {
       if (err instanceof BlockingError) {
         setError(err.message);
@@ -264,8 +395,26 @@ export default function ChatPage({
     }
   };
 
+  const toggleDisappearing = async () => {
+    setTogglingDisappearing(true);
+    setError(null);
+    try {
+      const next = await setDisappearingMessages(
+        matchId,
+        disappearing ? null : DISAPPEARING_SECONDS
+      );
+      setDisappearing(next);
+      // Enabling the mode retires anything already older than the window.
+      if (next) await purgeExpiredChatContent();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not change disappearing messages.');
+    } finally {
+      setTogglingDisappearing(false);
+    }
+  };
+
   const restrictionMessage = describeRestriction(restrictions);
-  const canSend = restrictionMessage === null;
+  const canSend = restrictionMessage === null && !blocked;
 
   return (
     <div className="flex flex-col h-screen max-w-md mx-auto p-4 bg-neutral-950 text-white">
@@ -281,6 +430,7 @@ export default function ChatPage({
           <button
             onClick={() => setMenuOpen(!menuOpen)}
             className="p-1 rounded bg-neutral-800 hover:bg-neutral-700"
+            aria-label="Conversation options"
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
@@ -289,11 +439,12 @@ export default function ChatPage({
 
           {/* Report/Block Menu */}
           {menuOpen && (
-            <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-neutral-800 rounded-lg shadow-lg border border-neutral-200 dark:border-neutral-700 z-10">
+            <div className="absolute right-0 mt-2 w-56 bg-white dark:bg-neutral-800 rounded-lg shadow-lg border border-neutral-200 dark:border-neutral-700 z-10">
               <div className="px-4 py-2">
                 <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100 mb-2">Safety</p>
                 <button
                   onClick={() => {
+                    setReportTargetType('user');
                     setMenuOpen(false);
                     setReportOpen(true);
                   }}
@@ -303,17 +454,57 @@ export default function ChatPage({
                   Report User
                 </button>
                 <button
+                  onClick={() => {
+                    setReportTargetType('chat');
+                    setMenuOpen(false);
+                    setReportOpen(true);
+                  }}
+                  className="w-full text-left px-3 py-2 rounded hover:bg-neutral-100 dark:hover:bg-neutral-700 mt-1"
+                  disabled={!otherUserId}
+                >
+                  Report Conversation
+                </button>
+                <button
                   onClick={handleBlock}
                   className="w-full text-left px-3 py-2 rounded hover:bg-neutral-100 dark:hover:bg-neutral-700 mt-1"
-                  disabled={blocking}
+                  disabled={blocking || !otherUserId}
                 >
-                  {blocking ? 'Blocking...' : 'Block User'}
+                  {blocking ? 'Blocking…' : 'Block User'}
+                </button>
+                <button
+                  onClick={toggleDisappearing}
+                  className="w-full text-left px-3 py-2 rounded hover:bg-neutral-100 dark:hover:bg-neutral-700 mt-1"
+                  disabled={togglingDisappearing}
+                >
+                  {togglingDisappearing
+                    ? 'Updating…'
+                    : disappearing
+                      ? 'Turn off 24-hour mode'
+                      : 'Disappearing messages (24h)'}
                 </button>
               </div>
             </div>
           )}
         </div>
       </div>
+
+      {disappearing && (
+        <div
+          role="status"
+          className="mb-3 rounded-xl border border-amber-700/40 bg-amber-950/30 p-2 text-center text-xs text-amber-200"
+        >
+          Disappearing messages on — everything here clears 24 hours after it is sent.
+        </div>
+      )}
+
+      {blocked && (
+        <div
+          role="status"
+          className="mb-3 rounded-xl border border-rose-800/50 bg-rose-950/30 p-2 text-center text-xs text-rose-200"
+        >
+          You blocked this member. The conversation is closed and you will not see each other again.
+        </div>
+      )}
 
       {/* Scrollable message list. This container both makes the list scroll and
           balances the closing </div> below; without it the root element closed
@@ -327,6 +518,12 @@ export default function ChatPage({
 
         {messages.map((msg) => {
           const isMe = msg.sender_id === currentUserId;
+          const media = chatMedia[msg.id];
+
+          // An exhausted or expired item is gone for BOTH members, exactly as if
+          // it had never been sent.
+          if (media && isGone(media)) return null;
+
           return (
             <div
               key={msg.id}
@@ -334,7 +531,7 @@ export default function ChatPage({
             >
               {/* Only incoming messages offer a report, and it points at the
                   exact message so `file_report` captures it as context. */}
-              {!isMe && (
+              {!isMe && !media && (
                 <ReportButton
                   targetUserId={msg.sender_id}
                   targetType="message"
@@ -344,20 +541,35 @@ export default function ChatPage({
                   className="mb-1"
                 />
               )}
-              <div
-                className={`p-3 rounded-2xl max-w-[75%] ${
-                  isMe ? 'bg-rose-500 text-white' : 'bg-neutral-800 text-neutral-200'
-                }`}
-              >
-                {/* Translation is on-demand and per message: nothing is sent to
-                    the provider until the member taps the control, and the
-                    original text is never replaced. */}
-                <TranslatableMessage
-                  content={msg.content}
-                  isOwnMessage={isMe}
-                  targetLanguage={preferredTranslationLanguage}
-                  sourceLanguage={sourceLanguageHint}
-                />
+              {!isMe && media && <ChatMediaReport media={media} />}
+              <div className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
+                {media ? (
+                  <ChatMediaMessage media={media} isOwn={isMe} />
+                ) : (
+                  <div
+                    className={`p-3 rounded-2xl max-w-[75%] ${
+                      isMe ? 'bg-rose-500 text-white' : 'bg-neutral-800 text-neutral-200'
+                    }`}
+                  >
+                    {/* Translation is on-demand and per message: nothing is sent to
+                        the provider until the member taps the control, and the
+                        original text is never replaced. */}
+                    <TranslatableMessage
+                      content={msg.content}
+                      isOwnMessage={isMe}
+                      targetLanguage={preferredTranslationLanguage}
+                      sourceLanguage={sourceLanguageHint}
+                    />
+                  </div>
+                )}
+                {/* Delivery/seen ticks belong to the sender's own messages. */}
+                {isMe && (
+                  <MessageStatus
+                    deliveredAt={msg.delivered_at ?? null}
+                    seenAt={msg.seen_at ?? null}
+                    className="mt-0.5 pr-1"
+                  />
+                )}
               </div>
             </div>
           );
@@ -380,6 +592,27 @@ export default function ChatPage({
       )}
 
       <form onSubmit={sendMessage} className="flex gap-2">
+        {/* Disappearing media: a paperclip opens the picker. Photos and clips are
+            always a strict 2-view and vanish after the recipient's second open;
+            the database, not this UI, enforces it. */}
+        <input
+          ref={mediaInputRef}
+          type="file"
+          accept="image/*,video/*"
+          className="hidden"
+          data-testid="chat-media-input"
+          onChange={handleMediaPicked}
+        />
+        <button
+          type="button"
+          onClick={() => mediaInputRef.current?.click()}
+          disabled={!canSend || sendingMedia}
+          aria-label="Attach a 2-view photo or video"
+          title="Attach a 2-view photo or video (max 10s)"
+          className="px-3 py-3 rounded-xl bg-neutral-900 border border-neutral-800 text-neutral-300 disabled:opacity-50"
+        >
+          {sendingMedia ? '…' : '📎'}
+        </button>
         <input
           type="text"
           value={newMessage}
@@ -403,8 +636,8 @@ export default function ChatPage({
         isOpen={reportOpen}
         onClose={() => setReportOpen(false)}
         targetUserId={otherUserId ?? ''}
-        targetType="user"
-        title="Report member"
+        targetType={reportTargetType}
+        title={reportTargetType === 'chat' ? 'Report this conversation' : 'Report member'}
         onSubmitted={handleReported}
       />
     </div>

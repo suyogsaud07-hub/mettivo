@@ -30,6 +30,10 @@ export interface MessageRecord {
   senderId: string;
   content: string;
   createdAt: string;
+  /** M26 delivery receipt: when the OTHER member's device received the row. */
+  deliveredAt: string | null;
+  /** M26 read receipt: when the OTHER member read the row. */
+  seenAt: string | null;
 }
 
 /** Maximum length of a single message. Mirrors the UI's `maxLength`. */
@@ -61,6 +65,8 @@ function parseMessage(row: unknown): MessageRecord | null {
     senderId,
     content: str(row.content) ?? '',
     createdAt: createdAt ?? '',
+    deliveredAt: str(row.delivered_at),
+    seenAt: str(row.seen_at),
   };
 }
 
@@ -92,7 +98,7 @@ export async function fetchMessages(
 
   const { data, error } = await supabase
     .from('messages')
-    .select('id, match_id, sender_id, content, created_at')
+    .select('id, match_id, sender_id, content, created_at, delivered_at, seen_at')
     .eq('match_id', matchId)
     .order('created_at', { ascending: false })
     .limit(Math.max(1, Math.min(limit, 500)));
@@ -131,7 +137,7 @@ export async function sendMessage(matchId: string, content: string): Promise<Mes
   const { data, error } = await supabase
     .from('messages')
     .insert({ match_id: matchId, sender_id: senderId, content: body })
-    .select('id, match_id, sender_id, content, created_at')
+    .select('id, match_id, sender_id, content, created_at, delivered_at, seen_at')
     .single();
 
   if (error) {
@@ -153,7 +159,7 @@ export async function sendMessage(matchId: string, content: string): Promise<Mes
 }
 
 /**
- * Subscribes to inserts in one thread.
+ * Subscribes to inserts (and receipt updates) in one thread.
  *
  * Returns an unsubscribe function. Callers MUST call it on unmount: a leaked
  * channel keeps a websocket open and applies state updates to a dead component.
@@ -161,7 +167,8 @@ export async function sendMessage(matchId: string, content: string): Promise<Mes
 export function subscribeToMessages(
   matchId: string,
   onMessage: (message: MessageRecord) => void,
-  onStatus?: (status: string) => void
+  onStatus?: (status: string) => void,
+  onUpdated?: (message: MessageRecord) => void
 ): () => void {
   if (!matchId) return () => {};
 
@@ -173,6 +180,14 @@ export function subscribeToMessages(
       (payload) => {
         const parsed = parseMessage(payload.new);
         if (parsed) onMessage(parsed);
+      }
+    )
+    .on(
+      'postgres_changes',
+      { event: 'UPDATE', schema: 'public', table: 'messages', filter: `match_id=eq.${matchId}` },
+      (payload) => {
+        const parsed = parseMessage(payload.new);
+        if (parsed) onUpdated?.(parsed);
       }
     )
     .subscribe((status) => onStatus?.(status));
@@ -192,6 +207,82 @@ export async function markConversationRead(matchId: string): Promise<void> {
   if (error) {
     // Non-fatal: the badge simply stays until the next successful call.
     console.error('[messages] mark_conversation_read failed:', error.message);
+  }
+}
+
+/**
+ * Stamps the "delivered" receipt on messages this member received.
+ *
+ * Best-effort: a failure only delays a tick, so it never surfaces to the member.
+ */
+export async function markMessagesDelivered(matchId: string): Promise<void> {
+  if (!matchId) return;
+
+  const { error } = await supabase.rpc('mark_messages_delivered', { p_match_id: matchId });
+
+  if (error) {
+    console.error('[messages] mark_messages_delivered failed:', error.message);
+  }
+}
+
+/** The retention setting for a conversation, or `null` when none is stored. */
+export async function fetchChatSettings(matchId: string): Promise<number | null> {
+  if (!matchId) return null;
+
+  const { data, error } = await supabase
+    .from('chat_settings')
+    .select('disappear_after_seconds')
+    .eq('match_id', matchId)
+    .maybeSingle();
+
+  if (error) {
+    console.warn('[messages] chat_settings load failed:', error.message);
+    return null;
+  }
+
+  const value = isRecord(data) ? data.disappear_after_seconds : null;
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+/**
+ * Enables or disables 24-hour disappearing mode for a conversation.
+ *
+ * Pass `86400` to enable, `null` (or `0`) to disable. The database clamps the
+ * window and enforces participation; this returns the stored value.
+ */
+export async function setDisappearingMessages(
+  matchId: string,
+  seconds: number | null
+): Promise<number | null> {
+  if (!matchId) {
+    throw new MessageError('A conversation is required.');
+  }
+  await requireUserId();
+
+  const { data, error } = await supabase.rpc('set_disappearing_messages', {
+    p_match_id: matchId,
+    p_seconds: seconds,
+  });
+
+  if (error) {
+    console.error('[messages] set_disappearing_messages failed:', error.message);
+    throw new MessageError('We could not change disappearing messages.', error.code);
+  }
+
+  const value = isRecord(data) ? data.disappear_after_seconds : null;
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+/**
+ * Deletes this member's messages that have aged past a disappearing window.
+ *
+ * Best-effort housekeeping called when a thread opens; RLS already hides the
+ * rows, so a failure changes nothing the member can see.
+ */
+export async function purgeExpiredChatContent(): Promise<void> {
+  const { error } = await supabase.rpc('purge_expired_chat_content');
+  if (error) {
+    console.warn('[messages] purge_expired_chat_content failed:', error.message);
   }
 }
 

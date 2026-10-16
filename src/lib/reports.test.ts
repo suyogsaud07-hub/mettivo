@@ -80,7 +80,7 @@ describe('describeRestriction', () => {
 
 describe('fileReport', () => {
   it('refuses a blank target before any network call', async () => {
-    await expect(fileReport({ targetUserId: '   ', category: 'spam' })).rejects.toBeInstanceOf(
+    await expect(fileReport({ targetUserId: '   ', category: 'other' })).rejects.toBeInstanceOf(
       ReportError
     );
     expect(rpc).not.toHaveBeenCalled();
@@ -90,7 +90,7 @@ describe('fileReport', () => {
     await expect(
       // Deliberately wrong at the type level via a cast: the guard must also
       // catch a value that slipped past the UI.
-      fileReport({ targetUserId: 'u2', category: 'other' as never })
+      fileReport({ targetUserId: 'u2', category: 'sneaky' as never })
     ).rejects.toBeInstanceOf(ReportError);
     expect(rpc).not.toHaveBeenCalled();
   });
@@ -99,7 +99,7 @@ describe('fileReport', () => {
     await expect(
       fileReport({
         targetUserId: 'u2',
-        category: 'nudity',
+        category: 'explicit_media',
         targetType: 'live',
         evidenceImage: 'x'.repeat(EVIDENCE_IMAGE_MAX_CHARS + 1),
       })
@@ -108,11 +108,11 @@ describe('fileReport', () => {
   });
 
   it('calls file_report with the mapped parameters', async () => {
-    rpc.mockResolvedValue(ok({ report_id: 'r1', category: 'harassment', status: 'pending' }) as never);
+    rpc.mockResolvedValue(ok({ report_id: 'r1', category: 'abuse_text', status: 'pending' }) as never);
 
     const result = await fileReport({
       targetUserId: 'u2',
-      category: 'harassment',
+      category: 'abuse_text',
       targetType: 'message',
       targetId: 'm1',
       details: '  mean  ',
@@ -121,19 +121,19 @@ describe('fileReport', () => {
 
     expect(rpc).toHaveBeenCalledWith('file_report', {
       p_target_user: 'u2',
-      p_category: 'harassment',
+      p_category: 'abuse_text',
       p_target_type: 'message',
       p_target_id: 'm1',
       p_details: 'mean',
       p_evidence_image: null,
     });
-    expect(result).toEqual({ reportId: 'r1', category: 'harassment', status: 'pending' });
+    expect(result).toEqual({ reportId: 'r1', category: 'abuse_text', status: 'pending' });
   });
 
   it('normalises an empty detail and defaults the target type', async () => {
-    rpc.mockResolvedValue(ok({ report_id: 'r2', category: 'spam', status: 'actioned' }) as never);
+    rpc.mockResolvedValue(ok({ report_id: 'r2', category: 'other', status: 'actioned' }) as never);
 
-    const result = await fileReport({ targetUserId: 'u3', category: 'spam', details: '   ' });
+    const result = await fileReport({ targetUserId: 'u3', category: 'other', details: '   ' });
 
     expect(rpc).toHaveBeenCalledWith(
       'file_report',
@@ -145,7 +145,7 @@ describe('fileReport', () => {
   it('surfaces a database failure as a ReportError', async () => {
     rpc.mockResolvedValue(fail('You cannot report yourself', '22023') as never);
 
-    await expect(fileReport({ targetUserId: 'me', category: 'spam' })).rejects.toMatchObject({
+    await expect(fileReport({ targetUserId: 'me', category: 'other' })).rejects.toMatchObject({
       name: 'ReportError',
       message: 'You cannot report yourself',
       code: '22023',
@@ -154,7 +154,7 @@ describe('fileReport', () => {
 
   it('rejects a non-object response', async () => {
     rpc.mockResolvedValue(ok('nope') as never);
-    await expect(fileReport({ targetUserId: 'u2', category: 'spam' })).rejects.toBeInstanceOf(
+    await expect(fileReport({ targetUserId: 'u2', category: 'other' })).rejects.toBeInstanceOf(
       ReportError
     );
   });

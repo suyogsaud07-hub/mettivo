@@ -38,7 +38,7 @@ test.describe('§3.3 — universal reporting', () => {
     // copy, which used the words "Report user").
     await expect(page.getByText('Report member')).toBeVisible();
 
-    await page.getByRole('radio', { name: /harassment/i }).check();
+    await page.getByRole('radio', { name: /Abusive language/i }).check();
     await page.getByRole('button', { name: 'Submit report' }).click();
 
     await expect(page.getByText(/Thank you/i)).toBeVisible();
@@ -47,7 +47,7 @@ test.describe('§3.3 — universal reporting', () => {
     expect(filed, 'file_report was not called').toBeTruthy();
     expect(filed?.body).toMatchObject({
       p_target_user: E2E_OTHER_USER_ID,
-      p_category: 'harassment',
+      p_category: 'abuse_text',
     });
   });
 });

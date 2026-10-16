@@ -124,7 +124,7 @@ describe('M21 — file_report captures real content, not the reporter’s claim'
   });
 });
 
-describe('M21 — report threshold auto-enforces a chat ban', () => {
+describe('M25 — report threshold auto-enforces a 7-day account pause', () => {
   let db: PGlite;
 
   beforeAll(async () => {
@@ -137,29 +137,35 @@ describe('M21 — report threshold auto-enforces a chat ban', () => {
     expect(await restricted(db, 'is_chat_restricted', USER_B)).toBe(false);
   });
 
-  it('bans once enough DISTINCT reporters report within the window', async () => {
+  it('pauses the account once enough DISTINCT reporters report within the window', async () => {
     await report(db, USER_C, USER_B, 'harassment');
     expect(await restricted(db, 'is_chat_restricted', USER_B)).toBe(true);
+    expect(await restricted(db, 'is_video_restricted', USER_B)).toBe(true);
   });
 
-  it('the restricted member physically cannot send a message', async () => {
+  it('the paused member physically cannot send a message', async () => {
+    // Two gates can stop this: M14's account guard (which sees the mirrored
+    // `is_suspended` flag) and M21/M25's chat restriction. Either refusal is
+    // correct; what matters is that the write does not happen.
     await expect(
       asUser(db, USER_B, () =>
         db.exec(
           `insert into public.messages (match_id, sender_id, content) values ('m2','${USER_B}','hi')`
         )
       )
-    ).rejects.toThrow(/muted/i);
+    ).rejects.toThrow(/suspended|paused/i);
   });
 
-  it('records one ban, one warning, one in-app warning and one queued email', async () => {
-    const bans = await owner<{ n: number; source: string }>(
+  it('records one 7-day suspension, one warning, one in-app warning and one queued email', async () => {
+    const susp = await owner<{ n: number; source: string; days: number }>(
       db,
-      `select count(*)::int as n, min(source) as source from public.bans
-        where user_id = '${USER_B}' and scope = 'chat'`
+      `select count(*)::int as n, min(source) as source,
+              min(extract(day from (ends_at - starts_at))::int) as days
+         from public.suspensions where user_id = '${USER_B}'`
     );
-    expect(bans[0].n).toBe(1);
-    expect(bans[0].source).toBe('auto_threshold');
+    expect(susp[0].n).toBe(1);
+    expect(susp[0].source).toBe('auto_threshold');
+    expect(susp[0].days).toBe(7);
 
     const warnings = await owner<{ n: number }>(
       db,
@@ -173,7 +179,7 @@ describe('M21 — report threshold auto-enforces a chat ban', () => {
         where user_id = '${USER_B}' and type = 'warning'`
     );
     expect(notes[0].n).toBe(1);
-    expect(notes[0].body).toMatch(/muted/i);
+    expect(notes[0].body).toMatch(/paused/i);
 
     const mail = await owner<{ n: number; recipient: string; status: string }>(
       db,
@@ -185,27 +191,28 @@ describe('M21 — report threshold auto-enforces a chat ban', () => {
     expect(mail[0].status).toBe('pending');
   });
 
-  it('is idempotent — a further report does not stack a second ban', async () => {
+  it('is idempotent — a further report does not stack a second suspension', async () => {
     await report(db, USER_A, USER_B, 'harassment');
     const rows = await owner<{ n: number }>(
       db,
-      `select count(*)::int as n from public.bans where user_id = '${USER_B}'`
+      `select count(*)::int as n from public.suspensions where user_id = '${USER_B}'`
     );
     expect(rows[0].n).toBe(1);
   });
 
   it('reflects the restriction through my_restrictions()', async () => {
     const out = await asUser(db, USER_B, async () => {
-      const result = await db.query<{ r: { chat_banned: boolean } }>(
+      const result = await db.query<{ r: { suspended: boolean; suspended_until: string | null } }>(
         `select public.my_restrictions() as r`
       );
       return result.rows[0].r;
     });
-    expect(out.chat_banned).toBe(true);
+    expect(out.suspended).toBe(true);
+    expect(out.suspended_until).toBeTruthy();
   });
 });
 
-describe('M21 — nudity reports restrict video, underage needs AI or a moderator', () => {
+describe('M25 — explicit-media reports pause the whole account, underage needs AI or a moderator', () => {
   let db: PGlite;
 
   beforeAll(async () => {
@@ -213,12 +220,20 @@ describe('M21 — nudity reports restrict video, underage needs AI or a moderato
     await db.exec(`update public.moderation_settings set video_report_threshold = 2`);
   });
 
-  it('restricts video after the nudity threshold', async () => {
+  it('applies a 15-day account pause after the explicit-media threshold', async () => {
     await report(db, USER_A, USER_C, 'nudity');
     await report(db, USER_D, USER_C, 'nudity');
     expect(await restricted(db, 'is_video_restricted', USER_C)).toBe(true);
-    // A video ban must not silently also mute chat.
-    expect(await restricted(db, 'is_chat_restricted', USER_C)).toBe(false);
+    // M25: the pause is account-wide, so chat is blocked too.
+    expect(await restricted(db, 'is_chat_restricted', USER_C)).toBe(true);
+
+    const rows = await owner<{ category: string; days: number }>(
+      db,
+      `select category, extract(day from (ends_at - starts_at))::int as days
+         from public.suspensions where user_id = '${USER_C}'`
+    );
+    expect(rows[0].category).toBe('explicit_media');
+    expect(rows[0].days).toBe(15);
   });
 
   it('does NOT suspend on a bare underage report while underage_requires_ai is on', async () => {
@@ -323,7 +338,7 @@ describe('M21 — the AI worker enforces only against the content author', () =>
     scanId = rows[0].scan_id;
   });
 
-  it('applies a chat restriction from the verdict and records the log', async () => {
+  it('logs a flagged verdict that nobody reported WITHOUT punishing the author', async () => {
     const verdict = await owner<{ r: { flagged: boolean; action: string } }>(
       db,
       `select public.record_ai_scan(
@@ -336,14 +351,52 @@ describe('M21 — the AI worker enforces only against the content author', () =>
        ) as r`
     );
     expect(verdict[0].r.flagged).toBe(true);
-    expect(verdict[0].r.action).toBe('chat');
+    // M25: no report → no enforcement, only a log row.
+    expect(verdict[0].r.action).toBe('logged');
+    expect(await restricted(db, 'is_chat_restricted', USER_B)).toBe(false);
+    const susp = await owner<{ n: number }>(
+      db,
+      `select count(*)::int as n from public.suspensions where user_id = '${USER_B}'`
+    );
+    expect(susp[0].n).toBe(0);
+  });
+
+  it('applies an account pause when the verdict is tied to a member report', async () => {
+    // The report carries the image, which queues a report-linked vision job.
+    await report(db, USER_A, USER_B, 'nudity', 'user', null, 'data:image/jpeg;base64,AAAA');
+
+    const claimed = await owner<{ scan_id: string; content_type: string; report_id: string | null }>(
+      db,
+      `select scan_id, content_type, report_id
+         from public.claim_moderation_scans('test-secret', 10)`
+    );
+    const linked = claimed.find((s) => s.content_type === 'chat_media');
+    expect(linked).toBeTruthy();
+    expect(linked?.report_id).toBeTruthy();
+
+    const verdict = await owner<{ r: { flagged: boolean; action: string; category: string } }>(
+      db,
+      `select public.record_ai_scan(
+         p_secret => 'test-secret',
+         p_scan_id => '${linked?.scan_id}'::uuid,
+         p_flagged => true,
+         p_score   => 0.99,
+         p_provider => 'probe',
+         p_model   => 'probe-1'
+       ) as r`
+    );
+    expect(verdict[0].r.flagged).toBe(true);
+    expect(verdict[0].r.action).toBe('account');
+    expect(verdict[0].r.category).toBe('explicit_media');
     expect(await restricted(db, 'is_chat_restricted', USER_B)).toBe(true);
 
-    const log = await owner<{ source: string }>(
+    const log = await owner<{ source: string; days: number }>(
       db,
-      `select source from public.bans where user_id = '${USER_B}' and scope = 'chat'`
+      `select source, extract(day from (ends_at - starts_at))::int as days
+         from public.suspensions where user_id = '${USER_B}'`
     );
     expect(log[0].source).toBe('ai');
+    expect(log[0].days).toBe(15);
   });
 
   it('ships the queued email through the secret-gated outbox worker', async () => {
@@ -373,7 +426,7 @@ describe('M21 — the AI worker enforces only against the content author', () =>
   });
 });
 
-describe('M21 — restrictions and warnings are owner-scoped and moderator-readable', () => {
+describe('M25 — restrictions and warnings are owner-scoped and moderator-readable', () => {
   let db: PGlite;
 
   beforeAll(async () => {
@@ -383,12 +436,12 @@ describe('M21 — restrictions and warnings are owner-scoped and moderator-reada
     await db.exec(`insert into public.user_roles (user_id, role) values ('${MODERATOR}','moderator')`);
   });
 
-  it('lets the restricted member read their own ban', async () => {
-    expect(await scalarAs(db, USER_B, `select count(*)::int as n from public.bans`)).toBe(1);
+  it('lets the paused member read their own suspension', async () => {
+    expect(await scalarAs(db, USER_B, `select count(*)::int as n from public.suspensions`)).toBe(1);
   });
 
-  it('hides the ban from an uninvolved member', async () => {
-    expect(await scalarAs(db, USER_C, `select count(*)::int as n from public.bans`)).toBe(0);
+  it('hides the suspension from an uninvolved member', async () => {
+    expect(await scalarAs(db, USER_C, `select count(*)::int as n from public.suspensions`)).toBe(0);
     expect(
       await scalarAs(db, USER_C, `select count(*)::int as n from public.moderation_warnings`)
     ).toBe(0);
@@ -398,7 +451,7 @@ describe('M21 — restrictions and warnings are owner-scoped and moderator-reada
     expect(
       await scalarAs(db, MODERATOR, `select count(*)::int as n from public.moderation_warnings`)
     ).toBeGreaterThan(0);
-    expect(await anonReadCount(db, `select count(*)::int as n from public.bans`)).toBe(0);
+    expect(await anonReadCount(db, `select count(*)::int as n from public.suspensions`)).toBe(0);
     expect(
       await anonReadCount(db, `select count(*)::int as n from public.moderation_emails`)
     ).toBe(0);
@@ -443,5 +496,48 @@ describe('M21 — restrictions and warnings are owner-scoped and moderator-reada
       )
     ).rejects.toThrow(/row-level security|permission denied/i);
     expect(await rowCount(db, 'bans')).toBe(before);
+  });
+});
+
+describe('M25 — a paused account cannot post to Moments', () => {
+  let db: PGlite;
+
+  beforeAll(async () => {
+    db = await createTestDb();
+  });
+
+  it('lets a member post and comment while honest', async () => {
+    await asUser(db, USER_A, () =>
+      db.exec(`insert into public.moments (author_id, caption) values ('${USER_A}','hello')`)
+    );
+    const n = await scalarAs(
+      db,
+      USER_A,
+      `select count(*)::int as n from public.moments where author_id = '${USER_A}'`
+    );
+    expect(n).toBe(1);
+  });
+
+  it('blocks a post and a comment once the account is paused', async () => {
+    await db.exec(
+      `insert into public.suspensions (user_id, category, ends_at)
+       values ('${USER_A}','abuse_text', now() + interval '7 days')`
+    );
+    await db.exec(`update public.profiles set is_suspended = true where id = '${USER_A}'`);
+
+    await expect(
+      asUser(db, USER_A, () =>
+        db.exec(`insert into public.moments (author_id, caption) values ('${USER_A}','again')`)
+      )
+    ).rejects.toThrow(/suspended|paused/i);
+
+    await expect(
+      asUser(db, USER_A, () =>
+        db.exec(
+          `insert into public.moment_comments (moment_id, author_id, body)
+           select id, '${USER_A}', 'sneaky' from public.moments limit 1`
+        )
+      )
+    ).rejects.toThrow(/suspended|paused/i);
   });
 });

@@ -125,8 +125,8 @@ function ReportForm({
     return (
       <div className="space-y-4">
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          Thank you. Our safety team reviews every report, and serious cases are actioned
-          automatically. You will not be told who reported whom.
+          Thank you. Subbu Bot reviews every report, and serious cases are actioned
+          automatically with a platform-wide pause. You will not be told who reported whom.
         </p>
         <div className="flex justify-end">
           <Button variant="primary" type="button" onClick={onClose}>
