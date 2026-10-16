@@ -35,9 +35,24 @@ export interface VerificationEnv extends AiEnv {
 }
 
 const DEFAULT_TRANSCRIBE_MODEL = 'whisper-1';
-const UPSTREAM_TIMEOUT_MS = 20_000;
+
+/**
+ * Groq's vision model is not fast on a cold image. 20 s aborts a large
+ * fraction of real requests and shows up as `ai_unavailable`. 60 s matches
+ * Vercel's serverless limit and is still well under any human patience budget.
+ */
+const UPSTREAM_TIMEOUT_MS = 60_000;
 const MAX_RESPONSE_BYTES = 32_768;
 const MAX_IMAGE_URL_CHARS = 2_000_000;
+
+/**
+ * A single 429/5xx retry after a short delay absorbs the free tier's per-minute
+ * burst limit without turning a transient throttle into a hard user-visible
+ * failure. A second failure is returned as `null` on purpose: retrying forever
+ * would make a genuine outage look like a slow success.
+ */
+const RETRY_DELAY_MS = 2_500;
+const RETRY_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
 
 /** Confidence a face/photo verdict must reach to count as a pass. */
 export const VERIFICATION_THRESHOLD = 0.6;
@@ -94,10 +109,10 @@ function normaliseApparentGender(value: unknown): ApparentGender {
 /**
  * Whether the model's estimate is consistent with the member's selection.
  *
- * Woman/Man must be matched exactly. Nonbinary appearance is not something a
- * vision model can assert reliably, so for Nonbinary the requirement is simply
- * that the image shows a real human — the authenticity half of the check still
- * applies in full.
+ * A vision model's guess at "how someone presents" is a weak signal, so the
+ * mismatch is treated as a FAILED CHECK rather than a hard rejection — the
+ * caller decides what to do with it. Woman/Man must be matched exactly;
+ * Nonbinary only requires that the image shows a real human.
  */
 export function matchesSelectedGender(
   selected: VerificationGender,
@@ -138,6 +153,10 @@ interface VisionMessage {
       >;
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function fetchWithTimeout(
   fetchImpl: typeof fetch,
   url: string,
@@ -149,6 +168,35 @@ async function fetchWithTimeout(
     return await fetchImpl(url, { ...init, signal: controller.signal });
   } finally {
     clearTimeout(timer);
+  }
+}
+
+/**
+ * Runs one upstream call with the timeout. Retries once on 408/425/429/5xx
+ * after a short delay — the free tier's per-minute burst limit and a cold
+ * model start both surface as those statuses and both clear within seconds.
+ */
+async function fetchWithRetry(
+  fetchImpl: typeof fetch,
+  url: string,
+  init: RequestInit
+): Promise<Response | null> {
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(fetchImpl, url, init);
+  } catch {
+    return null;
+  }
+  if (!RETRY_STATUSES.has(response.status)) return response;
+
+  // Drain the failed body so the connection can be reused.
+  await response.text().catch(() => '');
+
+  await sleep(RETRY_DELAY_MS);
+  try {
+    return await fetchWithTimeout(fetchImpl, url, init);
+  } catch {
+    return null;
   }
 }
 
@@ -171,29 +219,23 @@ async function callVision(
     })),
   ];
 
-  let response: Response;
-  try {
-    response = await fetchWithTimeout(fetchImpl, `${env.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${env.apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: env.visionModel,
-        temperature: 0,
-        response_format: { type: 'json_object' },
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content },
-        ] satisfies VisionMessage[],
-      }),
-    });
-  } catch {
-    return null;
-  }
-
-  if (!response.ok) return null;
+  const response = await fetchWithRetry(fetchImpl, `${env.baseUrl}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${env.apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: env.visionModel,
+      temperature: 0,
+      response_format: { type: 'json_object' },
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content },
+      ] satisfies VisionMessage[],
+    }),
+  });
+  if (!response || !response.ok) return null;
 
   let text: string;
   try {
@@ -378,18 +420,12 @@ export async function transcribeVoice(
   form.append('model', env.transcribeModel);
   form.append('file', blob, 'voice.webm');
 
-  let response: Response;
-  try {
-    response = await fetchWithTimeout(fetchImpl, `${env.baseUrl}/audio/transcriptions`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${env.apiKey}` },
-      body: form,
-    });
-  } catch {
-    return null;
-  }
-
-  if (!response.ok) return null;
+  const response = await fetchWithRetry(fetchImpl, `${env.baseUrl}/audio/transcriptions`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${env.apiKey}` },
+    body: form,
+  });
+  if (!response || !response.ok) return null;
 
   let text: string;
   try {
