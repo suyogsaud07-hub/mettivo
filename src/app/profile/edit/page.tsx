@@ -1,12 +1,11 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import {
   MAX_BIO_LENGTH,
-  MAX_PHOTOS,
   MIN_AGE,
   calculateAge,
   saveProfile,
@@ -21,6 +20,9 @@ import {
   ONBOARDING_TOTAL_STEPS,
   validateOnboardingStep,
 } from '@/lib/onboarding-steps';
+import FaceVoiceVerificationModal from '@/app/components/verification/FaceVoiceVerificationModal';
+import PhotoVerificationStep from '@/app/components/verification/PhotoVerificationStep';
+import type { VerificationGender } from '@/lib/verification/client';
 import {
   PROFILE_DRINKING_OPTIONS,
   PROFILE_HOBBIES_OPTIONS as HOBBIES_LIST,
@@ -83,7 +85,7 @@ const PHYSICAL_ATTRS = [
  * inference collapses to an error type.
  */
 const WIZARD_PROFILE_COLUMNS =
-  'id, display_name, avatar_url, photos, gender, pronouns, age, country, city, height, physical_attributes, intention, looking_for, sexual_orientation, mbti, personality, hobbies, pets, interests, prompts, smoking, drinking, exercise, education, profession, languages_spoken, bio' as const;
+  'id, display_name, avatar_url, photos, gender, pronouns, age, country, city, height, physical_attributes, intention, looking_for, sexual_orientation, mbti, personality, hobbies, pets, interests, prompts, smoking, drinking, exercise, education, profession, languages_spoken, bio, onboarding_completed' as const;
 
 /** M8: how many curated prompts a member may answer during onboarding. */
 const MAX_PROMPT_SLOTS = 3;
@@ -138,8 +140,18 @@ export default function EditProfileWizardPage() {
   const [userId, setUserId] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const galleryInputRef = useRef<HTMLInputElement>(null);
+  /**
+   * M24 — authenticity verification state.
+   *
+   * A member who finished onboarding before M24 keeps editing normally (the
+   * database trigger grandfathers the transition), so the two new gates below
+   * are only REQUIRED for a first-time publish.
+   */
+  const [alreadyOnboarded, setAlreadyOnboarded] = useState(false);
+  const [faceVoiceVerified, setFaceVoiceVerified] = useState(false);
+  const [selfieUrl, setSelfieUrl] = useState('');
+  const [showVerification, setShowVerification] = useState(false);
+  const [photosReady, setPhotosReady] = useState(false);
 
   const [formData, setFormData] = useState<FormState>({
     displayName: '',
@@ -282,6 +294,8 @@ export default function EditProfileWizardPage() {
                 : {},
           }));
 
+          setAlreadyOnboarded(data.onboarding_completed === true);
+
           // M8: seed the prompt slots from whatever is already saved, so an
           // interrupted wizard resumes with the member's answers intact.
           const savedPrompts: Record<string, string> =
@@ -349,41 +363,6 @@ export default function EditProfileWizardPage() {
    */
   const ageFromDob = (dob: string): number => calculateAge(dob) ?? 0;
 
-  const handleAvatarUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setFormData((prev) => ({ ...prev, avatarUrl: reader.result as string }));
-      };
-      reader.readAsDataURL(file);
-    }
-
-    // Allow re-selecting the same file, which `change` otherwise suppresses.
-    e.target.value = '';
-  };
-
-  const handleGalleryUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-
-    for (const file of Array.from(files)) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setFormData((prev) => ({
-          ...prev,
-          // Capped at MAX_PHOTOS here as well as in validation, so the UI can
-          // never render more thumbnails than the payload will carry.
-          photos: [...prev.photos, reader.result as string].slice(0, MAX_PHOTOS),
-        }));
-      };
-      reader.readAsDataURL(file);
-    }
-
-    // Allow re-selecting the same file, which `change` otherwise suppresses.
-    e.target.value = '';
-  };
-
   const handleNext = () => {
     setError(null);
 
@@ -395,6 +374,13 @@ export default function EditProfileWizardPage() {
     const validation = validateOnboardingStep(currentStep, formData);
     if (!validation.ok) {
       setError(validation.problems[0]?.message ?? 'Please complete this step to continue.');
+      return;
+    }
+
+    // M24: the gender step additionally requires the live face + voice check.
+    // An already-onboarded member editing their profile is grandfathered.
+    if (currentStep === 2 && !faceVoiceVerified && !alreadyOnboarded) {
+      setError('Please verify your face and voice to continue.');
       return;
     }
 
@@ -444,6 +430,22 @@ export default function EditProfileWizardPage() {
       languagesSpoken: formData.languagesSpoken,
       bio: formData.bio,
     };
+
+    // M24: a first-time publish cannot happen without authenticity verification.
+    // The database refuses it regardless; this surfaces it at the right step
+    // instead of as a raw error on the finish button.
+    if (!alreadyOnboarded) {
+      if (!faceVoiceVerified) {
+        setError('Please verify your face and voice before finishing.');
+        setCurrentStep(2);
+        return;
+      }
+      if (!photosReady) {
+        setError('Please verify one profile picture and four gallery photos before finishing.');
+        setCurrentStep(ONBOARDING_TOTAL_STEPS);
+        return;
+      }
+    }
 
     // Validate BEFORE showing a spinner: a failed guard is not a loading state,
     // and jumping to the offending step is far more useful than a red banner on
@@ -591,7 +593,7 @@ export default function EditProfileWizardPage() {
         {currentStep === 1 && (
           <div>
             <div style={styles.title}>Let&apos;s start with the basics</div>
-            <div style={styles.subtitle}>Choose your display name and upload a main profile avatar.</div>
+            <div style={styles.subtitle}>Start with your display name. Photos come last, after you verify.</div>
 
             <div style={{ marginBottom: '16px' }}>
               <label style={styles.label}>Display Name *</label>
@@ -602,92 +604,35 @@ export default function EditProfileWizardPage() {
                 onChange={(e) => setFormData({ ...formData, displayName: e.target.value })}
               />
             </div>
-
-            <div>
-              <label style={styles.label}>Profile Avatar</label>
-              <input type="file" accept="image/*" ref={fileInputRef} style={{ display: 'none' }} onChange={handleAvatarUpload} />
-              <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                {formData.avatarUrl ? (
-                  <img src={formData.avatarUrl} alt="Avatar" style={{ width: '70px', height: '70px', borderRadius: '50%', objectFit: 'cover' }} />
-                ) : (
-                  <div style={{ width: '70px', height: '70px', borderRadius: '50%', backgroundColor: '#0D0A10', display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '28px' }}>👤</div>
-                )}
-                <button type="button" style={{ backgroundColor: '#29202D', color: '#D4B18A', border: '1px solid #4A1828', padding: '10px 16px', borderRadius: '20px', cursor: 'pointer', fontSize: '13px' }} onClick={() => fileInputRef.current?.click()}>
-                  Upload Photo
-                </button>
-              </div>
-            </div>
-
-            {/* Gallery — the handler and ref existed but were never rendered, so
-                this was dead code and `photos` could never be populated by a
-                member despite being sent on every save. */}
-            <div style={{ marginTop: '20px' }}>
-              <label style={styles.label}>
-                Gallery ({formData.photos.length}/{MAX_PHOTOS})
-              </label>
-              <input
-                type="file"
-                accept="image/*"
-                multiple
-                ref={galleryInputRef}
-                style={{ display: 'none' }}
-                onChange={handleGalleryUpload}
-              />
-
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'center' }}>
-                {formData.photos.map((photo, index) => (
-                  <div key={index} style={{ position: 'relative' }}>
-                    <img
-                      src={photo}
-                      alt={`Gallery photo ${index + 1}`}
-                      style={{ width: '64px', height: '64px', borderRadius: '12px', objectFit: 'cover' }}
-                    />
-                    <button
-                      type="button"
-                      aria-label={`Remove gallery photo ${index + 1}`}
-                      onClick={() =>
-                        setFormData((prev) => ({
-                          ...prev,
-                          photos: prev.photos.filter((_, position) => position !== index),
-                        }))
-                      }
-                      style={{ position: 'absolute', top: '-6px', right: '-6px', width: '22px', height: '22px', borderRadius: '50%', backgroundColor: '#7F1D2E', color: '#F2E9E4', border: 'none', cursor: 'pointer', fontSize: '13px', lineHeight: 1, padding: 0 }}
-                    >
-                      ×
-                    </button>
-                  </div>
-                ))}
-
-                {formData.photos.length < MAX_PHOTOS && (
-                  <button
-                    type="button"
-                    aria-label="Add gallery photos"
-                    onClick={() => galleryInputRef.current?.click()}
-                    style={{ width: '64px', height: '64px', borderRadius: '12px', border: '1px dashed #4A1828', backgroundColor: 'transparent', color: '#D4B18A', cursor: 'pointer', fontSize: '22px', lineHeight: 1 }}
-                  >
-                    +
-                  </button>
-                )}
-              </div>
-
-              <p style={{ fontSize: '12px', color: '#B58A83', marginTop: '8px' }}>
-                Up to {MAX_PHOTOS} photos. Profiles with photos get far more matches.
-              </p>
-            </div>
           </div>
         )}
 
-        {/* STEP 2: Gender & Pronouns */}
+        {/* STEP 2: Gender, Pronouns & mandatory face/voice verification */}
         {currentStep === 2 && (
           <div>
             <div style={styles.title}>How do you identify?</div>
-            <div style={styles.subtitle}>Select your gender identity and optional pronouns.</div>
+            <div style={styles.subtitle}>
+              Select your gender identity. We then verify your face and voice to keep fake profiles out.
+            </div>
 
             <div style={{ marginBottom: '16px' }}>
               <label style={styles.label}>Gender</label>
               <div style={styles.pillContainer}>
                 {ONBOARDING_GENDERS.map((g) => (
-                  <button key={g} type="button" style={{ ...styles.pill, ...(formData.gender === g ? styles.pillActive : {}) }} onClick={() => setFormData({ ...formData, gender: g })}>
+                  <button
+                    key={g}
+                    type="button"
+                    style={{ ...styles.pill, ...(formData.gender === g ? styles.pillActive : {}) }}
+                    onClick={() => {
+                      // Changing gender invalidates a prior check: the verdict is
+                      // bound to the gender it was confirmed against.
+                      if (g !== formData.gender) {
+                        setFaceVoiceVerified(false);
+                        setSelfieUrl('');
+                      }
+                      setFormData({ ...formData, gender: g });
+                    }}
+                  >
                     {g}
                   </button>
                 ))}
@@ -702,6 +647,39 @@ export default function EditProfileWizardPage() {
                 value={formData.pronouns}
                 onChange={(e) => setFormData({ ...formData, pronouns: e.target.value })}
               />
+            </div>
+
+            <div style={{ marginTop: '20px' }}>
+              <label style={styles.label}>Face &amp; voice check *</label>
+              {faceVoiceVerified ? (
+                <div style={{ color: '#34D399', fontSize: '13px', fontWeight: 700 }}>
+                  Verified ✓ — your face and voice match {formData.gender}.
+                </div>
+              ) : alreadyOnboarded ? (
+                <div style={{ color: '#B58A83', fontSize: '13px' }}>
+                  Your account is already verified. You can continue without re-checking.
+                </div>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    disabled={!ONBOARDING_GENDERS.includes(formData.gender as (typeof ONBOARDING_GENDERS)[number])}
+                    onClick={() => setShowVerification(true)}
+                    style={{
+                      ...styles.nextBtn,
+                      flex: 'none',
+                      width: '100%',
+                      opacity: formData.gender ? 1 : 0.5,
+                      cursor: formData.gender ? 'pointer' : 'not-allowed',
+                    }}
+                  >
+                    Verify my face &amp; voice
+                  </button>
+                  <p style={{ fontSize: '12px', color: '#B58A83', marginTop: '8px' }}>
+                    You cannot continue until the check passes.
+                  </p>
+                </>
+              )}
             </div>
           </div>
         )}
@@ -1081,10 +1059,31 @@ export default function EditProfileWizardPage() {
           </div>
         )}
 
-        {/* STEP 15: Review & Confirm */}
+        {/* STEP 15: Photo verification, then review & confirm */}
         {currentStep === 15 && (
           <div>
-            <div style={styles.title}>Review & Finish</div>
+            <div style={styles.title}>Verify your photos &amp; finish</div>
+            <div style={styles.subtitle}>
+              Every photo is checked against your verified face before it can appear on your profile.
+            </div>
+
+            {!alreadyOnboarded && (
+              <div style={{ marginBottom: '24px' }}>
+                <PhotoVerificationStep
+                  gender={formData.gender as VerificationGender}
+                  selfieUrl={selfieUrl}
+                  initialAvatarUrl={formData.avatarUrl}
+                  initialPhotos={formData.photos}
+                  onProgress={({ avatarUrl, photos, ready }) => {
+                    // Only verified images are ever handed back here, so the
+                    // saved payload contains exactly what the database cleared.
+                    setFormData((prev) => ({ ...prev, avatarUrl, photos }));
+                    setPhotosReady(ready);
+                  }}
+                />
+              </div>
+            )}
+
             <div style={styles.subtitle}>Double check your details before saving your profile.</div>
 
             <div style={{ maxHeight: '220px', overflowY: 'auto', paddingRight: '6px' }}>
@@ -1096,6 +1095,7 @@ export default function EditProfileWizardPage() {
               <div style={styles.summaryRow}><span>MBTI</span><span style={{ color: '#D4B18A' }}>{formData.mbti || 'Not set'}</span></div>
               <div style={styles.summaryRow}><span>Hobbies</span><span style={{ color: '#D4B18A' }}>{formData.hobbies.join(', ') || 'None selected'}</span></div>
               <div style={styles.summaryRow}><span>Languages</span><span style={{ color: '#D4B18A' }}>{formData.languagesSpoken.join(', ') || 'None selected'}</span></div>
+              <div style={styles.summaryRow}><span>Photos</span><span style={{ color: '#D4B18A' }}>{formData.photos.length} verified</span></div>
             </div>
           </div>
         )}
@@ -1110,15 +1110,39 @@ export default function EditProfileWizardPage() {
         )}
 
         {currentStep < totalSteps ? (
-          <button type="button" style={styles.nextBtn} onClick={handleNext} disabled={!stepValidation.ok}>
+          <button
+            type="button"
+            style={styles.nextBtn}
+            onClick={handleNext}
+            disabled={
+              !stepValidation.ok || (currentStep === 2 && !faceVoiceVerified && !alreadyOnboarded)
+            }
+          >
             Next →
           </button>
         ) : (
-          <button type="button" style={styles.submitBtn} onClick={handleSubmit} disabled={saving}>
+          <button
+            type="button"
+            style={styles.submitBtn}
+            onClick={handleSubmit}
+            disabled={saving || (!alreadyOnboarded && !photosReady)}
+          >
             {saving ? 'Saving Profile...' : 'Complete & Launch 🚀'}
           </button>
         )}
       </div>
+
+      {showVerification && (
+        <FaceVoiceVerificationModal
+          gender={formData.gender as VerificationGender}
+          onCancel={() => setShowVerification(false)}
+          onVerified={(capturedSelfie) => {
+            setSelfieUrl(capturedSelfie);
+            setFaceVoiceVerified(true);
+            setShowVerification(false);
+          }}
+        />
+      )}
 
       {/*
         The escape hatch. Onboarding is a holding screen for a member with an

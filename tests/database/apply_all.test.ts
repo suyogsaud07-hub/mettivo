@@ -42,6 +42,10 @@ const PERSONAL_TABLES = [
   // M17: member-scoped settings. RLS must be on and enforced like any other row
   // that belongs to exactly one member.
   'user_preferences',
+  // M24: authenticity verification. These hold a member's face/voice/photo
+  // verdicts and must be as dark to an anonymous caller as any other row.
+  'profile_verifications',
+  'profile_photo_checks',
 ];
 
 describe('apply_all.sql — the operator bootstrap', () => {

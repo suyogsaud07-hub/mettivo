@@ -20,6 +20,7 @@ import { PreferencesError } from '@/lib/preferences';
 import { TRANSLATION_LANGUAGE_OPTIONS } from '@/lib/translation';
 import { usePreferredTranslationLanguage } from '@/app/components/chat/usePreferredTranslationLanguage';
 import { AvatarError, saveAvatar } from '@/lib/avatar';
+import PhotoCropperModal from '@/app/components/verification/PhotoCropperModal';
 import { LEGAL_DOC_TITLES, type LegalDocId } from '@/lib/legal-content';
 import BottomSheet from './components/BottomSheet';
 import Toast, { type ToastMessage } from './components/Toast';
@@ -153,6 +154,8 @@ export default function SettingsPage() {
 
   // Ref for the avatar upload
   const avatarInputRef = useRef<HTMLInputElement>(null);
+  // Data URL of the picked image, shown in the cropper before it is uploaded.
+  const [cropperSrc, setCropperSrc] = useState<string | null>(null);
 
   const handleSignOut = async () => {
     setIsSigningOut(true);
@@ -200,14 +203,33 @@ export default function SettingsPage() {
     }
   };
 
-  const handleAvatarUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleAvatarUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     // Reset so re-selecting the same file fires `change` again.
     event.target.value = '';
     if (!file) return;
 
+    // M24: crop before upload so the member controls the framing — the same
+    // pan/zoom tool the onboarding flow uses.
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      if (typeof reader.result === 'string') {
+        setCropperSrc(reader.result);
+      } else {
+        showToast('That image could not be read.', 'error');
+      }
+    };
+    reader.onerror = () => showToast('That image could not be read.', 'error');
+    reader.readAsDataURL(file);
+  };
+
+  const handleCroppedAvatar = async (dataUrl: string) => {
+    setCropperSrc(null);
     setIsAvatarBusy(true);
     try {
+      const response = await fetch(dataUrl);
+      const blob = await response.blob();
+      const file = new File([blob], 'avatar.jpg', { type: blob.type || 'image/jpeg' });
       await saveAvatar(file);
       showToast('Avatar updated');
     } catch (err) {
@@ -600,6 +622,15 @@ export default function SettingsPage() {
       )}
 
       <Toast toast={toast} />
+
+      {cropperSrc && (
+        <PhotoCropperModal
+          src={cropperSrc}
+          shape="circle"
+          onCancel={() => setCropperSrc(null)}
+          onSave={(dataUrl) => void handleCroppedAvatar(dataUrl)}
+        />
+      )}
 
     </div>
   );

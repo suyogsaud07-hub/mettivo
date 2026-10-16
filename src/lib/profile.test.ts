@@ -194,7 +194,7 @@ const completeState = (overrides: Partial<OnboardingState> = {}): OnboardingStat
   ...overrides,
 });
 
-/** Steps that block locally: 1..14. Step 15 is the submit screen. */
+/** Steps that block locally: 1..14. Step 15 is photo verification + submit. */
 const BLOCKING_STEPS = ONBOARDING_STEPS.filter(
   (spec) => spec.step < ONBOARDING_TOTAL_STEPS
 );
@@ -302,50 +302,55 @@ describe('onboarding — every step blocks when blank, passes when filled', () =
   });
 });
 
-describe('onboarding — step 1, the photo minimum', () => {
-  it('blocks with the character-exact photo message and a live count', () => {
-    for (const photos of [[], ['a'], ['a', 'b', 'c']]) {
-      const result = validateOnboardingStep(1, completeState({ photos }));
+describe('onboarding — step 15, the photo requirement', () => {
+  it('blocks with the character-exact message unless exactly four gallery photos', () => {
+    for (const photos of [[], ['a'], ['a', 'b', 'c'], ['a', 'b', 'c', 'd', 'e']]) {
+      const result = validateOnboardingStep(ONBOARDING_TOTAL_STEPS, completeState({ photos }));
       expect(result.ok).toBe(false);
-      expect(result.problems[0].message).toBe(
-        `Please upload at least 4 profile photos to continue (${photos.length}/4 uploaded)`
+      expect(result.problems.find((problem) => problem.field === 'photos')?.message).toBe(
+        `Please upload exactly 4 gallery photos to continue (${photos.length}/4 uploaded)`
       );
     }
   });
 
   it('does not count blank or whitespace-only photo entries', () => {
     const result = validateOnboardingStep(
-      1,
+      ONBOARDING_TOTAL_STEPS,
       completeState({ photos: ['a', 'b', 'c', '   '] })
     );
     expect(result.ok).toBe(false);
-    expect(result.problems[0].message).toBe(
-      'Please upload at least 4 profile photos to continue (3/4 uploaded)'
+    expect(result.problems.find((problem) => problem.field === 'photos')?.message).toBe(
+      'Please upload exactly 4 gallery photos to continue (3/4 uploaded)'
     );
   });
 
-  it('accepts exactly the minimum and refuses one fewer', () => {
-    expect(validateOnboardingStep(1, completeState()).ok).toBe(true);
-    expect(validateOnboardingStep(1, completeState({ photos: ['a', 'b', 'c'] })).ok).toBe(
-      false
-    );
+  it('accepts exactly four and refuses three or five', () => {
+    expect(validateOnboardingStep(ONBOARDING_TOTAL_STEPS, completeState()).ok).toBe(true);
+    expect(
+      validateOnboardingStep(ONBOARDING_TOTAL_STEPS, completeState({ photos: ['a', 'b', 'c'] })).ok
+    ).toBe(false);
+    expect(
+      validateOnboardingStep(
+        ONBOARDING_TOTAL_STEPS,
+        completeState({ photos: ['a', 'b', 'c', 'd', 'e'] })
+      ).ok
+    ).toBe(false);
   });
 
-  it('reports the missing display name before the missing photos', () => {
-    const result = validateOnboardingStep(1, blankState());
-    expect(result.problems.map((problem) => problem.field)).toEqual([
-      'displayName',
-      'photos',
-    ]);
-    expect(result.problems[0].message).toBe('Please provide a display name to continue.');
+  it('step 1 owns only the display name and never blocks on photos', () => {
+    const problems = validateOnboardingStep(1, blankState()).problems;
+    expect(problems.map((problem) => problem.field)).toEqual(['displayName']);
+    expect(problems[0].message).toBe('Please provide a display name to continue.');
+    expect(validateOnboardingStep(1, completeState({ photos: [] })).ok).toBe(true);
   });
 
-  it('keeps the photo minimum out of the full-draft guard', () => {
-    // The four-photo rule is onboarding-flow only. `validateProfileDraft` has no
-    // minimum (the database caps at MAX_PHOTOS), which is exactly why step 15
-    // delegates to it and why step 1 owns the rule.
+  it('keeps the photo rule out of the full-draft guard', () => {
+    // The gallery count is onboarding-flow only; the database enforces the real
+    // rule (each photo must be AI-verified) in the M24 trigger.
     expect(validateProfileDraft(draft({ photos: [] }), NOW).ok).toBe(true);
-    expect(validateOnboardingStep(1, completeState({ photos: [] })).ok).toBe(false);
+    expect(
+      validateOnboardingStep(ONBOARDING_TOTAL_STEPS, completeState({ photos: [] })).ok
+    ).toBe(false);
   });
 });
 

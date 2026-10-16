@@ -1,0 +1,346 @@
+/**
+ * M24 — the verification request pipeline.
+ *
+ * SERVER ONLY. Each route handler is a thin wrapper over one function here.
+ * The pipeline is deliberately ordered and fail-closed:
+ *
+ *   1. validate the request body (shape and size),
+ *   2. identify the caller from their access token (never from the body),
+ *   3. classify with the AI (a `null` verdict refuses — it never verifies),
+ *   4. record the verdict through the secret-gated RPC.
+ *
+ * Nothing is recorded unless a real, positive verdict came back from the model.
+ */
+
+import { createHash } from 'node:crypto';
+import {
+  VERIFICATION_THRESHOLD,
+  analyzeFace,
+  analyzePhoto,
+  matchesSelectedGender,
+  readVerificationEnv,
+  transcribeVoice,
+  type VerificationEnv,
+  type VerificationGender,
+} from '@/lib/verification/ai';
+import { readAuthEnv, getUserIdFromRequest, type AuthEnv } from '@/lib/verification/server-auth';
+import {
+  recordPhotoCheck,
+  recordVerification,
+  type VerificationWriterDeps,
+} from '@/lib/verification/writer';
+import { readWorkerEnv, type WorkerEnv } from '@/lib/moderation/worker';
+import { logger } from '@/lib/logger';
+
+export interface VerificationResult {
+  status: number;
+  body: Record<string, unknown>;
+}
+
+const MAX_IMAGE_CHARS = 4_000_000;
+const MAX_AUDIO_CHARS = 6_000_000;
+const MAX_PHRASE_CHARS = 200;
+
+const GENDERS: readonly VerificationGender[] = ['Woman', 'Man', 'Nonbinary'];
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function readString(source: Record<string, unknown>, key: string): string | null {
+  const value = source[key];
+  return typeof value === 'string' && value.trim().length > 0 ? value : null;
+}
+
+function dataUrlWithPrefix(value: string, prefix: string): boolean {
+  return value.startsWith(prefix);
+}
+
+function genderOf(source: Record<string, unknown>): VerificationGender | null {
+  const gender = readString(source, 'gender');
+  return gender && (GENDERS as readonly string[]).includes(gender)
+    ? (gender as VerificationGender)
+    : null;
+}
+
+function md5(value: string): string {
+  return createHash('md5').update(value).digest('hex');
+}
+
+export interface ServiceDeps {
+  authEnv?: AuthEnv;
+  writerEnv?: WorkerEnv;
+  verificationEnv?: VerificationEnv;
+  fetchImpl?: typeof fetch;
+  aiFetchImpl?: typeof fetch;
+}
+
+function authDeps(deps: ServiceDeps) {
+  const env = deps.authEnv ?? readAuthEnv();
+  return { env, fetchImpl: deps.fetchImpl ?? fetch };
+}
+
+function writerDeps(deps: ServiceDeps): VerificationWriterDeps {
+  return { env: deps.writerEnv ?? readWorkerEnv(), fetchImpl: deps.fetchImpl ?? fetch };
+}
+
+function aiDeps(deps: ServiceDeps) {
+  return {
+    env: deps.verificationEnv ?? readVerificationEnv(),
+    fetchImpl: deps.aiFetchImpl ?? deps.fetchImpl ?? fetch,
+  };
+}
+
+async function parseJsonBody(request: Request): Promise<Record<string, unknown> | null> {
+  try {
+    const parsed: unknown = await request.json();
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Shared prologue: parse the body and authenticate the caller. */
+type BeginResult =
+  | { ok: true; body: Record<string, unknown>; userId: string }
+  | { ok: false; result: VerificationResult };
+
+async function begin(request: Request, deps: ServiceDeps): Promise<BeginResult> {
+  const body = await parseJsonBody(request);
+  if (!body) {
+    return { ok: false, result: { status: 400, body: { error: 'invalid_body' } } };
+  }
+
+  const userId = await getUserIdFromRequest(request, authDeps(deps));
+  if (!userId) {
+    return { ok: false, result: { status: 401, body: { error: 'unauthorised' } } };
+  }
+
+  return { ok: true, body, userId };
+}
+
+/** Extracts the `complete` flag the RPC replies with, defaulting to false. */
+function completeOf(reply: Record<string, unknown>): boolean {
+  return reply.complete === true;
+}
+
+// ---------------------------------------------------------------------------
+// Face
+// ---------------------------------------------------------------------------
+export async function verifyFace(
+  request: Request,
+  deps: ServiceDeps = {}
+): Promise<VerificationResult> {
+  const start = await begin(request, deps);
+  if (!start.ok) return start.result;
+  const { body, userId } = start;
+
+  const selfieUrl = readString(body, 'selfieUrl');
+  const gender = genderOf(body);
+  if (!selfieUrl || !gender || !dataUrlWithPrefix(selfieUrl, 'data:image/')) {
+    return { status: 400, body: { error: 'invalid_body' } };
+  }
+  if (selfieUrl.length > MAX_IMAGE_CHARS) {
+    return { status: 413, body: { error: 'image_too_large' } };
+  }
+
+  const verdict = await analyzeFace({ selfieUrl, gender }, aiDeps(deps));
+  if (!verdict) {
+    return { status: 503, body: { error: 'ai_unavailable' } };
+  }
+
+  const passed =
+    verdict.human && verdict.facePresent && verdict.genderMatch && verdict.score >= VERIFICATION_THRESHOLD;
+
+  try {
+    const reply = await recordVerification(
+      {
+        userId,
+        kind: 'face',
+        passed,
+        gender,
+        provider: verdict.provider,
+        model: verdict.model,
+        score: verdict.score,
+        faceRefHash: md5(selfieUrl),
+      },
+      writerDeps(deps)
+    );
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        passed,
+        complete: completeOf(reply),
+        apparentGender: verdict.apparentGender,
+        reason: passed ? null : reasonForFace(verdict.human, verdict.facePresent, verdict.genderMatch),
+      },
+    };
+  } catch (error) {
+    logger.error('verification.face_record_failed', 'Could not record a face verdict.', {
+      errorName: error instanceof Error ? error.name : 'unknown',
+    });
+    return { status: 500, body: { error: 'record_failed' } };
+  }
+}
+
+function reasonForFace(human: boolean, facePresent: boolean, genderMatch: boolean): string {
+  if (!human || !facePresent) return 'no_face';
+  if (!genderMatch) return 'gender_mismatch';
+  return 'low_confidence';
+}
+
+// ---------------------------------------------------------------------------
+// Photo
+// ---------------------------------------------------------------------------
+export async function verifyPhoto(
+  request: Request,
+  deps: ServiceDeps = {}
+): Promise<VerificationResult> {
+  const start = await begin(request, deps);
+  if (!start.ok) return start.result;
+  const { body, userId } = start;
+
+  const photoUrl = readString(body, 'photoUrl');
+  const selfieUrl = readString(body, 'selfieUrl');
+  const role = readString(body, 'role');
+  const gender = genderOf(body);
+  if (
+    !photoUrl ||
+    !selfieUrl ||
+    !gender ||
+    (role !== 'gallery' && role !== 'avatar') ||
+    !dataUrlWithPrefix(photoUrl, 'data:image/') ||
+    !dataUrlWithPrefix(selfieUrl, 'data:image/')
+  ) {
+    return { status: 400, body: { error: 'invalid_body' } };
+  }
+  if (photoUrl.length > MAX_IMAGE_CHARS || selfieUrl.length > MAX_IMAGE_CHARS) {
+    return { status: 413, body: { error: 'image_too_large' } };
+  }
+
+  const verdict = await analyzePhoto({ photoUrl, selfieUrl, gender }, aiDeps(deps));
+  if (!verdict) {
+    return { status: 503, body: { error: 'ai_unavailable' } };
+  }
+
+  const genderMatch = verdict.genderMatch || matchesSelectedGender(gender, verdict.apparentGender);
+  const passed =
+    verdict.human && verdict.samePerson && genderMatch && verdict.score >= VERIFICATION_THRESHOLD;
+
+  const reasons: string[] = [];
+  if (!verdict.human) reasons.push('not_human');
+  if (!verdict.samePerson) reasons.push('different_person');
+  if (!genderMatch) reasons.push('gender_mismatch');
+  if (verdict.rejectReason) reasons.push(verdict.rejectReason);
+
+  try {
+    const reply = await recordPhotoCheck(
+      {
+        userId,
+        photoUrl,
+        role,
+        human: verdict.human,
+        genderMatch,
+        passed,
+        faceRefHash: md5(selfieUrl),
+        provider: verdict.provider,
+        model: verdict.model,
+        score: verdict.score,
+        reasons,
+      },
+      writerDeps(deps)
+    );
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        passed,
+        complete: completeOf(reply),
+        gallery: reply.gallery ?? 0,
+        avatar: reply.avatar ?? 0,
+        reasons,
+      },
+    };
+  } catch (error) {
+    logger.error('verification.photo_record_failed', 'Could not record a photo verdict.', {
+      errorName: error instanceof Error ? error.name : 'unknown',
+    });
+    return { status: 500, body: { error: 'record_failed' } };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Voice
+// ---------------------------------------------------------------------------
+function pitchInRange(pitchHz: unknown): number | null {
+  const value = typeof pitchHz === 'number' ? pitchHz : Number(pitchHz);
+  if (!Number.isFinite(value)) return null;
+  if (value < 50 || value > 500) return null;
+  return value;
+}
+
+export async function verifyVoice(
+  request: Request,
+  deps: ServiceDeps = {}
+): Promise<VerificationResult> {
+  const start = await begin(request, deps);
+  if (!start.ok) return start.result;
+  const { body, userId } = start;
+
+  const audioUrl = readString(body, 'audioUrl');
+  const phrase = readString(body, 'phrase');
+  if (
+    !audioUrl ||
+    !phrase ||
+    phrase.length > MAX_PHRASE_CHARS ||
+    !dataUrlWithPrefix(audioUrl, 'data:audio/')
+  ) {
+    return { status: 400, body: { error: 'invalid_body' } };
+  }
+  if (audioUrl.length > MAX_AUDIO_CHARS) {
+    return { status: 413, body: { error: 'audio_too_large' } };
+  }
+
+  const pitchHz = pitchInRange(body.pitchHz);
+  if (pitchHz === null) {
+    // A recording with no measurable human pitch is not a live human voice.
+    return { status: 200, body: { ok: true, passed: false, complete: false, reason: 'no_voice' } };
+  }
+
+  const verdict = await transcribeVoice({ audioUrl, phrase }, aiDeps(deps));
+  if (!verdict) {
+    return { status: 503, body: { error: 'ai_unavailable' } };
+  }
+
+  const passed = verdict.phraseMatch;
+
+  try {
+    const reply = await recordVerification(
+      {
+        userId,
+        kind: 'voice',
+        passed,
+        provider: verdict.provider,
+        model: verdict.model,
+        pitchHz,
+      },
+      writerDeps(deps)
+    );
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        passed,
+        complete: completeOf(reply),
+        transcript: verdict.transcript,
+        reason: passed ? null : 'phrase_mismatch',
+      },
+    };
+  } catch (error) {
+    logger.error('verification.voice_record_failed', 'Could not record a voice verdict.', {
+      errorName: error instanceof Error ? error.name : 'unknown',
+    });
+    return { status: 500, body: { error: 'record_failed' } };
+  }
+}

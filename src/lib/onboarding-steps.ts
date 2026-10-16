@@ -20,20 +20,30 @@ import {
  * It is deliberately pure — no React, no Supabase, no I/O — so every rule is
  * unit-testable and the page stays a renderer.
  *
- * THE PHOTO MINIMUM IS STEP-LOCAL
- *   Four photos is an onboarding-flow rule, not a database invariant: it lives
- *   here (step 1) ONLY. `validateProfileDraft`/`saveProfile` are unchanged, and
- *   no migration was added. Step 15 therefore delegates to the full-draft guard
- *   rather than re-implementing it.
+ * THE PHOTO REQUIREMENT IS STEP-LOCAL
+ *   Exactly four gallery photos (plus one separate avatar) is an onboarding-flow
+ *   rule, not a database invariant: the count lives here (step 15) ONLY, while
+ *   the M24 database trigger separately refuses to publish a profile whose
+ *   photos were not each AI-verified. `validateProfileDraft`/`saveProfile` are
+ *   unchanged, and no migration was added for the count itself. Step 15
+ *   delegates to the full-draft guard AND adds the gallery-count rule.
  */
 
 /** Re-exported so wizard callers read the photo cap from one place. */
 export { MAX_PHOTOS };
 
-/** The onboarding minimum. Web-only for now; the DB caps at `MAX_PHOTOS`. */
+/**
+ * The onboarding gallery requirement — EXACTLY this many distinct photos.
+ *
+ * This is an onboarding-flow rule, not a database invariant: it lives here and
+ * is enforced again (for real) by the M24 database trigger, which refuses to
+ * publish a profile unless four gallery photos and one avatar have each passed
+ * an AI authenticity check. The wizard enforces the count; the database enforces
+ * the count *and* the verification.
+ */
 export const MIN_PHOTOS = 4;
 
-/** The wizard has exactly fifteen steps; step 15 is the review/submit screen. */
+/** The onboarding has fifteen steps; step 15 is photo verification + launch. */
 export const ONBOARDING_TOTAL_STEPS = 15;
 
 /** The closed set of gender identities the wizard offers on step 2. */
@@ -118,7 +128,7 @@ export const ONBOARDING_STEPS: OnboardingStepSpec[] = [
   {
     step: 1,
     id: 'basics',
-    required: [required('displayName', 'Display name'), required('photos', 'Profile photos')],
+    required: [required('displayName', 'Display name')],
     recommended: [],
   },
   { step: 2, id: 'identity', required: [required('gender', 'Gender')], recommended: [] },
@@ -178,7 +188,7 @@ export const ONBOARDING_STEPS: OnboardingStepSpec[] = [
     recommended: [],
   },
   { step: 14, id: 'bio', required: [required('bio', 'Bio')], recommended: [] },
-  { step: 15, id: 'review', required: [], recommended: [] },
+  { step: 15, id: 'photos', required: [], recommended: [] },
 ];
 
 /**
@@ -191,8 +201,8 @@ export const ONBOARDING_STEPS: OnboardingStepSpec[] = [
  */
 export const FIELD_TO_STEP: Record<string, number> = {
   displayName: 1,
-  photos: 1,
-  avatarUrl: 1,
+  photos: 15,
+  avatarUrl: 15,
   gender: 2,
   pronouns: 2,
   birthDate: 3,
@@ -303,15 +313,6 @@ function blockingProblems(step: number, state: OnboardingState): ValidationProbl
         problems.push({
           field: 'displayName',
           message: 'Please provide a display name to continue.',
-        });
-      }
-
-      const photoCount = countFilled(state.photos);
-      if (photoCount < MIN_PHOTOS) {
-        // Character-exact by requirement, with the live count interpolated.
-        problems.push({
-          field: 'photos',
-          message: `Please upload at least ${MIN_PHOTOS} profile photos to continue (${photoCount}/${MIN_PHOTOS} uploaded)`,
         });
       }
       break;
@@ -459,10 +460,19 @@ function blockingProblems(step: number, state: OnboardingState): ValidationProbl
     }
 
     case ONBOARDING_TOTAL_STEPS: {
-      // No step-local rule: the review screen's Next IS submit, and the
-      // full-draft guard is the single authority for it. Delegating keeps one
-      // copy of those rules in the codebase.
+      // Step 15 is the final photo-verification screen. The full-draft guard is
+      // still the single authority for the profile fields, and the gallery
+      // requirement is added on top because the draft guard has no photo count
+      // (the database caps the array but does not demand a minimum).
       problems.push(...validateProfileDraft(toProfileDraft(state)).problems);
+
+      const galleryCount = countFilled(state.photos);
+      if (galleryCount !== MIN_PHOTOS) {
+        problems.push({
+          field: 'photos',
+          message: `Please upload exactly ${MIN_PHOTOS} gallery photos to continue (${galleryCount}/${MIN_PHOTOS} uploaded)`,
+        });
+      }
       break;
     }
 
