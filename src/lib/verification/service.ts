@@ -23,7 +23,12 @@ import {
   type VerificationEnv,
   type VerificationGender,
 } from '@/lib/verification/ai';
-import { readAuthEnv, getUserIdFromRequest, type AuthEnv } from '@/lib/verification/server-auth';
+import {
+  readAuthEnv,
+  bearerToken,
+  getUserIdFromRequest,
+  type AuthEnv,
+} from '@/lib/verification/server-auth';
 import {
   recordPhotoCheck,
   recordVerification,
@@ -80,8 +85,17 @@ function authDeps(deps: ServiceDeps) {
   return { env, fetchImpl: deps.fetchImpl ?? fetch };
 }
 
-function writerDeps(deps: ServiceDeps): VerificationWriterDeps {
-  return { env: deps.writerEnv ?? readWorkerEnv(), fetchImpl: deps.fetchImpl ?? fetch };
+/**
+ * Builds writer deps and forwards the caller's JWT so the RPC sees auth.uid().
+ * The token is optional in the type but every real request carries one — a
+ * member's own write must be attributed to that member for RLS to allow it.
+ */
+function writerDeps(deps: ServiceDeps, accessToken?: string): VerificationWriterDeps {
+  return {
+    env: deps.writerEnv ?? readWorkerEnv(),
+    fetchImpl: deps.fetchImpl ?? fetch,
+    accessToken,
+  };
 }
 
 function aiDeps(deps: ServiceDeps) {
@@ -102,7 +116,7 @@ async function parseJsonBody(request: Request): Promise<Record<string, unknown> 
 
 /** Shared prologue: parse the body and authenticate the caller. */
 type BeginResult =
-  | { ok: true; body: Record<string, unknown>; userId: string }
+  | { ok: true; body: Record<string, unknown>; userId: string; accessToken: string | null }
   | { ok: false; result: VerificationResult };
 
 async function begin(request: Request, deps: ServiceDeps): Promise<BeginResult> {
@@ -116,7 +130,11 @@ async function begin(request: Request, deps: ServiceDeps): Promise<BeginResult> 
     return { ok: false, result: { status: 401, body: { error: 'unauthorised' } } };
   }
 
-  return { ok: true, body, userId };
+  // Same bearer the Auth server just validated. Re-used verbatim on the RPC so
+  // `auth.uid()` resolves inside the SECURITY DEFINER function.
+  const accessToken = bearerToken(request);
+
+  return { ok: true, body, userId, accessToken };
 }
 
 /** Extracts the `complete` flag the RPC replies with, defaulting to false. */
@@ -133,7 +151,7 @@ export async function verifyFace(
 ): Promise<VerificationResult> {
   const start = await begin(request, deps);
   if (!start.ok) return start.result;
-  const { body, userId } = start;
+  const { body, userId, accessToken } = start;
 
   const selfieUrl = readString(body, 'selfieUrl');
   const gender = genderOf(body);
@@ -164,7 +182,7 @@ export async function verifyFace(
         score: verdict.score,
         faceRefHash: md5(selfieUrl),
       },
-      writerDeps(deps)
+      writerDeps(deps, accessToken ?? undefined)
     );
     return {
       status: 200,
@@ -179,6 +197,7 @@ export async function verifyFace(
   } catch (error) {
     logger.error('verification.face_record_failed', 'Could not record a face verdict.', {
       errorName: error instanceof Error ? error.name : 'unknown',
+      message: error instanceof Error ? error.message : 'unknown',
     });
     return { status: 500, body: { error: 'record_failed' } };
   }
@@ -199,7 +218,7 @@ export async function verifyPhoto(
 ): Promise<VerificationResult> {
   const start = await begin(request, deps);
   if (!start.ok) return start.result;
-  const { body, userId } = start;
+  const { body, userId, accessToken } = start;
 
   const photoUrl = readString(body, 'photoUrl');
   const selfieUrl = readString(body, 'selfieUrl');
@@ -249,7 +268,7 @@ export async function verifyPhoto(
         score: verdict.score,
         reasons,
       },
-      writerDeps(deps)
+      writerDeps(deps, accessToken ?? undefined)
     );
     return {
       status: 200,
@@ -265,6 +284,7 @@ export async function verifyPhoto(
   } catch (error) {
     logger.error('verification.photo_record_failed', 'Could not record a photo verdict.', {
       errorName: error instanceof Error ? error.name : 'unknown',
+      message: error instanceof Error ? error.message : 'unknown',
     });
     return { status: 500, body: { error: 'record_failed' } };
   }
@@ -286,7 +306,7 @@ export async function verifyVoice(
 ): Promise<VerificationResult> {
   const start = await begin(request, deps);
   if (!start.ok) return start.result;
-  const { body, userId } = start;
+  const { body, userId, accessToken } = start;
 
   const audioUrl = readString(body, 'audioUrl');
   const phrase = readString(body, 'phrase');
@@ -304,7 +324,6 @@ export async function verifyVoice(
 
   const pitchHz = pitchInRange(body.pitchHz);
   if (pitchHz === null) {
-    // A recording with no measurable human pitch is not a live human voice.
     return { status: 200, body: { ok: true, passed: false, complete: false, reason: 'no_voice' } };
   }
 
@@ -325,7 +344,7 @@ export async function verifyVoice(
         model: verdict.model,
         pitchHz,
       },
-      writerDeps(deps)
+      writerDeps(deps, accessToken ?? undefined)
     );
     return {
       status: 200,
@@ -340,6 +359,7 @@ export async function verifyVoice(
   } catch (error) {
     logger.error('verification.voice_record_failed', 'Could not record a voice verdict.', {
       errorName: error instanceof Error ? error.name : 'unknown',
+      message: error instanceof Error ? error.message : 'unknown',
     });
     return { status: 500, body: { error: 'record_failed' } };
   }
