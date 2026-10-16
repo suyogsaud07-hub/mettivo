@@ -46,8 +46,8 @@ const nextConfig: NextConfig = {
           // Lets /sw.js control the whole origin.
           { key: 'Service-Worker-Allowed', value: '/' },
           {
-            key: 'Content-Security-Policy',
-            value: "default-src 'self'; script-src 'self'",
+             key: 'Content-Security-Policy',
+            value: "default-src 'self'; script-src 'self' 'unsafe-inline' https://vercel.com https://*.vercel.app; connect-src 'self' https://vercel.com https://*.vercel.app https://*.supabase.co https://api.groq.com; img-src 'self' data: blob:; media-src 'self' data: blob:;",
           },
         ],
       },
