@@ -487,7 +487,7 @@ describe('5. public surface hygiene', () => {
     // blocked, suspended and already-decided members.
     for (const file of [
       'src/app/discover/page.tsx',
-      'src/app/discover/mettivo_live/page.tsx',
+      'src/app/discover/mettivo_voice/page.tsx',
     ]) {
       expect(
         readFileSync(join(root, file), 'utf8'),

@@ -32,7 +32,7 @@ src/
     signup/page.tsx         Registration (mirrors auth)
     discover/
       page.tsx              Discovery feed (age/gender/online filters)
-      mettivo_live/page.tsx Voice-card live list
+      mettivo_voice/page.tsx Audio-only "Mettivo Voice" voice-card list
     chat/
       page.tsx              Conversation list (derived from messages)
       [matchId]/page.tsx    Chat room: send, realtime, report, block
@@ -70,7 +70,7 @@ docs/                       This documentation
 | `/` | static | no — public for everyone, never auto-redirects; its primary CTA opens `/signup` |
 | `/auth`, `/signup` | static | no |
 | `/auth/callback` | **dynamic** (route handler) | no |
-| `/discover`, `/discover/mettivo_live` | static shell, client-fetched | yes |
+| `/discover`, `/discover/mettivo_voice` | static shell, client-fetched | yes |
 | `/chat` | static shell | yes |
 | `/chat/[matchId]` | **dynamic** | yes |
 | `/profile` | static shell | yes |
@@ -257,7 +257,7 @@ These are recorded so no future change assumes they are solved.
   the authoritative migration chain.
 - ~~Discovery read `profiles` with `select('*')`~~ — `src/app/discover/page.tsx`
   now reads only the allow-listed `discover_profiles()` RPC, and
-  `mettivo_live` reads the allow-listed `public_profiles` view. Pinned by
+  `mettivo_voice` reads the allow-listed `public_profiles` view. Pinned by
   `tests/security/security.test.ts` §5.
 - ~~`follows` had no primary key and four foreign keys were unindexed~~ — found
   by `tests/database/schema.test.ts` (M4) and fixed in

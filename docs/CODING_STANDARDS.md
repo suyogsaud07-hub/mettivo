@@ -46,7 +46,7 @@ Other rules:
   See `src/context/LanguageContext.tsx` for the pattern.
 - **Never compute random or time-dependent values during render** — they cause
   hydration mismatches. Derive pseudorandom values deterministically from an id
-  (see `tagFor()` in `discover/mettivo_live/page.tsx`).
+  (see `tagFor()` in `discover/mettivo_voice/page.tsx`).
 - Always provide `key` on list items; a stable id, never a bare index for
   dynamic lists.
 
