@@ -171,9 +171,17 @@ export default function FaceVoiceVerificationModal({
 
     // Record only the audio tracks: recording the combined camera+audio stream
     // yields a `video/webm` blob, whose data URL fails the server's `data:audio/`
-    // prefix check (and uploads a needless video frame per attempt).
+    // prefix check (and uploads a needless video frame per attempt). Pin the
+    // container to `audio/webm` where the browser supports it, so the data URL
+    // sent to the voice route is `data:audio/webm;base64,…` (Safari, which lacks
+    // webm, falls back to its native container — still `data:audio/…`).
     const audioStream = new MediaStream(stream.getAudioTracks());
-    const recorder = new MediaRecorder(audioStream);
+    const canRecordWebm =
+      typeof MediaRecorder.isTypeSupported === 'function' &&
+      MediaRecorder.isTypeSupported('audio/webm');
+    const recorder = canRecordWebm
+      ? new MediaRecorder(audioStream, { mimeType: 'audio/webm' })
+      : new MediaRecorder(audioStream);
     chunksRef.current = [];
     recorder.ondataavailable = (event) => {
       if (event.data.size > 0) chunksRef.current.push(event.data);
@@ -198,7 +206,12 @@ export default function FaceVoiceVerificationModal({
       void audioContextRef.current?.close().catch(() => undefined);
       audioContextRef.current = null;
 
-      const blob = new Blob(chunksRef.current, { type: mimeType });
+      // `recorder.mimeType` is typically `audio/webm;codecs=opus`. The server's
+      // data-URL parser only understands a bare `audio/webm`, so drop the codec
+      // parameter — otherwise the URL `data:audio/webm;codecs=opus;base64,…`
+      // is rejected and the route answers 503 `ai_unavailable`.
+      const containerType = (mimeType || 'audio/webm').split(';')[0]?.trim() || 'audio/webm';
+      const blob = new Blob(chunksRef.current, { type: containerType });
       if (blob.size === 0) {
         setError('We did not hear anything. Please try again.');
         return;

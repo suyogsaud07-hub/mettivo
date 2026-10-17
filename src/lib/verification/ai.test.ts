@@ -52,7 +52,7 @@ describe('readVerificationEnv', () => {
   it('defaults the transcription model', () => {
     const env = readVerificationEnv({});
     expect(env.apiKey).toBeNull();
-    expect(env.transcribeModel).toBe('whisper-1');
+    expect(env.transcribeModel).toBe('whisper-large-v3-turbo');
   });
 
   it('honours a configured transcription model, trimmed', () => {
