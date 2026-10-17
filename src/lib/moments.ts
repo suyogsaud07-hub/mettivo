@@ -353,12 +353,17 @@ export async function fetchMomentAuthors(
  * `media` holds Storage URLs (see `@/lib/media`); `mediaType` labels them so the
  * feed knows to autoplay a video. Legacy rows written before `media_type`
  * existed simply pass `null` and are treated as images.
+ *
+ * `visibility` is the privacy tier persisted on the row; the `moment_feed` view
+ * filters on it through `can_view_moment()`, so this value — not any client
+ * filtering — decides who can read the post.
  */
 export async function createMoment(
   caption: string,
   media: string[] = [],
   tags: string[] = [],
-  mediaType: MomentMediaType | null = null
+  mediaType: MomentMediaType | null = null,
+  visibility: MomentVisibility = 'public'
 ): Promise<void> {
   const text = caption.trim();
 
@@ -388,6 +393,7 @@ export async function createMoment(
     media,
     media_type: mediaType,
     tags: tags.slice(0, MAX_MOMENT_TAGS),
+    visibility,
   });
 
   if (error) {

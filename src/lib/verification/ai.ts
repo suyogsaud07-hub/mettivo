@@ -34,7 +34,8 @@ export interface VerificationEnv extends AiEnv {
   transcribeModel: string;
 }
 
-const DEFAULT_TRANSCRIBE_MODEL = 'whisper-1';
+// Changed from 'whisper-1' to Groq's supported model
+const DEFAULT_TRANSCRIBE_MODEL = 'whisper-large-v3-turbo';
 
 /**
  * Groq's vision model is not fast on a cold image. 20 s aborts a large
@@ -414,10 +415,18 @@ export async function transcribeVoice(
   if (!env.apiKey) return null;
 
   const blob = dataUrlToBlob(input.audioUrl);
-  if (!blob || blob.size === 0) return null;
+  if (!blob || blob.size === 0) {
+    console.error('[verification.ai] Invalid audio blob');
+    return null;
+  }
+
+  // Safety net: Groq does not support 'whisper-1'. Fall back to turbo.
+  const model = env.transcribeModel === 'whisper-1' 
+    ? 'whisper-large-v3-turbo' 
+    : env.transcribeModel;
 
   const form = new FormData();
-  form.append('model', env.transcribeModel);
+  form.append('model', model);
   form.append('file', blob, 'voice.webm');
 
   const response = await fetchWithRetry(fetchImpl, `${env.baseUrl}/audio/transcriptions`, {
@@ -425,7 +434,18 @@ export async function transcribeVoice(
     headers: { Authorization: `Bearer ${env.apiKey}` },
     body: form,
   });
-  if (!response || !response.ok) return null;
+  
+  if (!response) {
+    console.error('[verification.ai] Groq audio fetch failed (timeout/network)');
+    return null;
+  }
+
+  if (!response.ok) {
+    // Log the actual error from Groq to help debug
+    const errText = await response.text().catch(() => '');
+    console.error(`[verification.ai] Groq audio returned ${response.status}: ${errText}`);
+    return null;
+  }
 
   let text: string;
   try {
@@ -448,6 +468,6 @@ export async function transcribeVoice(
     transcript,
     phraseMatch: phraseMatches(input.phrase, transcript),
     provider: env.provider,
-    model: env.transcribeModel,
+    model: model,
   };
 }

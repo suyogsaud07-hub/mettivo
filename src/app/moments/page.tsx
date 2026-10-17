@@ -5,10 +5,13 @@ import { useRouter } from 'next/navigation';
 import MobileNav from '../components/layout/MobileNav';
 import MomentCard from '../components/moments/MomentCard';
 import { supabase } from '@/lib/supabase';
-import type { MomentAuthor, MomentFeedRow } from '@/lib/types';
+import type { MomentAuthor, MomentFeedRow, MomentVisibility } from '@/lib/types';
 import {
   MOMENT_EMOJI,
   MOMENT_TAGS,
+  MOMENT_VISIBILITIES,
+  MOMENT_VISIBILITY_HELP,
+  MOMENT_VISIBILITY_LABELS,
   MomentError,
   createMoment,
   fetchMomentAuthors,
@@ -46,6 +49,7 @@ export default function MomentsPage() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [newCaption, setNewCaption] = useState('');
   const [newTags, setNewTags] = useState<string[]>([]);
+  const [newVisibility, setNewVisibility] = useState<MomentVisibility>('public');
   const [media, setMedia] = useState<PreparedMedia | null>(null);
   const [preparing, setPreparing] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -239,12 +243,14 @@ export default function MomentsPage() {
         caption,
         url ? [url] : [],
         mergeMomentTags(newTags, caption),
-        media?.mediaType ?? null
+        media?.mediaType ?? null,
+        newVisibility
       );
 
       setMedia(null);
       setNewCaption('');
       setNewTags([]);
+      setNewVisibility('public');
       setIsCreateOpen(false);
       showNotice('Moment posted!');
 
@@ -336,6 +342,7 @@ export default function MomentsPage() {
               post={post}
               author={author}
               currentUserId={currentUserId}
+              isOwn={post.author_id === currentUserId}
               onLike={(item) => void handleLike(item.id)}
               onFollow={(authorId) => void handleFollow(authorId)}
             />
@@ -369,6 +376,7 @@ export default function MomentsPage() {
                   setIsCreateOpen(false);
                   setNewCaption('');
                   setNewTags([]);
+                  setNewVisibility('public');
                 }}
               >
                 ×
@@ -451,6 +459,37 @@ export default function MomentsPage() {
                 : `HD images are resized automatically; videos must be ${MAX_VIDEO_SECONDS} seconds or shorter.`}
             </div>
 
+            <div style={styles.visibilityBlock}>
+              <div style={styles.visibilityTitle}>Who can see this?</div>
+              <div style={styles.visibilityRow} role="radiogroup" aria-label="Who can see this?">
+                {MOMENT_VISIBILITIES.map((option) => {
+                  const active = newVisibility === option;
+                  return (
+                    <button
+                      key={option}
+                      type="button"
+                      role="radio"
+                      aria-checked={active}
+                      data-testid={`moment-visibility-${option}`}
+                      style={{
+                        ...styles.visibilityOption,
+                        ...(active ? styles.visibilityOptionActive : {}),
+                      }}
+                      onClick={() => setNewVisibility(option)}
+                    >
+                      <span aria-hidden="true" style={styles.visibilityIcon}>
+                        {option === 'public' ? '🌐' : option === 'matches' ? '👥' : '🔒'}
+                      </span>
+                      <span style={styles.visibilityOptionLabel}>
+                        {MOMENT_VISIBILITY_LABELS[option]}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              <div style={styles.visibilityHelp}>{MOMENT_VISIBILITY_HELP[newVisibility]}</div>
+            </div>
+
             <button
               style={{ ...styles.postBtn, opacity: posting || preparing ? 0.6 : 1 }}
               onClick={() => void handleCreatePost()}
@@ -504,6 +543,14 @@ const styles = {
   mediaPreview: { width: '100%', maxHeight: '320px', objectFit: 'cover' as const, borderRadius: '12px', backgroundColor: '#0B0910' },
   removeMediaBtn: { position: 'absolute' as const, top: '8px', right: '8px', width: '28px', height: '28px', borderRadius: '50%', backgroundColor: 'rgba(0,0,0,0.7)', color: '#fff', border: 'none', display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '16px', cursor: 'pointer', fontWeight: 'bold' },
   hint: { fontSize: '12px', color: '#7C6F86', margin: '6px 2px 16px 2px', lineHeight: 1.4 },
+  visibilityBlock: { marginBottom: '18px' },
+  visibilityTitle: { fontSize: '13px', fontWeight: 700, color: '#EAE2F0', marginBottom: '10px' },
+  visibilityRow: { display: 'flex', gap: '8px' },
+  visibilityOption: { flex: 1, display: 'flex', flexDirection: 'column' as const, alignItems: 'center', gap: '6px', padding: '12px 8px', borderRadius: '14px', border: '1px solid #34283F', backgroundColor: '#131017', color: '#B58A83', fontSize: '12px', fontWeight: 600, cursor: 'pointer' },
+  visibilityOptionActive: { backgroundColor: '#4A1828', borderColor: '#D8B38A', color: '#D8B38A' },
+  visibilityIcon: { fontSize: '18px' },
+  visibilityOptionLabel: { textAlign: 'center' as const, lineHeight: 1.2 },
+  visibilityHelp: { fontSize: '12px', color: '#7C6F86', marginTop: '8px' },
   postBtn: { width: '100%', padding: '18px', borderRadius: '30px', background: 'linear-gradient(135deg, #D8B38A, #B58A83)', color: '#131017', fontSize: '16px', fontWeight: 800, border: 'none', cursor: 'pointer' },
 
   error: { margin: '16px 20px', backgroundColor: '#3B1220', border: '1px solid #7F1D2E', color: '#FCA5B5', borderRadius: '14px', padding: '12px 16px', fontSize: '13px', lineHeight: 1.5 },
