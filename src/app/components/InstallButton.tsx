@@ -53,7 +53,71 @@ function isIOS(): boolean {
   return iOSDevice || iPadOS;
 }
 
-/* ----- "already installed" is external state, so read it via a store ----- */
+/* ======================================================================
+   The install prompt is EXTERNAL, NON-REACT state, so it is read through
+   `useSyncExternalStore` — the pattern CODING_STANDARDS §2 mandates. Two
+   things make this a store rather than a `useState` in the component body:
+
+   1. RACE. `beforeinstallprompt` can fire during hydration, before any
+      effect has run. A listener attached inside `useEffect` would miss it,
+      the prompt would be gone forever, and the button would silently fall
+      back to the manual-instructions textbox. The listener is therefore
+      attached at MODULE SCOPE (guarded for the server), the moment this
+      chunk executes in the browser — strictly earlier than any effect.
+   2. `useState` here would also trip `react-hooks/set-state-in-effect`.
+   ====================================================================== */
+
+let capturedPrompt: BeforeInstallPromptEvent | null = null;
+const promptSubscribers = new Set<() => void>();
+
+function emitPromptChange() {
+  for (const notify of promptSubscribers) notify();
+}
+
+function captureInstallPrompt(event: BeforeInstallPromptEvent) {
+  capturedPrompt = event;
+  emitPromptChange();
+}
+
+function clearInstallPrompt() {
+  capturedPrompt = null;
+  emitPromptChange();
+}
+
+function subscribeToInstallPrompt(onStoreChange: () => void) {
+  promptSubscribers.add(onStoreChange);
+  return () => {
+    promptSubscribers.delete(onStoreChange);
+  };
+}
+
+function getInstallPromptSnapshot(): BeforeInstallPromptEvent | null {
+  return capturedPrompt;
+}
+
+/** The server never has a prompt; the client decides after hydration. */
+function getInstallPromptServerSnapshot(): BeforeInstallPromptEvent | null {
+  return null;
+}
+
+// Attached once, at module scope. `typeof window` is false during SSR, so this
+// is a no-op on the server, and this module is only imported by client
+// components in the first place.
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeinstallprompt', (event) => {
+    // Stop Chrome's mini-infobar so the in-app button drives installation.
+    event.preventDefault();
+    captureInstallPrompt(event as BeforeInstallPromptEvent);
+  });
+
+  // Once installed the prompt is spent and the button must disappear.
+  window.addEventListener('appinstalled', () => {
+    appInstalledThisSession = true;
+    clearInstallPrompt();
+  });
+}
+
+/* ----- "already installed" is external state too, read via a store ----- */
 
 function subscribeInstalled(onStoreChange: () => void) {
   const queries = DISPLAY_MODES.map((mode) =>
@@ -85,51 +149,44 @@ function getInstalledServerSnapshot(): boolean {
 
 export default function InstallButton() {
   const { t } = useLanguage();
+
   const isInstalled = useSyncExternalStore(
     subscribeInstalled,
     getInstalledSnapshot,
     getInstalledServerSnapshot
   );
-
-  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(
-    null
+  const deferredPrompt = useSyncExternalStore(
+    subscribeToInstallPrompt,
+    getInstallPromptSnapshot,
+    getInstallPromptServerSnapshot
   );
+
   // Flips only after the detection window closes, so the button never flashes
   // on browsers that will fire `beforeinstallprompt` a moment later.
   const [detectionDone, setDetectionDone] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
 
   useEffect(() => {
-    const handleBeforeInstallPrompt = (event: Event) => {
-      // Stop Chrome's mini-infobar so the in-app button drives installation.
-      event.preventDefault();
-      setDeferredPrompt(event as BeforeInstallPromptEvent);
-    };
-
-    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-
     const timer = window.setTimeout(() => setDetectionDone(true), 1500);
-
-    return () => {
-      window.clearTimeout(timer);
-      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-    };
+    return () => window.clearTimeout(timer);
   }, []);
 
   const handleInstallClick = useCallback(async () => {
-    // No native prompt available (iOS Safari, Firefox, Safari on macOS):
-    // show the manual instructions instead of doing nothing.
+    // No native prompt available (iOS Safari, Firefox, Safari on macOS, or the
+    // app is already past the point where Chrome offers it): show the manual
+    // instructions instead of doing nothing.
     if (!deferredPrompt) {
       setShowHelp((open) => !open);
       return;
     }
 
     try {
+      // This is what opens the native install dialog.
       await deferredPrompt.prompt();
       const { outcome } = await deferredPrompt.userChoice;
 
       // A prompt object can only be used once.
-      setDeferredPrompt(null);
+      clearInstallPrompt();
 
       if (outcome !== 'accepted') {
         setShowHelp(true);
@@ -138,7 +195,7 @@ export default function InstallButton() {
       // this button from the tree.
     } catch (error) {
       console.warn('[pwa] Install prompt failed:', error);
-      setDeferredPrompt(null);
+      clearInstallPrompt();
       setShowHelp(true);
     }
   }, [deferredPrompt]);
@@ -158,21 +215,21 @@ export default function InstallButton() {
         type="button"
         onClick={handleInstallClick}
         aria-expanded={showHelp}
+        data-testid="install-app"
         style={{
           width: '100%',
           padding: '16px',
           borderRadius: '30px',
-          backgroundColor: '#1A1528',
-          border: '1px solid rgba(212, 177, 138, 0.3)',
-          color: '#F2E9E4',
+          backgroundColor: 'var(--mr-gold, #d8b38a)',
+          border: 'none',
+          color: 'var(--mr-gold-text, #1a130c)',
           fontSize: '16px',
-          fontWeight: 600,
+          fontWeight: 700,
           cursor: 'pointer',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           gap: '8px',
-          transition: 'background-color 0.2s ease',
         }}
       >
         <svg

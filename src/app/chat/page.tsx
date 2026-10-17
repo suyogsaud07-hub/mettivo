@@ -126,9 +126,9 @@ export default function ChatListPage() {
         <h1 style={{ fontSize: '20px', fontWeight: 700, margin: 0 }}>Messages</h1>
       </header>
 
-      {/* Subbu is pinned above every human conversation. It is not a match and
-          has no `match_id` — the row links to the local-state room at
-          `/chat/subbu`, which calls `/api/bot/chat` for each turn. */}
+      {/* Subbu AI is pinned above every human conversation. It is hardcoded and
+          has no `match_id`, so it renders even when the member has zero
+          matches; it links to the local-state room at `/chat/subbu`. */}
       <ul style={{ listStyle: 'none', margin: 0, padding: '20px 20px 0' }}>
         <li>
           <Link
@@ -155,33 +155,33 @@ export default function ChatListPage() {
                   borderRadius: '50%',
                   backgroundColor: '#D4B18A',
                   color: '#17121C',
-                  fontSize: '16px',
-                  fontWeight: 700,
+                  flexShrink: 0,
                 }}
               >
-                S
+                <svg
+                  width="22"
+                  height="22"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <rect x="4" y="8" width="16" height="12" rx="3" />
+                  <path d="M12 8V4" />
+                  <circle cx="12" cy="3" r="1.4" fill="currentColor" stroke="none" />
+                  <circle cx="9" cy="14" r="1.2" fill="currentColor" stroke="none" />
+                  <circle cx="15" cy="14" r="1.2" fill="currentColor" stroke="none" />
+                  <path d="M9 17.5h6" />
+                </svg>
               </span>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <p style={{ margin: 0, fontSize: '14px', fontWeight: 700, color: '#F2E9E4' }}>
-                    Subbu
-                  </p>
-                  <span
-                    style={{
-                      backgroundColor: '#3A2E44',
-                      color: '#D4B18A',
-                      borderRadius: '8px',
-                      padding: '1px 6px',
-                      fontSize: '10px',
-                      fontWeight: 700,
-                      letterSpacing: '0.04em',
-                    }}
-                  >
-                    AI
-                  </span>
-                </div>
+                <p style={{ margin: 0, fontSize: '14px', fontWeight: 700, color: '#F2E9E4' }}>
+                  Subbu AI
+                </p>
                 <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: '#B58A83' }}>
-                  Your AI assistant — ask me anything
+                  Your personal app assistant
                 </p>
               </div>
             </div>
