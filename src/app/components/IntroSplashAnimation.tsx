@@ -1,160 +1,227 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AnimatePresence, motion } from 'framer-motion';
+import { AnimatePresence, motion, type Transition } from 'framer-motion';
 
 /**
- * The cinematic intro — a four-act story that settles into the brand mark.
+ * The cinematic intro — a four-act story drawn with real human figures, ending
+ * in the brand wordmark.
  *
- * THE STORY, IN ONE 8s TIMELINE
- *   Phase 1 · Meet & greet    0.0s – 2.0s  the pair slide in from opposite
- *                                          sides, say "Hi", and turn to face
- *                                          each other.
- *   Phase 2 · The proposal    2.0s – 4.0s  the boy drops to one knee and the
- *                                          rose slides out to hover between
- *                                          them.
- *   Phase 3 · The acceptance  4.0s – 5.5s  the girl leans in, the heart blooms
- *                                          and beats, the rose drifts toward
- *                                          her.
- *   Phase 4 · Embrace & settle 5.5s – 8.0s the pair converge into the solid,
- *                                          symmetrical "M"; the heart settles
- *                                          between their heads, the rose hangs
- *                                          at the bottom centre, and the
- *                                          wordmark fades in.
+ * THE STORY, ON ONE 8s TIMELINE
+ *   Act 1 · The walk       0.0s – 2.0s  a man in a suit steps in from the left
+ *                                        and a woman in a gown from the right;
+ *                                        their legs and arms swing as they cross
+ *                                        the floor and stop face to face.
+ *   Act 2 · The proposal   2.0s – 4.0s  he drops to one knee, leans in, and
+ *                                        extends a hand; a burgundy rose slides
+ *                                        from his pocket and hovers between them.
+ *   Act 3 · The acceptance 4.0s – 5.5s  she leans toward him, both hands lifted
+ *                                        to her chest, and a pink heart blooms
+ *                                        between them, pulsing inside a glow.
+ *   Act 4 · The embrace    5.5s – 8.0s  they rise, fold into each other, and
+ *                                        blend into the "M"; the wordmark fades
+ *                                        in, followed by the tagline.
  *
- * WHY THE FIGURES *ARE* THE MARK
- *   Every `<g>` below is authored in the brand mark's own coordinate space
- *   (`src/components/Logo.tsx`, `MarkArtwork`) and animated from a story pose
- *   back to its authored pose. The final frame therefore *is* the mark's
- *   geometry — the bodies do not cross-fade into a redrawn logo, so the last
- *   frame cannot drift from the brand. If the mark changes, the path data here
- *   must be updated with it.
+ * HOW THE FIGURES ARE BUILT
+ *   Everything is hand-authored vector geometry — no circles for heads and no
+ *   stick limbs. Each figure is a small rig of grouped paths (hair, face+jaw,
+ *   jacket/gown, two arms, two legs, shoes) so a limb can be posed on its own.
+ *   Rotations pivot on the joint itself via `transform-box: fill-box` with a
+ *   `transform-origin` at the top of a limb (shoulder / hip) or the bottom of a
+ *   head (the neck); a joint therefore never detaches as it swings.
+ *
+ * THE EMBRACE "MORPH"
+ *   True path morphing between a suit, a gown and a letterform is not something
+ *   SVG can do convincingly, so the blend is done the way real logo stings do
+ *   it: as the two figure-groups converge they scale down into the same point,
+ *   and the "M" cross-fades in from that exact point behind them. The eye reads
+ *   the bodies dissolving into the mark.
  *
  * WHEN IT PLAYS, AND WHY IT CAN BE SKIPPED
  *   ONCE per app launch. A `sessionStorage` flag (`splash_played`) records that
- *   the curtain has already played in this tab: a reload keeps the flag and the
- *   intro is skipped, while closing the tab clears it and the next launch plays
- *   it again — the native-app "intro on cold start" behaviour. Because this
- *   component lives in the root layout, it runs on the first paint of any entry
- *   point and does NOT re-run on client-side navigation. A visible Skip control
- *   is present from the first frame, because a multi-second unskippable overlay
- *   is hostile on a repeat visit; skipping also records the flag.
+ *   the curtain has played in this tab: a reload keeps the flag and skips the
+ *   intro, while closing the tab clears it and the next launch plays it again —
+ *   the native-app "intro on cold start" behaviour. Because the component lives
+ *   in the root layout it runs on the first paint of any entry point and does
+ *   NOT re-run on client-side navigation. A visible Skip control is present from
+ *   the first frame; skipping also records the flag.
  *
  * REDUCED MOTION IS A HARD GATE, NOT A POLISH ITEM
  *   A full-screen sweeping animation is exactly the pattern that triggers
  *   vestibular discomfort. Under `prefers-reduced-motion: reduce` this component
  *   renders NOTHING and reveals the app immediately — the timeline is never
- *   mounted, so no frames are committed and no work is done. A CSS `@media`
- *   fallback would not be enough. The flag is deliberately NOT set in that case,
- *   so reduced motion short-circuits every launch, not just the first.
+ *   mounted, so no frames are committed. The flag is deliberately NOT set in
+ *   that case, so reduced motion short-circuits every launch, not just the first.
  *
  * NO LAYOUT SHIFT
  *   The curtain is a `position: fixed` overlay, so it never participates in
- *   document flow: when it fades out and unmounts, the app beneath it is already
+ *   document flow: when it fades out and unmounts, the app beneath is already
  *   laid out and nothing moves.
  */
 
 /** Scene cues in seconds. One place, so the whole story reads at a glance. */
 const T = {
-  meet: 0.2,
-  propose: 2.0,
+  kneel: 2.0,
   accept: 4.0,
   embrace: 5.5,
-  lockup: 6.8,
+  morph: 6.6,
+  lockup: 7.0,
   end: 8.0,
 } as const;
 
 /**
  * Marks that the intro has played in this tab. `sessionStorage` survives a
- * reload but is cleared when the tab is closed, which is exactly "once per app
- * launch" — the native-app convention.
+ * reload but is cleared when the tab is closed — exactly "once per app launch".
  */
 const SPLASH_PLAYED_KEY = 'splash_played';
 
 /** Fluid, symmetric easing — reads as a drawn sweep rather than a machine. */
 const EASE = [0.65, 0, 0.35, 1] as const;
 
-/** Gold material shared by every limb, so the figures read as one brand. */
+/** Spring presets. Movement is spring-driven so poses settle with weight. */
+const SPRING: Transition = { type: 'spring', stiffness: 90, damping: 18, mass: 1 };
+const WALK_SPRING: Transition = { type: 'spring', stiffness: 48, damping: 17, mass: 1 };
+const GENTLE: Transition = { type: 'spring', stiffness: 60, damping: 20, mass: 1 };
+
+/**
+ * The walk cycle: six keyframes over the two seconds of Act 1, so the stride
+ * eases out and the feet come to rest exactly as the pair meets.
+ */
+const WALK_CYCLE: Transition = {
+  duration: 2,
+  ease: EASE,
+  times: [0, 0.18, 0.38, 0.58, 0.8, 1],
+};
+
+/** Gold material for every figure, so the pair reads as one brand. */
 function SplashDefs() {
   return (
     <defs>
       <linearGradient id="mvSplashGold" x1="0" y1="0" x2="0.9" y2="1">
-        <stop offset="0" stopColor="#f0d8b6" />
+        <stop offset="0" stopColor="#f2dcbc" />
         <stop offset="0.5" stopColor="#e0bc93" />
         <stop offset="1" stopColor="#cfab83" />
       </linearGradient>
-      <linearGradient id="mvSplashGoldMid" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0" stopColor="#e0bc93" />
-        <stop offset="1" stopColor="#d8b38a" />
+      <linearGradient id="mvSplashGoldDeep" x1="0" y1="0" x2="0.2" y2="1">
+        <stop offset="0" stopColor="#d3a978" />
+        <stop offset="1" stopColor="#a97b4e" />
       </linearGradient>
-      <linearGradient id="mvSplashGoldDeep" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0" stopColor="#cfa87e" />
-        <stop offset="1" stopColor="#b58c5e" />
+      <linearGradient id="mvSplashHairLeft" x1="0.1" y1="0" x2="0.9" y2="1">
+        <stop offset="0" stopColor="#c79a67" />
+        <stop offset="1" stopColor="#8f6238" />
       </linearGradient>
-      <linearGradient id="mvSplashHeadLeft" x1="0.1" y1="0" x2="0.9" y2="1">
-        <stop offset="0" stopColor="#f0d8b6" />
-        <stop offset="1" stopColor="#d8b38a" />
-      </linearGradient>
-      <linearGradient id="mvSplashHeadRight" x1="0.1" y1="0" x2="0.9" y2="1">
-        <stop offset="0" stopColor="#e8cba6" />
-        <stop offset="1" stopColor="#cfab83" />
-      </linearGradient>
-      {/* Pinkish heart. */}
-      <linearGradient id="mvSplashHeart" x1="0" y1="0" x2="0.4" y2="1">
-        <stop offset="0" stopColor="#d4a3a5" />
-        <stop offset="1" stopColor="#c78c8d" />
+      <linearGradient id="mvSplashHairRight" x1="0.1" y1="0" x2="0.9" y2="1">
+        <stop offset="0" stopColor="#b98a5e" />
+        <stop offset="1" stopColor="#7a4f2c" />
       </linearGradient>
       {/* Dark maroon / burgundy rose. */}
       <linearGradient id="mvSplashRose" x1="0.2" y1="0" x2="0.8" y2="1">
-        <stop offset="0" stopColor="#8d4a5f" />
+        <stop offset="0" stopColor="#934f64" />
         <stop offset="0.6" stopColor="#5d2b3c" />
-        <stop offset="1" stopColor="#4a1c2e" />
+        <stop offset="1" stopColor="#40192a" />
+      </linearGradient>
+      {/* Pinkish heart. */}
+      <linearGradient id="mvSplashHeart" x1="0" y1="0" x2="0.4" y2="1">
+        <stop offset="0" stopColor="#e0b0b1" />
+        <stop offset="1" stopColor="#c78c8d" />
       </linearGradient>
       <radialGradient id="mvSplashGlow">
-        <stop offset="0" stopColor="#c78c8d" stopOpacity="0.5" />
-        <stop offset="1" stopColor="#c78c8d" stopOpacity="0" />
+        <stop offset="0" stopColor="#d69aa0" stopOpacity="0.55" />
+        <stop offset="0.6" stopColor="#b56f7c" stopOpacity="0.22" />
+        <stop offset="1" stopColor="#b56f7c" stopOpacity="0" />
+      </radialGradient>
+      <radialGradient id="mvSplashShadow">
+        <stop offset="0" stopColor="#000000" stopOpacity="0.42" />
+        <stop offset="1" stopColor="#000000" stopOpacity="0" />
       </radialGradient>
     </defs>
   );
 }
 
-/** The boy's head: a gold circle with a face turned toward the girl (right). */
-function BoyHead() {
+/** The man's head: short cropped hair over a face that tapers to a jaw. */
+function ManHead() {
   return (
     <>
-      <circle cx="408" cy="98" r="72" fill="url(#mvSplashHeadLeft)" />
-      <g opacity="0.78">
-        <circle cx="420" cy="84" r="6" fill="#2c1a22" />
-        <circle cx="444" cy="90" r="6" fill="#2c1a22" />
-        <path
-          d="M 414 116 Q 434 132 454 112"
-          fill="none"
-          stroke="#2c1a22"
-          strokeWidth="4"
-          strokeLinecap="round"
-        />
-      </g>
+      <path
+        d="M -30 40 C -34 12 -18 -6 2 -6 C 24 -6 36 12 32 42 C 26 26 14 18 0 20 C -14 22 -24 30 -30 40 Z"
+        fill="url(#mvSplashHairLeft)"
+      />
+      <path
+        d="M -26 42 C -26 18 -14 4 2 4 C 18 4 26 18 26 42 C 26 62 18 76 6 82 C 12 88 16 96 16 108 L 16 114 L -12 114 L -12 108 C -12 96 -8 88 -2 82 C -14 76 -26 62 -26 42 Z"
+        fill="url(#mvSplashGold)"
+      />
     </>
   );
 }
 
-/** The girl's head: a gold circle with a face turned toward the boy (left). */
-function GirlHead() {
+/** The woman's head: a soft face under a swept hairline (the long hair is drawn separately). */
+function WomanHead() {
   return (
     <>
-      <circle cx="562" cy="116" r="64" fill="url(#mvSplashHeadRight)" />
-      <g opacity="0.78">
-        <circle cx="546" cy="104" r="6" fill="#2c1a22" />
-        <circle cx="524" cy="110" r="6" fill="#2c1a22" />
-        <path
-          d="M 540 136 Q 524 150 508 132"
-          fill="none"
-          stroke="#2c1a22"
-          strokeWidth="4"
-          strokeLinecap="round"
-        />
-      </g>
+      <path
+        d="M -28 34 C -34 0 -12 -18 4 -18 C 24 -18 38 0 32 36 C 26 20 14 12 0 14 C -14 16 -24 24 -28 34 Z"
+        fill="url(#mvSplashHairRight)"
+      />
+      <path
+        d="M -24 42 C -24 20 -12 6 2 6 C 16 6 24 20 24 42 C 24 62 16 74 5 80 C 10 86 13 94 13 108 L 13 116 L -11 116 L -11 108 C -11 94 -8 86 -3 80 C -14 74 -24 62 -24 42 Z"
+        fill="url(#mvSplashGold)"
+      />
     </>
+  );
+}
+
+/** A layered burgundy rose: bloom spiral, stem, and two leaves. Drawn around the origin. */
+function Rose() {
+  return (
+    <>
+      <path d="M 2 26 C 8 92 10 158 12 224" fill="none" stroke="#6b4a3a" strokeWidth="7" strokeLinecap="round" />
+      <path d="M 8 108 C 34 92 58 100 64 120 C 46 136 22 130 8 108 Z" fill="#5f3346" />
+      <path d="M 12 160 C -14 146 -36 156 -42 176 C -24 190 -2 182 12 160 Z" fill="#4a1c2e" />
+      <path
+        d="M 0 -4 C -30 -34 -66 -8 -48 24 C -34 48 2 52 24 32 C 50 10 34 -30 0 -4 Z"
+        fill="url(#mvSplashRose)"
+      />
+      <path
+        d="M -2 8 C -24 -6 -40 10 -30 28 C -22 42 2 44 14 32 C 28 18 18 -6 -2 8 Z"
+        fill="url(#mvSplashRose)"
+        opacity="0.9"
+      />
+      <path
+        d="M 0 6 C -12 -2 -22 6 -16 18 C -11 28 4 30 12 22 C 20 14 12 0 0 6 Z"
+        fill="#a35d72"
+      />
+      <path
+        d="M -2 12 C -8 8 -12 12 -9 17 C -6 21 1 22 5 18 C 8 15 4 9 -2 12 Z"
+        fill="none"
+        stroke="#c98ea0"
+        strokeWidth="3"
+        strokeLinecap="round"
+      />
+    </>
+  );
+}
+
+/** The pink heart. Drawn around the origin so it can be placed and pulsed freely. */
+function Heart() {
+  return (
+    <path
+      d="M 0 -18 C -13 -42 -46 -35 -46 -8 C -46 15 -18 36 0 55 C 18 36 46 15 46 -8 C 46 -35 13 -42 0 -18 Z"
+      fill="url(#mvSplashHeart)"
+    />
+  );
+}
+
+/** The final mark: an elegant "M", drawn in the world frame of the scene. */
+function MarkM() {
+  return (
+    <path
+      d="M 322 626 L 322 302 L 500 552 L 678 302 L 678 626"
+      fill="none"
+      stroke="url(#mvSplashGold)"
+      strokeWidth="46"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
   );
 }
 
@@ -163,20 +230,16 @@ export interface IntroSplashAnimationProps {
   onDone?: () => void;
 }
 
-export default function IntroSplashAnimation({
-  onDone,
-}: IntroSplashAnimationProps) {
+export default function IntroSplashAnimation({ onDone }: IntroSplashAnimationProps) {
   /** `null` = undecided. Keeps the server and first client render identical. */
   const [isVisible, setIsVisible] = useState<boolean | null>(null);
-  /** 0 = pre-roll, then 1..4 for the four acts. */
+  /** 0 = the walk, then 1..4 for kneel / accept / embrace / morph. */
   const [phase, setPhase] = useState(0);
   const [showLockup, setShowLockup] = useState(false);
   const timers = useRef<number[]>([]);
 
   const finish = useCallback(() => {
     setIsVisible(false);
-    // The curtain has been seen (or skipped). Record it for this tab so a
-    // reload reveals the app immediately instead of replaying the intro.
     if (typeof window !== 'undefined') {
       try {
         window.sessionStorage.setItem(SPLASH_PLAYED_KEY, 'true');
@@ -189,24 +252,16 @@ export default function IntroSplashAnimation({
 
   useEffect(() => {
     // Decided on the CLIENT only. `prefers-reduced-motion` is a browser API, so
-    // it cannot be read during render (the server would disagree and hydration
-    // would mismatch); the first paint is therefore always "undecided".
+    // it cannot be read during render; the first paint is therefore "undecided".
     if (typeof window === 'undefined') return;
 
-    // The decision is made inside a frame callback rather than synchronously in
-    // the effect body. `react-hooks/set-state-in-effect` rejects a direct
-    // `setState` here because it triggers a cascading render; deferring by one
-    // frame is imperceptible — the curtain is the first thing painted either
-    // way — and keeps the first client render (`null`, undecided) identical to
-    // the server's.
+    // Deferred by one frame: `react-hooks/set-state-in-effect` rejects a direct
+    // setState here, and the deferral is imperceptible on the first paint.
     const decide = () => {
-      // Already played in this tab: this is a reload, not a cold start. Reveal
-      // the app immediately without mounting the timeline.
       let alreadyPlayed = false;
       try {
         alreadyPlayed = window.sessionStorage.getItem(SPLASH_PLAYED_KEY) === 'true';
       } catch {
-        // Private mode / storage disabled: treat as a first launch.
         alreadyPlayed = false;
       }
       if (alreadyPlayed) {
@@ -215,22 +270,19 @@ export default function IntroSplashAnimation({
       }
 
       if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-        // Reveal immediately: the timeline is never mounted, so no frames are
-        // committed and no work is done. The flag is deliberately NOT set here:
-        // reduced motion should short-circuit every launch, not just the first.
+        // Reveal immediately: the timeline is never mounted, and the flag is
+        // deliberately NOT set, so reduced motion short-circuits every launch.
         setIsVisible(false);
         return;
       }
 
       setIsVisible(true);
 
-      // Act cues as timers rather than an animation-complete chain, so the whole
-      // story is readable in one place and skipping can clear everything.
       timers.current = [
-        window.setTimeout(() => setPhase(1), T.meet * 1000),
-        window.setTimeout(() => setPhase(2), T.propose * 1000),
-        window.setTimeout(() => setPhase(3), T.accept * 1000),
-        window.setTimeout(() => setPhase(4), T.embrace * 1000),
+        window.setTimeout(() => setPhase(1), T.kneel * 1000),
+        window.setTimeout(() => setPhase(2), T.accept * 1000),
+        window.setTimeout(() => setPhase(3), T.embrace * 1000),
+        window.setTimeout(() => setPhase(4), T.morph * 1000),
         window.setTimeout(() => setShowLockup(true), T.lockup * 1000),
         window.setTimeout(() => finish(), T.end * 1000),
       ];
@@ -251,99 +303,115 @@ export default function IntroSplashAnimation({
     finish();
   };
 
-  /* ============================ ACT 1–4 TARGETS ============================
-     Each group's target is a pure function of `phase`, so the whole story is
-     legible here and Framer Motion tweens between whichever act is current. */
+  /* ============================ ACT TARGETS ============================
+     Each target is a pure function of `phase`, so the whole story is legible
+     here and Framer Motion springs between whichever act is current. */
 
-  // The boy slides in from the left, kneels, then merges into the mark.
-  const boyFigure = {
-    animate:
-      phase >= 4
-        ? { x: 0, y: 0, opacity: 1 }
-        : phase >= 2
-          ? { x: -120, y: 30, opacity: 1 }
-          : phase >= 1
-            ? { x: -170, y: 0, opacity: 1 }
-            : { x: -430, y: 0, opacity: 0 },
-    transition: { duration: phase >= 4 ? 1.1 : 0.9, ease: EASE },
+  const walking = phase === 0;
+  const kneeling = phase === 1;
+  const accepting = phase === 2;
+  const embracing = phase === 3;
+  const morphing = phase >= 4;
+
+  // The man strides in from the left, drops to a knee, then folds into centre.
+  const manRoot = {
+    x: embracing || morphing ? 46 : 0,
+    y: kneeling ? 118 : 0,
+    opacity: morphing ? 0 : 1,
+    scale: embracing ? 0.96 : 1,
+    transition: walking ? WALK_SPRING : SPRING,
   };
 
-  // The boy's head lowers as he drops to one knee.
-  const boyHead = {
-    animate:
-      phase >= 4 ? { x: 0, y: 0 } : phase >= 2 ? { x: 4, y: 78 } : { x: 0, y: 0 },
-    transition: { duration: 0.7, ease: EASE },
+  // The back leg trails; the front leg plants. In the kneel the front leg
+  // swings forward and the back leg folds underneath him.
+  const manLegBack = {
+    rotate: kneeling ? 16 : walking ? [17, -17, 17, -17, 5, 0] : 0,
+    transition: walking ? WALK_CYCLE : SPRING,
+  };
+  const manLegFront = {
+    rotate: kneeling ? -56 : walking ? [-17, 17, -17, 17, -5, 0] : 0,
+    transition: walking ? WALK_CYCLE : SPRING,
   };
 
-  // The girl slides in from the right, leans in, then merges into the mark.
-  const girlFigure = {
-    animate:
-      phase >= 4
-        ? { x: 0, y: 0, opacity: 1 }
-        : phase >= 3
-          ? { x: 110, y: 10, opacity: 1 }
-          : phase >= 1
-            ? { x: 170, y: 0, opacity: 1 }
-            : { x: 430, y: 0, opacity: 0 },
-    transition: { duration: phase >= 4 ? 1.1 : 0.9, ease: EASE },
+  // The torso leans toward the woman as he kneels.
+  const manTorso = {
+    rotate: kneeling ? 9 : 0,
+    transition: GENTLE,
+  };
+  const manHead = {
+    rotate: kneeling ? -5 : embracing ? 7 : 0,
+    y: kneeling ? 3 : 0,
+    transition: GENTLE,
+  };
+  const manArmBack = {
+    rotate: walking ? [12, -12, 12, -12, 0, 0] : 0,
+    transition: walking ? WALK_CYCLE : SPRING,
+  };
+  // His near arm swings while walking, then extends to present the rose.
+  const manArmFront = {
+    rotate: kneeling ? -74 : walking ? [-12, 12, -12, 12, 0, 0] : embracing ? -26 : 0,
+    transition: walking ? WALK_CYCLE : SPRING,
   };
 
-  const girlHeadLean = {
-    animate:
-      phase >= 4 ? { x: 0, y: 0 } : phase >= 3 ? { x: -6, y: 6 } : { x: 0, y: 0 },
-    transition: { duration: 0.7, ease: EASE },
+  // The woman drifts in from the right, leans in to accept, then folds in.
+  const womanRoot = {
+    x: embracing || morphing ? -46 : 0,
+    opacity: morphing ? 0 : 1,
+    scale: embracing ? 0.96 : 1,
+    transition: walking ? WALK_SPRING : SPRING,
+  };
+  const womanTorso = {
+    rotate: accepting || embracing ? -7 : 0,
+    transition: GENTLE,
+  };
+  const womanHead = {
+    rotate: accepting || embracing ? -9 : 0,
+    x: accepting || embracing ? -7 : 0,
+    transition: GENTLE,
+  };
+  // Her hands lift to her chest in surprise, then open to embrace him.
+  const womanArmBack = {
+    rotate: walking ? [10, -10, 10, -10, 0, 0] : accepting ? -118 : embracing ? -50 : 0,
+    transition: walking ? WALK_CYCLE : SPRING,
+  };
+  const womanArmFront = {
+    rotate: walking ? [-10, 10, -10, 10, 0, 0] : accepting ? 118 : embracing ? 50 : 0,
+    transition: walking ? WALK_CYCLE : SPRING,
   };
 
-  // The "M"'s top valley only closes once they embrace.
-  const valley = {
-    animate: { opacity: phase >= 4 ? 1 : 0 },
-    transition: { duration: 0.7, ease: EASE },
-  };
-
-  // Act 3 only: the heart blooms and beats.
-  const heart = {
-    animate:
-      phase >= 4
-        ? { opacity: 1, scale: 1, x: 0, y: 0 }
-        : phase >= 3
-          ? { opacity: 1, scale: [0.2, 1.25, 1, 1.16, 1], x: 0, y: 0 }
-          : { opacity: 0, scale: 0.1, x: 0, y: 0 },
-    transition:
-      phase >= 3 && phase < 4
-        ? { duration: 1.2, ease: EASE, times: [0, 0.4, 0.55, 0.75, 1] }
-        : { duration: 0.6, ease: EASE },
-  };
-
-  // The rose appears on the proposal, drifts toward the girl, then hangs below
-  // the heart at the bottom centre.
+  // The rose slides from his pocket, hovers, then is offered to her.
   const rose = {
-    animate:
-      phase >= 4
-        ? { opacity: 1, x: 0, y: 0, scale: 1 }
-        : phase >= 3
-          ? { opacity: 1, x: 60, y: -30, scale: 1 }
-          : phase >= 2
-            ? { opacity: 1, x: 0, y: -60, scale: 1 }
-            : { opacity: 0, x: 0, y: 24, scale: 0.6 },
-    transition: { duration: 0.8, ease: EASE },
+    opacity: morphing ? 0 : phase >= 1 ? 1 : 0,
+    x: embracing || morphing ? 516 : accepting ? 548 : 505,
+    y: kneeling ? 432 : accepting ? 404 : embracing ? 418 : 470,
+    scale: phase >= 1 ? 1 : 0.4,
+    rotate: embracing ? 14 : 0,
+    transition: SPRING,
   };
 
-  const boyBubble = {
-    animate: {
-      opacity: phase >= 2 ? 0 : phase >= 1 ? 1 : 0,
-      scale: phase >= 1 ? 1 : 0.6,
-      y: phase >= 1 ? 0 : 12,
-    },
-    transition: { duration: 0.45, ease: EASE, delay: phase >= 1 && phase < 2 ? 0.4 : 0 },
+  // The heart blooms on acceptance and pulses inside a soft glow.
+  const heart = {
+    opacity: morphing ? 0 : accepting ? 1 : embracing ? 0.8 : 0,
+    scale: accepting ? [0.2, 1.25, 1, 1.15, 1] : 1,
+    x: 505,
+    y: 318,
+    transition: accepting
+      ? { duration: 1.2, ease: EASE, times: [0, 0.4, 0.55, 0.75, 1] }
+      : SPRING,
+  };
+  const heartGlow = {
+    opacity: phase >= 2 ? 0.8 : 0,
+    scale: accepting ? [0.85, 1.1, 1] : 1,
+    transition: accepting
+      ? { duration: 1.2, ease: EASE, times: [0, 0.5, 1] }
+      : SPRING,
   };
 
-  const girlBubble = {
-    animate: {
-      opacity: phase >= 2 ? 0 : phase >= 1 ? 1 : 0,
-      scale: phase >= 1 ? 1 : 0.6,
-      y: phase >= 1 ? 0 : 12,
-    },
-    transition: { duration: 0.45, ease: EASE, delay: phase >= 1 && phase < 2 ? 0.9 : 0 },
+  // The mark rises from the same point the bodies converge into.
+  const mark = {
+    opacity: morphing ? 1 : 0,
+    scale: morphing ? 1 : 0.55,
+    transition: { type: 'spring', stiffness: 68, damping: 15, mass: 1 } as const,
   };
 
   return (
@@ -351,15 +419,13 @@ export default function IntroSplashAnimation({
       {isVisible && (
         <motion.div
           data-testid="intro-splash"
-          // Above the app for the length of the story, then unmounted. `fixed`
-          // is what guarantees no layout shift: it is out of document flow.
           className="fixed inset-0 z-[9999] flex items-center justify-center overflow-hidden bg-[#131017]"
           initial={{ opacity: 1 }}
           exit={{ opacity: 0, y: -28 }}
           transition={{ duration: 0.5, ease: EASE }}
         >
           <svg
-            viewBox="0 0 1000 1180"
+            viewBox="0 0 1000 1000"
             className="h-full w-full"
             preserveAspectRatio="xMidYMid meet"
             role="img"
@@ -367,141 +433,181 @@ export default function IntroSplashAnimation({
           >
             <SplashDefs />
 
-            {/* Soft bloom behind the pair once they accept. */}
+            {/* Soft bloom behind the pair, blooming as the heart appears. */}
             <motion.circle
-              cx="500"
-              cy="440"
-              r="290"
+              cx="505"
+              cy="380"
+              r="300"
               fill="url(#mvSplashGlow)"
-              animate={{ opacity: phase >= 3 ? 0.7 : 0 }}
-              transition={{ duration: 0.9, ease: EASE }}
+              style={{ transformBox: 'fill-box', transformOrigin: '50% 50%' }}
+              animate={heartGlow}
             />
 
-            {/* ===== Act 1: the greetings, drawn above the figures ===== */}
-            <motion.g style={{ originX: '300px', originY: '150px' }} {...boyBubble}>
-              <rect x="196" y="52" width="132" height="76" rx="30" fill="#211a28" stroke="#34283f" strokeWidth="2" />
-              <path d="M 252 128 L 268 152 L 284 128 Z" fill="#211a28" stroke="#34283f" strokeWidth="2" />
-              <text x="262" y="104" textAnchor="middle" fontFamily="Helvetica Neue, Helvetica, Arial, system-ui, sans-serif" fontSize="34" fontWeight={500} fill="#eae2f0">
-                Hi
-              </text>
-            </motion.g>
-            <motion.g style={{ originX: '700px', originY: '170px' }} {...girlBubble}>
-              <rect x="672" y="66" width="132" height="76" rx="30" fill="#211a28" stroke="#34283f" strokeWidth="2" />
-              <path d="M 716 142 L 700 166 L 732 142 Z" fill="#211a28" stroke="#34283f" strokeWidth="2" />
-              <text x="738" y="118" textAnchor="middle" fontFamily="Helvetica Neue, Helvetica, Arial, system-ui, sans-serif" fontSize="34" fontWeight={500} fill="#eae2f0">
-                Hi
-              </text>
+            {/* Ground contact shadows, so the pair are standing, not floating. */}
+            <motion.g animate={{ opacity: morphing ? 0 : 0.9 }} transition={{ duration: 0.4 }}>
+              <ellipse cx="430" cy="802" rx="86" ry="15" fill="url(#mvSplashShadow)" />
+              <ellipse cx="575" cy="806" rx="98" ry="16" fill="url(#mvSplashShadow)" />
             </motion.g>
 
-            {/* The "M" valley — the pair's joined shoulders. Hidden until they
-                embrace, because the two figures are still apart before then. */}
-            <motion.path
-              d="M 386 258 Q 418 372 500 392 Q 582 372 614 258"
-              fill="none"
-              stroke="url(#mvSplashGoldDeep)"
-              strokeWidth="50"
-              strokeLinecap="round"
-              {...valley}
-            />
+            {/* ============================== THE MAN ============================== */}
+            <g transform="translate(430 240)">
+              <motion.g initial={{ x: -560 }} animate={manRoot}>
+                {/* Legs first, so the jacket sits over the hips. */}
+                <motion.g
+                  style={{ transformBox: 'fill-box', transformOrigin: '50% 0%' }}
+                  animate={manLegBack}
+                >
+                  <path d="M -56 268 L -16 268 L -22 540 L -50 540 Z" fill="url(#mvSplashGoldDeep)" />
+                  <path
+                    d="M -58 538 C -66 552 -62 562 -48 562 L -16 562 C -10 562 -8 552 -14 542 L -18 538 Z"
+                    fill="#7a4f2c"
+                  />
+                </motion.g>
+                <motion.g
+                  style={{ transformBox: 'fill-box', transformOrigin: '50% 0%' }}
+                  animate={manLegFront}
+                >
+                  <path d="M 16 268 L 56 268 L 50 540 L 22 540 Z" fill="url(#mvSplashGold)" />
+                  <path
+                    d="M 18 538 L 14 542 C 8 552 10 562 16 562 L 48 562 C 62 562 66 552 58 538 Z"
+                    fill="#7a4f2c"
+                  />
+                </motion.g>
 
-            {/* ===== The boy (drawn first, so the girl's arm crosses over his) ===== */}
-            <motion.g {...boyFigure}>
-              {/* Far leg: deeper tone, behind. */}
-              <path
-                d="M 392 292 C 378 404 348 574 300 700 C 276 750 270 796 300 808"
-                fill="none"
-                stroke="url(#mvSplashGoldDeep)"
-                strokeWidth="66"
-                strokeLinecap="round"
-              />
-              {/* Near leg + presenting arm. */}
-              <path
-                d="M 412 292 C 394 400 356 560 306 694 C 282 744 284 790 318 806"
-                fill="none"
-                stroke="url(#mvSplashGold)"
-                strokeWidth="80"
-                strokeLinecap="round"
-              />
-              <path
-                d="M 404 258 Q 452 396 552 346 Q 602 318 626 248"
-                fill="none"
-                stroke="url(#mvSplashGoldMid)"
-                strokeWidth="46"
-                strokeLinecap="round"
-              />
-              <motion.g {...boyHead}>
-                <BoyHead />
+                {/* The upper body leans as one rig: jacket, arms and head. */}
+                <motion.g
+                  style={{ transformBox: 'fill-box', transformOrigin: '50% 100%' }}
+                  animate={manTorso}
+                >
+                  {/* Back arm behind the jacket. */}
+                  <motion.g
+                    style={{ transformBox: 'fill-box', transformOrigin: '50% 0%' }}
+                    animate={manArmBack}
+                  >
+                    <path
+                      d="M -60 128 C -74 160 -76 210 -70 258 L -46 258 C -52 210 -48 160 -42 132 Z"
+                      fill="url(#mvSplashGoldDeep)"
+                    />
+                  </motion.g>
+
+                  {/* Suit jacket: squared shoulders, notched lapels, tapered waist. */}
+                  <path
+                    d="M -62 140 C -60 124 -42 114 -26 110 L -10 108 L -8 128 L 8 128 L 10 108 L 26 110 C 42 114 60 124 62 140 L 56 270 L -56 270 Z"
+                    fill="url(#mvSplashGold)"
+                  />
+                  <path d="M -10 108 L -8 128 L 2 176 L 8 128 L 10 108 Z" fill="#b58c5e" />
+                  <path d="M -8 128 L 8 128 L 2 176 Z" fill="#f2dcbc" />
+                  <path d="M 0 176 L 0 270" stroke="#b58c5e" strokeWidth="3" strokeLinecap="round" />
+
+                  {/* Presenting arm in front of the jacket. */}
+                  <motion.g
+                    style={{ transformBox: 'fill-box', transformOrigin: '50% 0%' }}
+                    animate={manArmFront}
+                  >
+                    <path
+                      d="M 42 132 C 48 160 52 210 46 258 L 70 258 C 76 210 74 160 60 128 Z"
+                      fill="url(#mvSplashGold)"
+                    />
+                  </motion.g>
+
+                  <motion.g
+                    style={{ transformBox: 'fill-box', transformOrigin: '50% 100%' }}
+                    animate={manHead}
+                  >
+                    <ManHead />
+                  </motion.g>
+                </motion.g>
               </motion.g>
-            </motion.g>
+            </g>
 
-            {/* ===== The girl ===== */}
-            <motion.g {...girlFigure}>
-              <path
-                d="M 608 292 C 622 404 652 574 700 700 C 724 750 730 796 700 808"
-                fill="none"
-                stroke="url(#mvSplashGoldDeep)"
-                strokeWidth="66"
-                strokeLinecap="round"
-              />
-              <path
-                d="M 588 292 C 606 400 644 560 694 694 C 718 744 716 790 682 806"
-                fill="none"
-                stroke="url(#mvSplashGold)"
-                strokeWidth="80"
-                strokeLinecap="round"
-              />
-              <path
-                d="M 596 258 Q 548 396 448 346 Q 398 318 374 248"
-                fill="none"
-                stroke="url(#mvSplashGoldMid)"
-                strokeWidth="46"
-                strokeLinecap="round"
-              />
-              <motion.g {...girlHeadLean}>
-                <GirlHead />
+            {/* ============================= THE WOMAN ============================ */}
+            <g transform="translate(575 250)">
+              <motion.g initial={{ x: 560 }} animate={womanRoot}>
+                {/* The long hair falls behind the gown. */}
+                <path
+                  d="M -30 24 C -46 92 -48 172 -42 236 C -34 182 -32 122 -34 92 C -30 60 -20 40 -30 24 Z"
+                  fill="url(#mvSplashHairRight)"
+                />
+                <path
+                  d="M 30 24 C 46 92 48 172 42 236 C 34 182 32 122 34 92 C 30 60 20 40 30 24 Z"
+                  fill="url(#mvSplashHairRight)"
+                />
+
+                <motion.g
+                  style={{ transformBox: 'fill-box', transformOrigin: '50% 100%' }}
+                  animate={womanTorso}
+                >
+                  {/* Back arm behind the gown. */}
+                  <motion.g
+                    style={{ transformBox: 'fill-box', transformOrigin: '50% 0%' }}
+                    animate={womanArmBack}
+                  >
+                    <path
+                      d="M -42 132 C -56 164 -58 210 -52 252 L -30 252 C -36 210 -32 164 -26 136 Z"
+                      fill="url(#mvSplashGoldDeep)"
+                    />
+                  </motion.g>
+
+                  {/* A-line gown: fitted bodice flaring to the floor. */}
+                  <path
+                    d="M -44 138 C -46 122 -30 110 -16 106 L 16 106 C 30 110 46 122 44 138 L 28 244 L 120 500 L 132 556 L -132 556 L -120 500 L -28 244 Z"
+                    fill="url(#mvSplashGold)"
+                  />
+                  <path d="M -30 238 L 30 238 L 34 262 L -34 262 Z" fill="#b58c5e" opacity="0.55" />
+
+                  {/* Front arm in front of the gown. */}
+                  <motion.g
+                    style={{ transformBox: 'fill-box', transformOrigin: '50% 0%' }}
+                    animate={womanArmFront}
+                  >
+                    <path
+                      d="M 26 136 C 32 164 36 210 30 252 L 52 252 C 58 210 56 164 42 132 Z"
+                      fill="url(#mvSplashGold)"
+                    />
+                  </motion.g>
+
+                  <motion.g
+                    style={{ transformBox: 'fill-box', transformOrigin: '50% 100%' }}
+                    animate={womanHead}
+                  >
+                    <WomanHead />
+                  </motion.g>
+                </motion.g>
               </motion.g>
+            </g>
+
+            {/* ============================== THE ROSE ============================= */}
+            <motion.g
+              style={{ transformBox: 'fill-box', transformOrigin: '50% 50%' }}
+              animate={rose}
+            >
+              <Rose />
             </motion.g>
 
-            {/* ===== The heart, blooming between their heads ===== */}
-            <motion.g style={{ originX: '500px', originY: '206px' }} {...heart}>
-              <path
-                d="M 500 200 C 500 180 476 174 469 189 C 460 206 476 220 500 238 C 524 220 540 206 531 189 C 524 174 500 180 500 200 Z"
-                fill="url(#mvSplashHeart)"
-              />
+            {/* ============================== THE HEART ============================ */}
+            <motion.g
+              style={{ transformBox: 'fill-box', transformOrigin: '50% 50%' }}
+              animate={heart}
+            >
+              <Heart />
             </motion.g>
 
-            {/* ===== The rose, hanging below the heart ===== */}
-            <motion.g style={{ originX: '509px', originY: '600px' }} {...rose}>
-              <path d="M 506 508 C 514 572 520 636 524 700" fill="none" stroke="#6b4a3a" strokeWidth="7" strokeLinecap="round" />
-              <path d="M 512 598 C 534 584 554 590 560 606 C 546 620 526 616 512 598 Z" fill="#5f3346" />
-              <path d="M 517 650 C 495 638 477 646 473 662 C 487 674 506 668 517 650 Z" fill="#4a1c2e" />
-              <circle cx="509" cy="478" r="28" fill="url(#mvSplashRose)" />
-              <path
-                d="M 493 458 C 517 443 543 458 536 480 C 530 496 510 500 499 489 C 492 481 494 469 505 464"
-                fill="none"
-                stroke="#8d4a5f"
-                strokeWidth="8"
-                strokeLinecap="round"
-              />
-              <path
-                d="M 499 474 C 510 469 521 475 519 486 C 517 495 506 499 501 493"
-                fill="none"
-                stroke="#a35d72"
-                strokeWidth="6"
-                strokeLinecap="round"
-              />
+            {/* ============================ THE MARK, "M" ========================== */}
+            <motion.g
+              style={{ transformBox: 'fill-box', transformOrigin: '50% 50%' }}
+              animate={mark}
+            >
+              <MarkM />
             </motion.g>
 
             {/*
-              The wordmark and tagline. These fade ONLY — no `y` animation:
-              animating `y` on an SVG `<text>` makes Framer Motion write a CSS
-              transform that overrides the attribute value and throws the glyph
-              off-screen. A plain opacity fade leaves it where the attribute puts
-              it.
+              The wordmark and tagline fade ONLY — no `y` animation: animating `y`
+              on an SVG `<text>` makes Framer Motion write a CSS transform that
+              overrides the attribute value and throws the glyph off-screen.
             */}
             <motion.text
               x="500"
-              y="916"
+              y="772"
               textAnchor="middle"
               fontFamily="Helvetica Neue, Helvetica, Arial, system-ui, sans-serif"
               fontSize="60"
@@ -516,7 +622,7 @@ export default function IntroSplashAnimation({
             </motion.text>
             <motion.text
               x="500"
-              y="962"
+              y="822"
               textAnchor="middle"
               fontFamily="Helvetica Neue, Helvetica, Arial, system-ui, sans-serif"
               fontSize="22"
