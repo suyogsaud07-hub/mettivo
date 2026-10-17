@@ -1,179 +1,132 @@
 'use client';
 
 import Link from 'next/link';
+import { useState } from 'react';
+import { useLanguage } from '@/context/LanguageContext';
 import InstallButton from '@/app/components/InstallButton';
+import HeaderLanguageDropdown from '@/app/components/HeaderLanguageDropdown';
+import MobileDrawer from '@/app/components/MobileDrawer';
+import RibbonLogo from '@/app/components/RibbonLogo';
 import FounderLetterLink from '@/app/components/FounderLetterLink';
-import Logo from '@/components/Logo';
-import LanguagePicker from '@/app/components/LanguagePicker';
-import { useLanguage } from '../context/LanguageContext';
 
 /**
- * The public landing page. It is for EVERYONE and it never redirects.
+ * The public landing page — rebuilt as the Mettivo "Midnight Romance"
+ * Bumble-style entry surface.
  *
- * HISTORY — why the session logic is gone
- *   This page used to call `supabase.auth.getSession()` on mount and
- *   `router.replace()` a signed-in visitor straight into the app (`/profile` or
- *   `/discover`). That made the page unreachable for members — pressing Back
- *   bounced you out again — and formed a redirect cycle with the auth screen,
- *   which pushed authenticated visitors back into the app. A later iteration kept
- *   the session read only to swap the CTA label for "Go to Dashboard" ->
- *   `/profile`, which still pushed whoever clicked it into the onboarding gate
- *   instead of the signup surface.
- *
- *   There is no session read here any more, and therefore nothing on this page
- *   can bounce, loop, or trap anybody: it renders identically for a signed-out
- *   visitor and for a member, and its single job is to hand people to the auth
- *   surface.
- *
- * THE CALL TO ACTION
- *   One primary sandy-gold button — "Let's Get Started" — and it always opens
- *   `/signup`, which renders `AuthPanel`: inline email + password, Google,
- *   Facebook, Twitter, Discord and phone sign-up, in the Midnight Romance
- *   palette. A visitor who already holds a session is asked *there* whether to
- *   continue (that is where the dashboard lives) or sign out; nobody is bounced
- *   into onboarding or the dashboard by this page.
+ * It never reads the session and never redirects: every visitor, signed in or
+ * not, sees the same page and is handed to the signup surface by the primary
+ * CTA. Local storage is only touched inside effects, so there are no hydration
+ * mismatches.
  */
 
-/**
- * The one destination of the primary call to action.
- *
- * `/signup` and `/auth` render the same `AuthPanel` (one component, two routes),
- * so this is also the login surface — the panel opens on Sign Up with a Log In
- * toggle. `/signup` is the destination because the CTA is a signup invitation;
- * the already-signed-in case is handled on that screen, not here.
- */
 const SIGNUP_HREF = '/signup';
-
-/**
- * Midnight Romance tokens, read from `globals.css` (`:root`).
- *
- * Every colour on this page comes from the shared token set rather than a local
- * literal, so the landing page cannot drift from the auth screen again. The old
- * literals (`#0D0A10` page, `#1C1822` surface, `#D4B18A` gold) were a visibly
- * different plum from the `AuthPanel` surface. The fallbacks repeat the token
- * values so the page is still correct before the stylesheet loads.
- *
- *   --mr-page          #131017  deep dark plum page
- *   --mr-card          #211a28  eggplant surface
- *   --mr-card-border   #34283f
- *   --mr-gold          #d8b38a  sandy gold accent
- *   --mr-gold-text     #1a130c
- *   --mr-heading       #eae2f0
- *   --mr-placeholder   #9b8ba6
- *   --mr-inactive-text #b4a3c0
- */
-const mr = {
-  page: 'var(--mr-page, #131017)',
-  card: 'var(--mr-card, #211a28)',
-  border: 'var(--mr-card-border, #34283f)',
-  gold: 'var(--mr-gold, #d8b38a)',
-  goldText: 'var(--mr-gold-text, #1a130c)',
-  heading: 'var(--mr-heading, #eae2f0)',
-  muted: 'var(--mr-placeholder, #9b8ba6)',
-  soft: 'var(--mr-inactive-text, #b4a3c0)',
-} as const;
 
 export default function LandingPage() {
   const { t } = useLanguage();
-
-  const styles = {
-    container: { minHeight: '100vh', backgroundColor: mr.page, color: mr.heading, fontFamily: 'system-ui', display: 'flex', flexDirection: 'column' as const },
-    // `flexWrap` lets the header's right-hand group (the language picker) drop
-    // below the logo on a narrow phone instead of overflowing.
-    topBar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap' as const, rowGap: '12px', padding: '24px 30px', zIndex: 50 },
-    // The right-hand cluster. The Founder's Letter is no longer duplicated here;
-    // its single landing-page trigger is the floating bottom-left pill below.
-    topBarActions: { display: 'flex', alignItems: 'center', gap: '12px' },
-    logoWrapper: { display: 'flex', alignItems: 'center', gap: '12px' },
-    logoText: { display: 'flex', flexDirection: 'column' as const, gap: '2px' },
-    logoTitle: { fontSize: '16px', fontWeight: '800', color: mr.heading, letterSpacing: '4px', lineHeight: '1' },
-    logoSubtitle: { fontSize: '8px', fontWeight: '600', color: mr.gold, letterSpacing: '2px', lineHeight: '1' },
-    main: { flex: 1, display: 'flex', flexDirection: 'column' as const, alignItems: 'center', justifyContent: 'center', padding: '20px', textAlign: 'center' as const, zIndex: 10 },
-    title: { fontSize: '48px', fontWeight: '800', color: mr.heading, marginBottom: '8px', letterSpacing: '-1px', lineHeight: '1.2' },
-    subtitle: { fontSize: '24px', fontWeight: '500', color: mr.gold, marginBottom: '16px' },
-    description: { fontSize: '15px', color: mr.muted, maxWidth: '320px', marginBottom: '40px', lineHeight: '1.5' },
-    buttonContainer: { width: '100%', maxWidth: '280px', display: 'flex', flexDirection: 'column' as const, gap: '12px' },
-    primaryBtn: { backgroundColor: mr.gold, color: mr.goldText, padding: '16px', borderRadius: '30px', fontSize: '16px', fontWeight: '700', border: 'none', cursor: 'pointer', textDecoration: 'none', display: 'block', textAlign: 'center' as const },
-    footer: { padding: '24px', textAlign: 'center' as const, fontSize: '13px', color: mr.soft },
-  };
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   return (
-    <div style={styles.container}>
-      <div style={styles.topBar}>
-        <div style={styles.logoWrapper}>
-          {/* The new brand mark: intertwined figures forming the "M", with the
-              heart and the rose. One component, so every surface draws the same
-              artwork — there is no inline copy left to drift. */}
-          <Logo variant="mark" width={44} alt="" />
-          <div style={styles.logoText}>
-            <span style={styles.logoTitle}>METTIVO</span>
-            <span style={styles.logoSubtitle}>YOUR NEXT CONNECTION</span>
+    <div
+      className="min-h-screen flex flex-col overflow-x-hidden bg-[#17121C] text-[#F2E9E4] font-sans antialiased"
+    >
+      {/* ============================== TOP NAV ============================== */}
+      <nav className="fixed top-0 left-0 right-0 z-50">
+        <div className="max-w-7xl mx-auto px-6 md:px-10 py-5">
+          <div className="flex justify-between items-center">
+            {/* Top-left branding: ribbon M mark + wordmark. */}
+            <div className="flex items-center gap-3">
+              <RibbonLogo width={30} />
+              <div className="flex flex-col gap-0.5 leading-none">
+                <span className="text-sm font-bold tracking-[3px] text-[#F2E9E4]">
+                  METTIVO
+                </span>
+                <span className="text-[10px] font-semibold tracking-[2.5px] text-[#D4B18A] uppercase">
+                  Your Next Connection
+                </span>
+              </div>
+            </div>
+
+            {/* Top-right controls: language dropdown, then hamburger. */}
+            <div className="flex items-center gap-3">
+              <HeaderLanguageDropdown />
+              <button
+                type="button"
+                onClick={() => setDrawerOpen(true)}
+                aria-label="Open menu"
+                className="w-11 h-11 rounded-2xl bg-[#29202D] border border-white/15 shadow-xl flex items-center justify-center hover:bg-[#3a303d] transition-colors                 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D4B18A]"
+              >
+                <svg
+                  width="20"
+                  height="20"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <line x1="4" y1="12" x2="20" y2="12" />
+                  <line x1="4" y1="6" x2="20" y2="6" />
+                  <line x1="4" y1="18" x2="20" y2="18" />
+                </svg>
+              </button>
+            </div>
           </div>
         </div>
+      </nav>
 
-        <div style={styles.topBarActions}>
-          {/*
-            The global language picker. Choosing a language writes the preference
-            and re-renders every `useLanguage()` consumer, so the copy around it
-            changes immediately — it is not a decorative menu.
-          */}
-          <LanguagePicker />
+      {/* ============================== HERO ============================== */}
+      <main className="flex-1 flex items-center justify-center pt-20 pb-0 text-center px-6">
+        <div className="max-w-xl w-full">
+          {/* Hero headline: serif, black weight, large. "people" in gold, oxblood period. */}
+          <div className="font-serif font-black text-4xl sm:text-5xl md:text-6xl leading-[1.15] text-[#F2E9E4] mb-10">
+            Meet your
+            <br />
+            kind of
+            <br />
+            <span className="font-serif italic text-[#D4B18A]">people</span>
+            <span className="text-[#4A1828]">.</span>
+          </div>
+
+          {/* Stacked CTAs: "Get started" (gold) then "Get the app" (surface + gold border). */}
+          <div className="max-w-[260px] w-full flex flex-col gap-4">
+            <div className="group w-full">
+              <Link
+                href={SIGNUP_HREF}
+                className="group w-full inline-flex items-center justify-center gap-1 py-3.5 px-6 rounded-full bg-[#D4B18A] text-[#17121C] text-sm font-bold tracking-tight uppercase shadow-lg shadow-[#D4B18A]/35 transition-all hover:bg-[#E4C9A0] hover:shadow-[#D4B18A]/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D4B18A] focus-visible:ring-offset-2 focus-visible:ring-offset-[#17121C]"
+                data-testid="landing-primary-cta"
+              >
+                {t('get_started')}
+                <span className="group-hover:translate-x-1 transition-transform inline-block ml-0.5">
+                  &rarr;
+                </span>
+              </Link>
+            </div>
+
+            <InstallButton />
+          </div>
         </div>
-      </div>
+      </main>
 
-      <div style={styles.main}>
-        {/*
-          The full brand lockup — mark, wordmark and tagline as one piece of
-          artwork — is the page's brand statement. It is a single component that
-          scales from a 220px phone to a full-width desktop, so there is no
-          breakpoint-specific markup to keep in sync.
-        */}
-        <Logo
-          variant="lockup"
-          width="min(78vw, 300px)"
-          alt="Mettivo — Your Next Connection"
-          style={{ marginBottom: '24px' }}
-        />
-        <h1 style={styles.title}>
-          {t('welcome')}
-        </h1>
-        <h2 style={styles.subtitle}>
-          {t('subtitle')}
-        </h2>
-        <p style={styles.description}>
-          {t('description')}
+      {/* ============================== FOOTER ============================== */}
+      <footer className="flex justify-between items-center px-6 py-16 text-xs opacity-70 text-[#F2E9E4]">
+        <div className="flex flex-col gap-1 leading-tight">
+          <p className="text-[#F2E9E4]">Someone on Mettivo might give you butterflies.</p>
+          <p className="text-[#D4B18A] font-semibold tracking-wider uppercase leading-none">
+            FIND OUT WHO &darr;
+          </p>
+        </div>
+        <p className="text-[#F2E9E4]">
+          All photos are of models and used for illustrative purposes only &bull; Mettivo &copy; 2026
         </p>
+      </footer>
 
-        <div style={styles.buttonContainer}>
-          {/*
-            THE one primary action: "Let's Get Started" -> `/signup`.
-
-            A plain link, not a handler with a redirect, so there is nothing here
-            that can race, loop, or bounce a visitor: the browser navigates to
-            the signup surface and the full choice of sign-in methods is on
-            screen. There is deliberately no second "dashboard" button — this
-            page's job is the signup invitation, and the account-with-a-session
-            choice lives on the auth screen.
-          */}
-          <Link href={SIGNUP_HREF} style={styles.primaryBtn} data-testid="landing-primary-cta">
-            {t('get_started')}
-          </Link>
-
-          <InstallButton />
-        </div>
-      </div>
-
-      <div style={styles.footer}>
-        <p>{t('footer_text')}</p>
-        <p style={{ fontSize: '11px', marginTop: '8px', opacity: 0.7 }}>© 2026 Mettivo. All rights reserved.</p>
-      </div>
-
-      {/*
-        The single landing-page entry point to the letter: a floating pill in the
-        bottom-left corner, so it stays visible wherever the visitor has scrolled
-        to. The former header duplicate beside the language picker was removed.
-      */}
+      {/* Floating bottom-left entry point to the founder's letter. */}
       <FounderLetterLink variant="corner" />
+
+      {/* Full-screen immersive drawer (mobile hamburger). */}
+      <MobileDrawer isOpen={drawerOpen} onClose={() => setDrawerOpen(false)} />
     </div>
   );
 }
