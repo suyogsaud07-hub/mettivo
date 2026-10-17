@@ -28,6 +28,9 @@ import { estimatePitch, median, pitchMatchesGender } from '@/lib/verification/pi
 
 interface FaceVoiceVerificationModalProps {
   gender: VerificationGender;
+  /** The name the wizard holds. Sent with the phrase request so it is used
+   *  before the profile row exists. */
+  displayName: string | null;
   onCancel: () => void;
   onVerified: (selfieUrl: string) => void;
 }
@@ -36,6 +39,7 @@ type Phase = 'face' | 'voice' | 'verified';
 
 export default function FaceVoiceVerificationModal({
   gender,
+  displayName,
   onCancel,
   onVerified,
 }: FaceVoiceVerificationModalProps) {
@@ -126,7 +130,7 @@ export default function FaceVoiceVerificationModal({
         setError(messageForFace(result.reason));
         return;
       }
-      const nextPhrase = await fetchChallenge();
+      const nextPhrase = await fetchChallenge({ displayName, gender });
       if (!mountedRef.current) return;
       setPhrase(nextPhrase);
       setPhase('voice');

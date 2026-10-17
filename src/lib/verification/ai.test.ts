@@ -83,6 +83,12 @@ describe('phraseMatches', () => {
     expect(phraseMatches('amber orchid 42', 'amber orchid')).toBe(false);
     expect(phraseMatches('', 'anything')).toBe(false);
   });
+
+  it('ignores hyphens, so "non-binary" matches "nonbinary"', () => {
+    expect(phraseMatches('hello my name is nonbinary', 'hello my name is non-binary')).toBe(
+      true
+    );
+  });
 });
 
 describe('dataUrlToBlob', () => {

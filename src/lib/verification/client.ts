@@ -115,12 +115,33 @@ function messageForCode(code: string): string {
   }
 }
 
-/** Fetches a fresh phrase for the voice liveness check. */
-export async function fetchChallenge(): Promise<string> {
+/** The identity the wizard already holds, so the phrase need not wait for a save. */
+export interface ChallengeIdentity {
+  displayName: string | null;
+  gender: VerificationGender;
+}
+
+/**
+ * Fetches a fresh phrase for the voice liveness check.
+ *
+ * The name and gender are sent as query parameters because onboarding shows this
+ * step BEFORE the profile row is saved: without them the route has nothing to
+ * read and the phrase would fall back to "friend" / "nonbinary".
+ */
+export async function fetchChallenge(identity?: ChallengeIdentity): Promise<string> {
   const token = await accessToken();
+
+  const params = new URLSearchParams();
+  if (identity?.displayName) params.set('name', identity.displayName);
+  if (identity?.gender) params.set('gender', identity.gender);
+  const query = params.toString();
+  const path = query
+    ? `/api/verification/challenge?${query}`
+    : '/api/verification/challenge';
+
   let response: Response;
   try {
-    response = await fetch('/api/verification/challenge', {
+    response = await fetch(path, {
       headers: { Authorization: `Bearer ${token}` },
     });
   } catch {

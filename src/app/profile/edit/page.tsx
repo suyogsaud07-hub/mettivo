@@ -1135,6 +1135,7 @@ export default function EditProfileWizardPage() {
       {showVerification && (
         <FaceVoiceVerificationModal
           gender={formData.gender as VerificationGender}
+          displayName={formData.displayName || null}
           onCancel={() => setShowVerification(false)}
           onVerified={(capturedSelfie) => {
             setSelfieUrl(capturedSelfie);
