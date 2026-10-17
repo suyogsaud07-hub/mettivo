@@ -1,20 +1,18 @@
 import { NextResponse } from 'next/server';
 import { logger } from '@/lib/logger';
-import { isAuthorisedBearer } from '@/lib/moderation/dispatch';
 import { runModerationScanBatch } from '@/lib/moderation/worker';
 
 /**
  * M21 — the AI moderation scan worker endpoint.
  *
- * POST, no body. Claims queued content scans, classifies them with the
- * configured model, and records verdicts. Intended to be called by a scheduler
- * (Vercel Cron, an external cron, a `curl` from an operator), never by a member.
+ * GET, because the scheduler is the Vercel Cron in `vercel.json`, and Vercel
+ * invokes a cron path with a GET request. The previous POST-only handler
+ * answered the cron with a 405, which Vercel surfaced as ERR_INVALID_RESPONSE.
  *
  * AUTHORISATION
- *   A shared `MODERATION_DISPATCH_SECRET`, presented as a bearer token. With no
- *   secret configured the endpoint is DISABLED (503) rather than open, so a
- *   forgotten environment variable can never expose the worker. The same secret
- *   lives only on the server; the browser never sees it.
+ *   Vercel presents `Authorization: Bearer $CRON_SECRET` when `CRON_SECRET` is
+ *   set. With no secret configured the endpoint is DISABLED (503) rather than
+ *   open, so a forgotten environment variable can never expose the worker.
  *
  * This handler runs on the server only, which is why it may read `process.env`
  * literally (the secrets scanner in `tests/security/security.test.ts` excludes
@@ -23,13 +21,13 @@ import { runModerationScanBatch } from '@/lib/moderation/worker';
 
 export const dynamic = 'force-dynamic';
 
-function readDispatchSecret(): string | null {
-  const value = (process.env.MODERATION_DISPATCH_SECRET ?? '').trim();
+function readCronSecret(): string | null {
+  const value = (process.env.CRON_SECRET ?? '').trim();
   return value || null;
 }
 
-export async function POST(request: Request): Promise<NextResponse> {
-  const secret = readDispatchSecret();
+export async function GET(request: Request): Promise<NextResponse> {
+  const secret = readCronSecret();
   if (!secret) {
     return NextResponse.json(
       { error: 'disabled', message: 'The moderation worker is not configured.' },
@@ -37,7 +35,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
-  if (!isAuthorisedBearer(request, secret)) {
+  if (request.headers.get('authorization') !== `Bearer ${secret}`) {
     logger.warn('moderation.scan_unauthorised', 'Rejected an unauthorised scan request.');
     return NextResponse.json({ error: 'unauthorised' }, { status: 401 });
   }
@@ -51,7 +49,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       failed: result.failed,
       skipped: result.skipped,
     });
-    return NextResponse.json(result, { status: 200 });
+    return NextResponse.json({ ok: true, result }, { status: 200 });
   } catch (error) {
     logger.error('moderation.scan_failed', 'Scan batch failed.', {
       errorName: error instanceof Error ? error.name : 'unknown',

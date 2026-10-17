@@ -150,31 +150,17 @@ export default function ChatListPage() {
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  width: '40px',
-                  height: '40px',
+                  width: '44px',
+                  height: '44px',
                   borderRadius: '50%',
                   backgroundColor: '#D4B18A',
                   color: '#17121C',
                   flexShrink: 0,
+                  fontSize: '20px',
+                  lineHeight: 1,
                 }}
               >
-                <svg
-                  width="22"
-                  height="22"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <rect x="4" y="8" width="16" height="12" rx="3" />
-                  <path d="M12 8V4" />
-                  <circle cx="12" cy="3" r="1.4" fill="currentColor" stroke="none" />
-                  <circle cx="9" cy="14" r="1.2" fill="currentColor" stroke="none" />
-                  <circle cx="15" cy="14" r="1.2" fill="currentColor" stroke="none" />
-                  <path d="M9 17.5h6" />
-                </svg>
+                ✨
               </span>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <p style={{ margin: 0, fontSize: '14px', fontWeight: 700, color: '#F2E9E4' }}>
