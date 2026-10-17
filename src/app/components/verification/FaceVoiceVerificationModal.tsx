@@ -141,7 +141,7 @@ export default function FaceVoiceVerificationModal({
 
   const startRecording = () => {
     const stream = streamRef.current;
-    if (!stream) {
+    if (!stream || stream.getAudioTracks().length === 0) {
       setError('The microphone is not available.');
       return;
     }
@@ -169,7 +169,11 @@ export default function FaceVoiceVerificationModal({
       audioContextRef.current = null;
     }
 
-    const recorder = new MediaRecorder(stream);
+    // Record only the audio tracks: recording the combined camera+audio stream
+    // yields a `video/webm` blob, whose data URL fails the server's `data:audio/`
+    // prefix check (and uploads a needless video frame per attempt).
+    const audioStream = new MediaStream(stream.getAudioTracks());
+    const recorder = new MediaRecorder(audioStream);
     chunksRef.current = [];
     recorder.ondataavailable = (event) => {
       if (event.data.size > 0) chunksRef.current.push(event.data);

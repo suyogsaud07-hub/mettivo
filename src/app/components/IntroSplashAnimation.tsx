@@ -23,13 +23,16 @@ import Logo from '@/components/Logo';
  *   the wordmark belongs to the page this curtain lifts onto anyway.
  *
  * WHEN IT PLAYS, AND WHY IT CAN BE SKIPPED
- *   Every full load of the app. There is no `sessionStorage` / `localStorage`
- *   flag: the intro is not cached or suppressed. Because this component lives in
- *   the root layout, it runs on the first paint of any entry point — the landing
- *   page or a deep link such as `/chat/...` — and does NOT re-run on client-side
- *   navigation, where the layout is preserved rather than remounted. A visible
- *   Skip control is present from the first frame, because a multi-second
- *   unskippable overlay is hostile on a repeat visit.
+ *   ONCE per app launch. A `sessionStorage` flag (`splash_played`) records that
+ *   the curtain has already played in this tab: a reload keeps the flag and the
+ *   intro is skipped, while closing the tab clears it and the next launch plays
+ *   it again — the native-app "intro on cold start" behaviour. Because this
+ *   component lives in the root layout, it runs on the first paint of any entry
+ *   point — the landing page or a deep link such as `/chat/...` — and does NOT
+ *   re-run on client-side navigation, where the layout is preserved rather than
+ *   remounted. A visible Skip control is present from the first frame, because a
+ *   multi-second unskippable overlay is hostile on a repeat visit; skipping also
+ *   records the flag so the intro does not replay on the next reload.
  *
  * REDUCED MOTION IS A HARD GATE, NOT A POLISH ITEM
  *   A full-screen sweeping animation is exactly the pattern that triggers
@@ -48,6 +51,13 @@ const T = {
   lockup: 2.9,
   end: 3.4,
 } as const;
+
+/**
+ * Marks that the intro has played in this tab. `sessionStorage` survives a
+ * reload but is cleared when the tab is closed, which is exactly "once per app
+ * launch" — the native-app convention.
+ */
+const SPLASH_PLAYED_KEY = 'splash_played';
 
 /** Fluid, symmetric easing — reads as a drawn sweep rather than a machine. */
 const EASE = [0.65, 0, 0.35, 1] as const;
@@ -229,6 +239,15 @@ export default function IntroSplashAnimation({
 
   const finish = useCallback(() => {
     setIsVisible(false);
+    // The curtain has been seen (or skipped). Record it for this tab so a
+    // reload reveals the app immediately instead of replaying the intro.
+    if (typeof window !== 'undefined') {
+      try {
+        window.sessionStorage.setItem(SPLASH_PLAYED_KEY, 'true');
+      } catch {
+        // Private mode / storage disabled: the intro simply plays again.
+      }
+    }
     onDone?.();
   }, [onDone]);
 
@@ -245,15 +264,28 @@ export default function IntroSplashAnimation({
     // way — and keeps the first client render (`null`, undecided) identical to
     // the server's.
     const decide = () => {
-      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-        // Reveal immediately: the timeline is never mounted, so no frames are
-        // committed and no work is done.
+      // Already played in this tab: this is a reload, not a cold start. Reveal
+      // the app immediately without mounting the timeline.
+      let alreadyPlayed = false;
+      try {
+        alreadyPlayed = window.sessionStorage.getItem(SPLASH_PLAYED_KEY) === 'true';
+      } catch {
+        // Private mode / storage disabled: treat as a first launch.
+        alreadyPlayed = false;
+      }
+      if (alreadyPlayed) {
         setIsVisible(false);
         return;
       }
 
-      // Always play. There is no "already seen" check — the intro runs on every
-      // full load of the app.
+      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        // Reveal immediately: the timeline is never mounted, so no frames are
+        // committed and no work is done. The flag is deliberately NOT set here:
+        // reduced motion should short-circuit every launch, not just the first.
+        setIsVisible(false);
+        return;
+      }
+
       setIsVisible(true);
 
       // Scene cues as timers rather than an animation-complete chain, so the

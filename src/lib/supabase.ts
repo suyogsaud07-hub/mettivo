@@ -32,4 +32,15 @@ if (!supabaseUrl || !supabaseAnonKey) {
   throw new Error('Missing Supabase environment variables. Check your .env.local file.');
 }
 
-export const supabase = createBrowserClient(supabaseUrl, supabaseAnonKey);
+// Persist and refresh the session explicitly. `createBrowserClient` keeps the
+// session in cookies (see above), so it is shared with the middleware and the
+// OAuth callback; these flags state that intent rather than relying on library
+// defaults, so a reload or an app restart resumes the session instead of
+// bouncing the member back to /auth.
+export const supabase = createBrowserClient(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true,
+  },
+});

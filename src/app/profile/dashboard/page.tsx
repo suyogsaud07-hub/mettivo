@@ -381,6 +381,9 @@ export default function ProfileDashboardPage() {
   };
 
   const openEditor = (key: EditableKey) => {
+    // The visitor preview is strictly read-only: never open an editor sheet
+    // from it, even if a stray handler fires.
+    if (viewAs) return;
     if (!profile) return;
     setEditorError(null);
     setSaving(false);
@@ -810,7 +813,9 @@ export default function ProfileDashboardPage() {
     chipWrap: { display: 'flex', flexWrap: 'wrap' as const, gap: '8px' },
     chip: { backgroundColor: '#241C2C', color: '#D8B38A', border: '1px solid #4A1828', borderRadius: '20px', padding: '8px 14px', fontSize: '13px', fontWeight: 600 },
     emptyText: { fontSize: '13px', color: '#B58A83' },
-    bioText: { fontSize: '14px', color: '#EAE2F0', lineHeight: 1.6, margin: 0 },
+    bioText: { fontSize: '14px', color: '#EAE2F0', lineHeight: 1.6, margin: 0, textAlign: 'center' as const },
+    bioWrap: { display: 'flex', flexDirection: 'column' as const, alignItems: 'center', gap: '14px' },
+    bioEditBtn: { display: 'flex', alignItems: 'center', gap: '6px', background: 'none', border: '1px solid #D8B38A', color: '#D8B38A', borderRadius: '20px', padding: '6px 16px', fontSize: '12px', fontWeight: 700, cursor: 'pointer' },
     postsHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '0 20px 16px 20px' },
     postsHeaderTitle: { fontSize: '15px', fontWeight: 700, color: '#EAE2F0' },
     newPostBtn: { background: 'linear-gradient(135deg, #D8B38A, #C78C8D)', color: '#131017', border: 'none', borderRadius: '20px', padding: '10px 18px', fontSize: '13px', fontWeight: 700, cursor: 'pointer' },
@@ -1078,7 +1083,12 @@ export default function ProfileDashboardPage() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           {!viewAs && (
             <ProfileActionMenu
-              onViewAs={() => setViewAs(true)}
+              onViewAs={() => {
+                // Entering the preview must not leave an owner editor open.
+                closeEditor();
+                setStatusOpen(false);
+                setViewAs(true);
+              }}
               onSearch={() => setSearchOpen(true)}
               onProfileStatus={openStatus}
               onArchive={() => setArchiveOpen(true)}
@@ -1140,22 +1150,33 @@ export default function ProfileDashboardPage() {
       )}
 
       <div style={styles.section}>
-        <div style={styles.sectionHeader}>
-          <div style={styles.sectionIcon}>📝</div>
-          <div style={styles.sectionTitle}>Bio</div>
+        <div style={styles.bioWrap}>
+          {profile.bio?.trim() ? (
+            <p style={styles.bioText}>{profile.bio}</p>
+          ) : (
+            <div style={styles.emptyText}>No bio added yet.</div>
+          )}
+          {!viewAs && (
+            <button
+              type="button"
+              onClick={() => openEditor('bio')}
+              style={styles.bioEditBtn}
+              aria-label="Edit Bio"
+              data-testid="bio-edit-button"
+            >
+              <span aria-hidden="true">✏️</span> Edit
+            </button>
+          )}
         </div>
-        {profile.bio?.trim() ? (
-          <p style={styles.bioText}>{profile.bio}</p>
-        ) : (
-          <div style={styles.emptyText}>No bio added yet.</div>
-        )}
       </div>
 
-      <div style={styles.progressCard}>
-        <svg style={styles.progressCircle} viewBox="0 0 50 50"><circle cx="25" cy="25" r={radius} fill="none" stroke="#34283F" strokeWidth="4" /><circle cx="25" cy="25" r={radius} fill="none" stroke="#D8B38A" strokeWidth="4" strokeDasharray={circumference} strokeDashoffset={strokeDashoffset} strokeLinecap="round" transform="rotate(-90 25 25)" /><text x="25" y="28" textAnchor="middle" fill="#EAE2F0" fontSize="10" fontWeight="bold">{completionPercentage}%</text></svg>
-        <div style={styles.progressText}><div style={styles.progressTitle}>Complete your profile</div><div style={styles.progressSubtitle}>Add more info to attract matches</div></div>
-        <button style={styles.completeBtn} onClick={() => router.push('/profile/edit')}>Complete</button>
-      </div>
+      {!viewAs && (
+        <div style={styles.progressCard}>
+          <svg style={styles.progressCircle} viewBox="0 0 50 50"><circle cx="25" cy="25" r={radius} fill="none" stroke="#34283F" strokeWidth="4" /><circle cx="25" cy="25" r={radius} fill="none" stroke="#D8B38A" strokeWidth="4" strokeDasharray={circumference} strokeDashoffset={strokeDashoffset} strokeLinecap="round" transform="rotate(-90 25 25)" /><text x="25" y="28" textAnchor="middle" fill="#EAE2F0" fontSize="10" fontWeight="bold">{completionPercentage}%</text></svg>
+          <div style={styles.progressText}><div style={styles.progressTitle}>Complete your profile</div><div style={styles.progressSubtitle}>Add more info to attract matches</div></div>
+          <button style={styles.completeBtn} onClick={() => router.push('/profile/edit')}>Complete</button>
+        </div>
+      )}
 
       <ProfileTabs active={activeTab} onChange={setActiveTab} />
 
@@ -1218,7 +1239,7 @@ export default function ProfileDashboardPage() {
             personality: profile.personality,
             hobbies: profile.hobbies,
           }}
-          onEdit={openEditor}
+          onEdit={viewAs ? undefined : openEditor}
           contact={{ email: userEmail, phone }}
         />
       )}

@@ -69,7 +69,6 @@ interface InfoRowConfig {
 
 export default function ProfileDetails({ data, onEdit, contact }: ProfileDetailsProps) {
   const aboutRows: InfoRowConfig[] = [
-    { icon: '📝', label: 'Bio', value: data.bio?.trim() || 'No bio added yet.', key: 'bio' },
     {
       icon: '🎂',
       label: 'Age',
