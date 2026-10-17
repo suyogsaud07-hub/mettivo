@@ -8,6 +8,7 @@ import HeaderLanguageDropdown from '@/app/components/HeaderLanguageDropdown';
 import MobileDrawer from '@/app/components/MobileDrawer';
 import RibbonLogo from '@/app/components/RibbonLogo';
 import FounderLetterLink from '@/app/components/FounderLetterLink';
+import DonationSection from '@/components/landing/DonationSection';
 
 /**
  * The public landing page — rebuilt as the Mettivo "Midnight Romance"
@@ -106,6 +107,9 @@ export default function LandingPage() {
 
             <InstallButton />
           </div>
+
+          {/* Donation / support section, directly below the download CTA. */}
+          <DonationSection />
         </div>
       </main>
 
