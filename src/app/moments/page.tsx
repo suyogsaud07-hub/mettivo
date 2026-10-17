@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import MobileNav from '../components/layout/MobileNav';
 import MomentCard from '../components/moments/MomentCard';
@@ -81,6 +81,26 @@ export default function MomentsPage() {
     [currentUserId]
   );
 
+  // The realtime subscription below is installed once, on mount. Reading the
+  // current tab, tag and loader through refs keeps its callback from closing
+  // over the mount-time values, which would reset the feed to "For You" on any
+  // insert (and use a loader that does not yet know the member's id).
+  const activeTabRef = useRef(activeTab);
+  const activeTagRef = useRef(activeTag);
+  const loadFeedRef = useRef(loadFeed);
+
+  useEffect(() => {
+    activeTabRef.current = activeTab;
+  }, [activeTab]);
+
+  useEffect(() => {
+    activeTagRef.current = activeTag;
+  }, [activeTag]);
+
+  useEffect(() => {
+    loadFeedRef.current = loadFeed;
+  }, [loadFeed]);
+
   // Identify the member, then load the feed and subscribe to new posts.
   useEffect(() => {
     let cancelled = false;
@@ -105,7 +125,7 @@ export default function MomentsPage() {
       setRestrictions(await fetchMyRestrictions());
 
       unsubscribe = subscribeToMoments(() => {
-        void loadFeed(activeTab, activeTag);
+        void loadFeedRef.current(activeTabRef.current, activeTagRef.current);
       });
     };
 
@@ -115,9 +135,9 @@ export default function MomentsPage() {
       cancelled = true;
       if (unsubscribe) unsubscribe();
     };
-    // Subscribing once per mount is intentional: the callback re-reads the
-    // current tab through a ref-free closure by reloading on every insert.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Subscribing once per mount is intentional: the callback reads the current
+    // tab, tag and loader through refs, so a realtime insert reloads what the
+    // member is actually looking at rather than the mount-time view.
   }, [router]);
 
   useEffect(() => {

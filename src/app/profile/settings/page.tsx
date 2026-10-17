@@ -16,7 +16,7 @@ import {
   downloadDataExport,
   exportMyData,
 } from '@/lib/privacy';
-import { PreferencesError } from '@/lib/preferences';
+import { PreferencesError, saveInterfaceLanguage } from '@/lib/preferences';
 import { TRANSLATION_LANGUAGE_OPTIONS } from '@/lib/translation';
 import { usePreferredTranslationLanguage } from '@/app/components/chat/usePreferredTranslationLanguage';
 import { AvatarError, saveAvatar } from '@/lib/avatar';
@@ -247,6 +247,10 @@ export default function SettingsPage() {
     changeLanguage(code);
     setIsLangModalOpen(false);
     setLangQuery('');
+    void saveInterfaceLanguage(code).catch((err) => {
+      console.error('[settings] interface language save failed:', err);
+      showToast('Could not save your language preference.', 'error');
+    });
   };
 
   // --- M15: data-subject rights ---------------------------------------------
@@ -329,10 +333,6 @@ export default function SettingsPage() {
 
       {/* Top Group */}
       <div style={styles.group}>
-        <div style={styles.row} onClick={() => alert('Switch Mode coming soon!')}>
-          <span style={styles.rowLabel}>Switch Mode</span>
-          <span style={styles.chevron}>›</span>
-        </div>
         <div style={styles.row} data-testid="settings-edit-profile" onClick={() => setSheet('edit')}>
           <span style={styles.rowLabel}>Edit Profile</span>
           <span style={styles.chevron}>›</span>

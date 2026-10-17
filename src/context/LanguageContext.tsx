@@ -4,11 +4,13 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useSyncExternalStore,
   type ReactNode,
 } from 'react';
 import { translations, type Language, type TranslationKey } from '@/lib/translations';
+import { fetchInterfaceLanguage } from '@/lib/preferences';
 
 const STORAGE_KEY = 'mettivo_language';
 const DEFAULT_LANGUAGE: Language = 'en';
@@ -97,6 +99,31 @@ const LanguageContext = createContext<LanguageContextProps | undefined>(undefine
 
 export function LanguageProvider({ children }: { children: ReactNode }) {
   const language = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+
+  // Restore the account-scoped interface language once, on mount. A language
+  // explicitly chosen on this device already wins (it is in localStorage), so
+  // this only hydrates a fresh device from the member's stored preference.
+  useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      const remote = await fetchInterfaceLanguage();
+      if (cancelled || !remote || !isLanguage(remote)) return;
+
+      let hasLocalChoice = false;
+      try {
+        hasLocalChoice = window.localStorage.getItem(STORAGE_KEY) !== null;
+      } catch {
+        hasLocalChoice = false;
+      }
+
+      if (!hasLocalChoice) setLanguagePreference(remote);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const changeLanguage = useCallback((lang: Language) => {
     setLanguagePreference(lang);

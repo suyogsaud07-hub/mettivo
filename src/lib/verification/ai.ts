@@ -425,9 +425,20 @@ export async function transcribeVoice(
     ? 'whisper-large-v3-turbo' 
     : env.transcribeModel;
 
+  // Groq infers the container from the file, not the Content-Type alone, so a
+  // Safari `audio/mp4` recording uploaded as `voice.webm` is rejected. Derive the
+  // extension from the blob's actual media type.
+  const extension = blob.type.includes('mp4') || blob.type.includes('m4a')
+    ? 'mp4'
+    : blob.type.includes('ogg')
+      ? 'ogg'
+      : blob.type.includes('wav')
+        ? 'wav'
+        : 'webm';
+
   const form = new FormData();
   form.append('model', model);
-  form.append('file', blob, 'voice.webm');
+  form.append('file', blob, `voice.${extension}`);
 
   const response = await fetchWithRetry(fetchImpl, `${env.baseUrl}/audio/transcriptions`, {
     method: 'POST',

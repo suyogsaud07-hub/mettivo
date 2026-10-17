@@ -220,7 +220,11 @@ export default function FaceVoiceVerificationModal({
       const audioUrl = await blobToDataUrl(blob);
       const pitchHz = Math.round(median(pitchSamplesRef.current));
 
-      if (!pitchMatchesGender(gender, pitchHz)) {
+      // Pitch is advisory (see `pitch.ts`): `median([])` is 0 when the analyser
+      // never produced a sample, so only consult it when a voice was measured.
+      // Rejecting on a missing measurement would dead-end a valid recording; the
+      // server's speech-to-text check stays the authoritative gate.
+      if (pitchHz > 0 && !pitchMatchesGender(gender, pitchHz)) {
         setError('That voice did not match your selected gender. Please try again.');
         return;
       }

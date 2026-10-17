@@ -7,6 +7,7 @@ import MobileNav from '../components/layout/MobileNav';
 import IntentionBadge from '../components/profile/IntentionBadge';
 import FollowButton from '../components/profile/FollowButton';
 import { recordLike, LikeError } from '@/lib/likes';
+import { fetchMyFollowingIds } from '@/lib/follows';
 import { blockMember, BlockingError } from '@/lib/blocking';
 import { fetchDiscoveryCandidates, rankDiscovery } from '@/lib/discovery';
 
@@ -55,6 +56,7 @@ export default function DiscoverPage() {
   const [decisionPending, setDecisionPending] = useState<string | null>(null);
   const [matchNotice, setMatchNotice] = useState<{ name: string } | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [followingIds, setFollowingIds] = useState<Set<string>>(new Set());
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
 
@@ -116,6 +118,10 @@ export default function DiscoverPage() {
           is_online: profile.online,
         }))
       );
+
+      // Hydrate the per-card Follow state so an already-followed member is not
+      // mislabelled "Follow" on every load.
+      setFollowingIds(await fetchMyFollowingIds());
     } catch (err) {
       console.error('[discover] failed to load candidates:', err);
       setActionError(
@@ -347,7 +353,7 @@ export default function DiscoverPage() {
 
               {/* M10: like / pass. M18: follow, without leaving the feed. */}
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <FollowButton targetUserId={profile.id} />
+                <FollowButton targetUserId={profile.id} initialFollowing={followingIds.has(profile.id)} />
                 <button
                   type="button"
                   aria-label={`Pass on ${profile.display_name}`}

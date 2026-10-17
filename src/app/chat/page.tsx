@@ -126,6 +126,69 @@ export default function ChatListPage() {
         <h1 style={{ fontSize: '20px', fontWeight: 700, margin: 0 }}>Messages</h1>
       </header>
 
+      {/* Subbu is pinned above every human conversation. It is not a match and
+          has no `match_id` — the row links to the local-state room at
+          `/chat/subbu`, which calls `/api/bot/chat` for each turn. */}
+      <ul style={{ listStyle: 'none', margin: 0, padding: '20px 20px 0' }}>
+        <li>
+          <Link
+            href="/chat/subbu"
+            style={{
+              display: 'block',
+              backgroundColor: '#1C1822',
+              border: '1px solid #3A2E44',
+              borderRadius: '16px',
+              padding: '16px',
+              textDecoration: 'none',
+              color: '#F2E9E4',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <span
+                aria-hidden="true"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: '40px',
+                  height: '40px',
+                  borderRadius: '50%',
+                  backgroundColor: '#D4B18A',
+                  color: '#17121C',
+                  fontSize: '16px',
+                  fontWeight: 700,
+                }}
+              >
+                S
+              </span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <p style={{ margin: 0, fontSize: '14px', fontWeight: 700, color: '#F2E9E4' }}>
+                    Subbu
+                  </p>
+                  <span
+                    style={{
+                      backgroundColor: '#3A2E44',
+                      color: '#D4B18A',
+                      borderRadius: '8px',
+                      padding: '1px 6px',
+                      fontSize: '10px',
+                      fontWeight: 700,
+                      letterSpacing: '0.04em',
+                    }}
+                  >
+                    AI
+                  </span>
+                </div>
+                <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: '#B58A83' }}>
+                  Your AI assistant — ask me anything
+                </p>
+              </div>
+            </div>
+          </Link>
+        </li>
+      </ul>
+
       {loading ? (
         <p style={{ padding: '24px 20px', color: '#B58A83', fontSize: '14px' }}>
           Loading conversations...

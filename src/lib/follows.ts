@@ -115,6 +115,37 @@ export async function isFollowing(targetUserId: string): Promise<boolean> {
 }
 
 /**
+ * Every member the signed-in member follows, as an id set.
+ *
+ * For surfaces that render many follow toggles at once (the Discover feed) a
+ * per-candidate query is wasteful, so this hydrates them in one read. A failure
+ * degrades to an empty set — the same "show Follow" fallback as `isFollowing`.
+ */
+export async function fetchMyFollowingIds(): Promise<Set<string>> {
+  try {
+    const me = await requireUserId();
+    const { data, error } = await supabase
+      .from('follows')
+      .select('following_id')
+      .eq('follower_id', me);
+
+    if (error || !data) {
+      if (error) console.error('[follows] following list failed:', error.message);
+      return new Set();
+    }
+
+    return new Set(
+      data
+        .map((row) => row.following_id)
+        .filter((id): id is string => typeof id === 'string')
+    );
+  } catch (err) {
+    console.error('[follows] following list failed:', err);
+    return new Set();
+  }
+}
+
+/**
  * The match id shared with `targetUserId`, or `null` when there is none.
  *
  * A match is a cross-gender connection (a reciprocal follow or a mutual like),

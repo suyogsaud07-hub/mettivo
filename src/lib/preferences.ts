@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import { DEFAULT_TRANSLATION_LANGUAGE, normaliseLanguageCode } from '@/lib/translation';
+import { isLocaleCode } from '@/lib/locales';
 
 /**
  * M17 — the member's translation preference, client side.
@@ -121,6 +122,82 @@ export async function savePreferredTranslationLanguage(code: string): Promise<vo
 
   if (error) {
     console.error('[preferences] save failed:', error.message);
+    throw new PreferencesError(
+      `We could not save your language preference: ${error.message}`,
+      error.code
+    );
+  }
+}
+
+/**
+ * The member's chosen interface (UI) language, or `null` when there is no
+ * session or nothing has been stored yet.
+ *
+ * Soft-fails like `fetchPreferredTranslationLanguage`: a member who has never
+ * opened Settings has no row, which is normal, and a transient read error must
+ * not stop the app from rendering.
+ */
+export async function fetchInterfaceLanguage(): Promise<string | null> {
+  try {
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) return null;
+
+    const { data, error } = await supabase
+      .from('user_preferences')
+      .select('interface_language')
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    if (error) {
+      console.error('[preferences] interface language load failed:', error.message);
+      return null;
+    }
+
+    const value =
+      typeof data === 'object' && data !== null && !Array.isArray(data)
+        ? (data as Record<string, unknown>).interface_language
+        : null;
+
+    return typeof value === 'string' && isLocaleCode(value) ? value : null;
+  } catch (err) {
+    console.error('[preferences] interface language load threw:', err);
+    return null;
+  }
+}
+
+/**
+ * Stores the member's chosen interface language.
+ *
+ * Upsert keyed on `user_id`, like the translation preference: the row may not
+ * exist yet, and a bare `update()` would report success on zero rows.
+ */
+export async function saveInterfaceLanguage(code: string): Promise<void> {
+  if (!isLocaleCode(code)) {
+    throw new PreferencesError('Choose a language Mettivo supports.');
+  }
+
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
+
+  if (userError || !user) {
+    throw new PreferencesError(
+      'You need to be signed in to save your language preference.',
+      userError?.code
+    );
+  }
+
+  const { error } = await supabase
+    .from('user_preferences')
+    .upsert({ user_id: user.id, interface_language: code }, { onConflict: 'user_id' });
+
+  if (error) {
+    console.error('[preferences] interface language save failed:', error.message);
     throw new PreferencesError(
       `We could not save your language preference: ${error.message}`,
       error.code
