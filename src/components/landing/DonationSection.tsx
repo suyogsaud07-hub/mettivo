@@ -105,7 +105,7 @@ export default function DonationSection() {
       return;
     }
     if (!amountIsValid) {
-      setError(`Please enter an amount between €${AMOUNT_MIN} and €${AMOUNT_MAX}.`);
+      setError(`Please enter an amount between ${symbol}${AMOUNT_MIN} and ${symbol}${AMOUNT_MAX}.`);
       inputRef.current?.focus();
       return;
     }
@@ -140,7 +140,7 @@ export default function DonationSection() {
     } finally {
       setIsLoading(false);
     }
-  }, [currency, frequency, amountIsValid, effectiveAmount]);
+  }, [currency, frequency, amountIsValid, effectiveAmount, symbol]);
 
   const reset = () => {
     setSelectedAmount(null);
