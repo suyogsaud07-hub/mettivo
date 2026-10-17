@@ -6,7 +6,6 @@ export const dynamic = 'force-dynamic';
 
 type PhraseGender = 'Woman' | 'Man' | 'Nonbinary';
 
-/** Accepts the wizard's gender value (or a loose synonym) as a phrase gender. */
 function normaliseGender(value: string | null): PhraseGender | null {
   if (!value) return null;
   const g = value.trim().toLowerCase();
@@ -23,9 +22,6 @@ export async function GET(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: 'unauthorised' }, { status: 401 });
   }
 
-  // The wizard sends the name and gender it already holds, because onboarding
-  // runs this step BEFORE the profile row is saved: a database read would be
-  // empty and the phrase would fall back to "friend"/"nonbinary".
   const params = new URL(request.url).searchParams;
   const nameParam = params.get('name')?.trim() || null;
   const suppliedGender = normaliseGender(params.get('gender'));
@@ -33,16 +29,13 @@ export async function GET(request: Request): Promise<NextResponse> {
   let displayName: string | null = nameParam;
   let gender: PhraseGender = suppliedGender ?? 'Nonbinary';
 
-  // Only ask the database for whichever value the query string did not supply.
   if (!nameParam || !suppliedGender) {
     const token = bearerToken(request);
-
     try {
-      // Fetch using the USER'S TOKEN, not the anon key
       const res = await fetch(`${env.supabaseUrl}/rest/v1/profiles?id=eq.${userId}&select=display_name,gender`, {
         headers: {
           apikey: env.anonKey,
-          Authorization: `Bearer ${token}`, // This is the fix
+          Authorization: `Bearer ${token}`,
         },
       });
 

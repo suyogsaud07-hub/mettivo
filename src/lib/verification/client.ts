@@ -131,6 +131,9 @@ export interface ChallengeIdentity {
 export async function fetchChallenge(identity?: ChallengeIdentity): Promise<string> {
   const token = await accessToken();
 
+  // DEBUGGING LOG: Open your browser console. Look at what is printed here.
+  console.log('[Client] fetchChallenge received identity:', identity);
+
   const params = new URLSearchParams();
   if (identity?.displayName) params.set('name', identity.displayName);
   if (identity?.gender) params.set('gender', identity.gender);
