@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { buildChallengePhrase } from '@/lib/verification/phrase';
-import { getUserIdFromRequest, readAuthEnv } from '@/lib/verification/server-auth';
+import { bearerToken, getUserIdFromRequest, readAuthEnv } from '@/lib/verification/server-auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -10,12 +10,16 @@ export async function GET(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: 'unauthorised' }, { status: 401 });
   }
 
-  // Get the user's profile to construct the phrase
+  // Get the user's profile to construct the phrase. The REST call must present
+  // the caller's own JWT, not the anon key: `profiles` is RLS-gated `to
+  // authenticated`, so an anon read returns zero rows and the phrase would lose
+  // the member's name and gender.
   const env = readAuthEnv();
+  const accessToken = bearerToken(request) ?? env.anonKey;
   const profileRes = await fetch(`${env.supabaseUrl}/rest/v1/profiles?id=eq.${userId}&select=display_name,gender`, {
     headers: {
       apikey: env.anonKey,
-      Authorization: `Bearer ${env.anonKey}`,
+      Authorization: `Bearer ${accessToken}`,
     },
   });
 
