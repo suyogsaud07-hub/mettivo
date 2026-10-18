@@ -8,6 +8,7 @@ import HeaderLanguageDropdown from '@/app/components/HeaderLanguageDropdown';
 import MobileDrawer from '@/app/components/MobileDrawer';
 import RibbonLogo from '@/app/components/RibbonLogo';
 import FounderLetterLink from '@/app/components/FounderLetterLink';
+import AnimatedHero from '@/components/hero/AnimatedHero';
 
 /**
  * The public landing page — rebuilt as the Mettivo "Midnight Romance"
@@ -28,7 +29,25 @@ export default function LandingPage() {
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   return (
-    <div className="min-h-screen flex flex-col overflow-x-hidden bg-[#17121C] text-[#F2E9E4] font-sans antialiased">
+    <div className="relative isolate min-h-screen flex flex-col overflow-x-hidden bg-[#17121C] text-[#F2E9E4] font-sans antialiased">
+      {/*
+        Background layer for the AnimatedHero.
+
+        `absolute inset-0` fills the whole page (the root is `relative isolate`,
+        which pins this layer to the page box and keeps the negative z-index
+        inside this stacking context so it can't slip behind the <body>
+        background). `-z-10` tucks it behind the nav, main and footer, and
+        `pointer-events-none` means it never intercepts a click on the CTAs.
+        `bg-[#0a0a0a]` is the hero's pure-black backdrop. `aria-hidden` keeps the
+        decorative art out of the accessibility tree.
+      */}
+      <div
+        className="absolute inset-0 -z-10 pointer-events-none bg-[#0a0a0a]"
+        aria-hidden="true"
+      >
+        <AnimatedHero className="h-full w-full" showReplay={false} />
+      </div>
+
       {/* ============================== TOP NAV ============================== */}
       <nav className="fixed top-0 left-0 right-0 z-50">
         <div className="max-w-7xl mx-auto px-6 md:px-10 py-5">

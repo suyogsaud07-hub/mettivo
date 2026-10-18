@@ -40,8 +40,8 @@ const GEOCODE_TIMEOUT_MS = 8_000;
 
 /** The two columns this hook needs, kept narrow (M15 revoked `select *`). */
 interface ProfileLocationRow {
-  current_location: string | null;
-  last_location_check: string | null;
+  current_location?: string | null;
+  last_location_check?: string | null;
 }
 
 export interface UseLocationVerificationResult {
@@ -201,7 +201,15 @@ export function useLocationVerification(
         if (!data) return; // No profile row yet (still onboarding).
 
         const row = data as ProfileLocationRow;
-        storedLocationRef.current = row.current_location;
+        storedLocationRef.current = row.current_location ?? null;
+
+        // The read did not carry the location columns at all — the M28
+        // migration is not applied yet, or the row shape predates the feature.
+        // An explicit `null` (column present but never checked) still prompts;
+        // an absent key does not, so a half-rolled-out schema never nags.
+        if (row.last_location_check === undefined) {
+          return;
+        }
 
         if (!isLocationCheckStale(row.last_location_check)) {
           return; // Confirmed within the last 5 days.

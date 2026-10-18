@@ -320,6 +320,24 @@ export async function stubBrowserMedia(page: Page): Promise<void> {
     canvas.getContext('2d')?.fillRect(0, 0, canvas.width, canvas.height);
     const cameraStream = canvas.captureStream(5);
 
+    // `canvas.captureStream()` yields a VIDEO-ONLY stream, but the modal refuses
+    // to record without an audio track, and it wraps the audio tracks in
+    // `new MediaStream(...)`, which rejects anything that is not a genuine
+    // `MediaStreamTrack`. So build a real (silent) audio track from a native
+    // AudioContext + MediaStreamDestination — done BEFORE `AudioContext` is
+    // replaced by the analyser fake below.
+    try {
+      const micContext = new AudioContext();
+      const destination = micContext.createMediaStreamDestination();
+      const oscillator = micContext.createOscillator();
+      oscillator.connect(destination);
+      oscillator.start();
+      const [audioTrack] = destination.stream.getAudioTracks();
+      if (audioTrack) cameraStream.addTrack(audioTrack);
+    } catch {
+      // Fall through: the modal will surface "The microphone is not available."
+    }
+
     Object.defineProperty(navigator, 'mediaDevices', {
       configurable: true,
       value: { getUserMedia: async () => cameraStream },

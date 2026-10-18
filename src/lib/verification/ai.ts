@@ -232,7 +232,8 @@ async function callVision(
   userText: string,
   imageUrls: string[],
   env: VerificationEnv,
-  fetchImpl: typeof fetch
+  fetchImpl: typeof fetch,
+  throwOnFailure = false
 ): Promise<Record<string, unknown> | null> {
   if (!env.apiKey) {
     console.error('[verification.ai] vision blocked: AI_MODERATION_API_KEY is not configured');
@@ -271,12 +272,27 @@ async function callVision(
     },
     'vision chat/completions'
   );
-  if (!response) return null;
+  if (!response) {
+    // Both attempts failed at the transport layer (network error or 60 s abort).
+    if (throwOnFailure) {
+      throw new VerificationUpstreamError(
+        'The AI provider could not be reached (network error or timeout).'
+      );
+    }
+    return null;
+  }
   if (!response.ok) {
     const errorBody = await response.text().catch(() => '');
     console.error(
       `[verification.ai] vision chat/completions returned ${response.status}: ${errorBody.slice(0, 500)}`
     );
+    if (throwOnFailure) {
+      const detail = errorBody.trim().slice(0, 200);
+      throw new VerificationUpstreamError(
+        `The AI provider returned HTTP ${response.status}${detail ? `: ${detail}` : ''}.`,
+        response.status
+      );
+    }
     return null;
   }
 
@@ -348,9 +364,34 @@ async function callVision(
   }
 }
 
+/**
+ * Raised instead of returning `null` when the provider call itself failed and
+ * the caller asked for a reason (`throwOnFailure`). `status` is the upstream
+ * HTTP status when there was one, so a 401/429/timeout can be told apart.
+ *
+ * The message is safe to send to the browser: it names the HTTP status and a
+ * bounded slice of the provider's error body — never the request payload (which
+ * holds the member's selfie).
+ */
+export class VerificationUpstreamError extends Error {
+  readonly status: number | null;
+
+  constructor(message: string, status: number | null = null) {
+    super(message);
+    this.name = 'VerificationUpstreamError';
+    this.status = status;
+  }
+}
+
 export interface AnalyzeDeps {
   fetchImpl?: typeof fetch;
   env?: VerificationEnv;
+  /**
+   * When true, a provider transport failure or non-2xx response throws a
+   * `VerificationUpstreamError` instead of resolving to `null`. Defaults to
+   * false so existing callers keep the fail-closed "returns null" contract.
+   */
+  throwOnFailure?: boolean;
 }
 
 export interface FaceInput {
