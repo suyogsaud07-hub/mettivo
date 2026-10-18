@@ -998,7 +998,7 @@ export default function EditProfileWizardPage() {
         )}
       </div>
 
-      {/* ✅ FIX: Added key={formData.gender} so the modal re-mounts with the correct gender */}
+      {/* ✅ THIS IS THE FIX: key={formData.gender} forces the modal to remount and get the new props */}
       {showVerification && (
         <FaceVoiceVerificationModal
           key={formData.gender}
