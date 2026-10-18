@@ -3,6 +3,7 @@ import './globals.css';
 import { LanguageProvider } from '@/context/LanguageContext';
 import ServiceWorkerRegistrar from '@/app/components/ServiceWorkerRegistrar';
 import IntroSplashAnimation from '@/app/components/IntroSplashAnimation';
+import LocationVerificationGate from '@/components/shared/LocationVerificationGate';
 
 const APP_NAME = 'Mettivo';
 const APP_DESCRIPTION =
@@ -83,6 +84,14 @@ export default function RootLayout({
           */}
           <IntroSplashAnimation />
           <ServiceWorkerRegistrar />
+          {/*
+            Global location prompt. Mounted once here so it survives client-side
+            navigation (the App Router keeps this layout mounted), which is what
+            makes it a "once per app load", not "once per page". It renders
+            nothing until it has a signed-in user, and nothing at all for a
+            signed-out visitor.
+          */}
+          <LocationVerificationGate />
         </LanguageProvider>
       </body>
     </html>
