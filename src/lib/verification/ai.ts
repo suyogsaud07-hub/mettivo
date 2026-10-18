@@ -364,9 +364,18 @@ export interface VoiceVerdict {
 
 /** Normalises text for phrase containment: lowercase, alphanumeric words only. */
 function normaliseWords(text: string): string[] {
-  return text
-    .toLowerCase()
-    .replace(/-/g, '')
+  let normalized = text.toLowerCase().replace(/-/g, '');
+  
+  // ✅ FIX: Expand common contractions so "I'm" matches "I am"
+  normalized = normalized
+    .replace(/'m\b/g, ' am ')
+    .replace(/'re\b/g, ' are ')
+    .replace(/'ve\b/g, ' have ')
+    .replace(/'ll\b/g, ' will ')
+    .replace(/'d\b/g, ' would ')
+    .replace(/n't\b/g, ' not ');
+
+  return normalized
     .replace(/[^a-z0-9\s]/g, ' ')
     .split(/\s+/)
     .filter(Boolean);
@@ -392,10 +401,9 @@ export function dataUrlToBlob(url: string): Blob | null {
   const isBase64 = Boolean(match[2]);
   try {
     if (isBase64) {
-      const binary = atob(match[3]);
-      const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-      return new Blob([bytes], { type: contentType });
+      // ✅ FIX: Use Buffer instead of atob for Node.js compatibility with large files
+      const buffer = Buffer.from(match[3], 'base64');
+      return new Blob([buffer], { type: contentType });
     }
     return new Blob([decodeURIComponent(match[3])], { type: contentType });
   } catch {

@@ -323,9 +323,9 @@ export async function verifyVoice(
   }
 
   const pitchHz = pitchInRange(body.pitchHz);
-  if (pitchHz === null) {
-    return { status: 200, body: { ok: true, passed: false, complete: false, reason: 'no_voice' } };
-  }
+  
+  // ✅ FIX: Removed the early rejection block for null/0 pitch here. 
+  // We now always proceed to the AI transcript to check the phrase.
 
   const verdict = await transcribeVoice({ audioUrl, phrase }, aiDeps(deps));
   if (!verdict) {
