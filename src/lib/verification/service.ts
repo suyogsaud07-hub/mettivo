@@ -239,11 +239,18 @@ export async function verifyFace(
       },
     };
   } catch (error) {
+    console.error('[DB RECORD FAILED]', error);
     logger.error('verification.face_record_failed', 'Could not record a face verdict.', {
       errorName: error instanceof Error ? error.name : 'unknown',
       message: error instanceof Error ? error.message : 'unknown',
     });
-    return { status: 500, body: { error: 'record_failed' } };
+    return {
+      status: 500,
+      body: {
+        error: 'record_failed',
+        details: error instanceof Error ? error.message : 'unknown',
+      },
+    };
   }
 }
 
@@ -326,11 +333,18 @@ export async function verifyPhoto(
       },
     };
   } catch (error) {
+    console.error('[DB RECORD FAILED]', error);
     logger.error('verification.photo_record_failed', 'Could not record a photo verdict.', {
       errorName: error instanceof Error ? error.name : 'unknown',
       message: error instanceof Error ? error.message : 'unknown',
     });
-    return { status: 500, body: { error: 'record_failed' } };
+    return {
+      status: 500,
+      body: {
+        error: 'record_failed',
+        details: error instanceof Error ? error.message : 'unknown',
+      },
+    };
   }
 }
 
@@ -401,10 +415,17 @@ export async function verifyVoice(
       },
     };
   } catch (error) {
+    console.error('[DB RECORD FAILED]', error);
     logger.error('verification.voice_record_failed', 'Could not record a voice verdict.', {
       errorName: error instanceof Error ? error.name : 'unknown',
       message: error instanceof Error ? error.message : 'unknown',
     });
-    return { status: 500, body: { error: 'record_failed' } };
+    return {
+      status: 500,
+      body: {
+        error: 'record_failed',
+        details: error instanceof Error ? error.message : 'unknown',
+      },
+    };
   }
 }
