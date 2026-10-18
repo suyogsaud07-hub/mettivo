@@ -10,109 +10,58 @@ import {
   MORPH_TRANSITION,
   PHASE_DURATION_MS,
   PHASE_ORDER,
-  SPRING,
   TOTAL_DURATION_MS,
+  glideForPhase,
   isMorphing,
   type HeroPhase,
 } from './timeline';
-import {
-  HEART,
-  HERO_VIEW_BOX,
-  ROSE,
-  assertMorphCompatibility,
-} from './morphPaths';
+import { HEART, HERO_VIEW_BOX, ROSE, assertMorphCompatibility } from './morphPaths';
 
 /**
- * AnimatedHero — a self-contained, cinematic landing hero.
+ * AnimatedHero — the cinematic landing sequence.
  *
- * THE STORY (strict, one phase at a time)
- *   idle → wave → approach → propose → accept → kiss → morph → logo
- * See `timeline.ts` for the phase list and durations. The morph is the payoff:
- * the two character silhouettes animate their SVG `d` attribute directly into
- * the two strokes of the "M", while the kiss heart and the bouquet rose morph
- * into the heart and rose at the foot of the logo. The wordmark then fades in.
+ * THE STORY (one phase at a time)
+ *   idle → walk → kiss → morph → logo
+ * Two solid silhouettes rest apart, glide together, lean in for a slow kiss,
+ * then return to the origin and morph into the METTIVO mark: the man into the
+ * left stroke, the woman into the right, the lean-in heart into the heart in
+ * the valley, and the bloom into the rose at the foot. The wordmark fades in.
  *
- * HOW TO SWAP IN YOUR OWN ART
- *   1. `Man.tsx` / `Woman.tsx`: replace the fill artwork inside each group.
- *   2. `morphPaths.ts`: replace each pair's `from`/`to` `d` strings. Keep the
- *      command structure of a pair IDENTICAL (that is what lets Framer
- *      interpolate the path). `assertMorphCompatibility()` warns in dev if a
- *      pair drifts.
- *   3. Leave the `animate={{ d }}` wiring here and in the figures alone.
+ * MOTION
+ *   Every move is a tween on the single `EASE` cubic-bezier (see `timeline.ts`)
+ *   — no springs, no linear — so the pair glide rather than step.
  *
  * ACCESSIBILITY
  *   `prefers-reduced-motion` skips the timeline entirely and jumps to the logo.
- *   The whole scene is `pointer-events-none`, so it never blocks the page's
- *   buttons or links; only the optional Replay control is interactive.
+ *   The scene is `pointer-events-none`; only the optional Replay control is
+ *   interactive.
  */
 
-/** World-space rose position per phase (it travels from his hand to hers). */
-const ROSE_X: Record<HeroPhase, number> = {
-  idle: 272,
-  wave: 272,
-  approach: 400,
-  propose: 350,
-  accept: 566,
-  kiss: 540,
-  morph: 0,
-  logo: 0,
-};
-const ROSE_Y: Record<HeroPhase, number> = {
-  idle: 236,
-  wave: 236,
-  approach: 244,
-  propose: 330,
-  accept: 236,
-  kiss: 246,
-  morph: 0,
-  logo: 0,
-};
-
-/** The kiss heart appears only at the kiss, then becomes the logo's heart. */
-const HEART_X: Record<HeroPhase, number> = {
-  idle: 0,
-  wave: 0,
-  approach: 0,
-  propose: 0,
-  accept: 0,
-  kiss: 500,
-  morph: 0,
-  logo: 0,
-};
-const HEART_Y: Record<HeroPhase, number> = {
-  idle: 0,
-  wave: 0,
-  approach: 0,
-  propose: 0,
-  accept: 0,
-  kiss: 150,
-  morph: 0,
-  logo: 0,
-};
+/** Where the heart blooms between the leaning pair, in world space. */
+const HEART_BLOOM = { x: 500, y: 296 };
 
 function HeroDefs() {
   return (
     <defs>
-      {/* The characters' suit / saree lighting lives in their own files
-          (`ManDefs` / `WomanDefs`), so those gradients travel with the art. */}
-      {/* The logo's champagne gold. */}
-      <linearGradient id="heroGold" x1="0" y1="0" x2="0.9" y2="1">
-        <stop offset="0" stopColor="#f0d8b6" />
-        <stop offset="0.5" stopColor="#e0bc93" />
-        <stop offset="1" stopColor="#cfab83" />
-      </linearGradient>
+      {/* A faint warm centre so the silhouettes read against the black. */}
+      <radialGradient id="heroBack" cx="0.5" cy="0.5" r="0.7">
+        <stop offset="0" stopColor="#221b28" />
+        <stop offset="1" stopColor="#0a0a0a" stopOpacity="0" />
+      </radialGradient>
+      {/* The pink bloom that grows with the kiss. */}
+      <radialGradient id="heroGlow">
+        <stop offset="0" stopColor="#d69aa0" stopOpacity="0.5" />
+        <stop offset="0.6" stopColor="#b56f7c" stopOpacity="0.18" />
+        <stop offset="1" stopColor="#b56f7c" stopOpacity="0" />
+      </radialGradient>
       <linearGradient id="heroHeart" x1="0" y1="0" x2="0.4" y2="1">
         <stop offset="0" stopColor="#e0b0b1" />
         <stop offset="1" stopColor="#c78c8d" />
       </linearGradient>
-      <radialGradient id="heroRose" cx="0.4" cy="0.35" r="0.75">
+      <radialGradient id="heroRose" cx="0.4" cy="0.35" r="0.8">
         <stop offset="0" stopColor="#d15b64" />
         <stop offset="0.6" stopColor="#a82f3c" />
         <stop offset="1" stopColor="#6e1f2a" />
-      </radialGradient>
-      <radialGradient id="heroGlow">
-        <stop offset="0" stopColor="#d69aa0" stopOpacity="0.45" />
-        <stop offset="1" stopColor="#b56f7c" stopOpacity="0" />
       </radialGradient>
     </defs>
   );
@@ -135,14 +84,11 @@ export default function AnimatedHero({
   const [runId, setRunId] = useState(0);
   const prefersReducedMotion = useReducedMotion();
 
-  // Keep the latest callback without making the timeline effect depend on it.
-  // Synced in an effect (not during render) so the ref rule stays satisfied.
   const onCompleteRef = useRef(onComplete);
   useEffect(() => {
     onCompleteRef.current = onComplete;
   }, [onComplete]);
 
-  // Warn (dev only) if a morph pair's paths are no longer interpolatable.
   useEffect(() => {
     assertMorphCompatibility();
   }, []);
@@ -153,8 +99,6 @@ export default function AnimatedHero({
     let cancelled = false;
     const timers: number[] = [];
 
-    // Deferred to a frame: `react-hooks/set-state-in-effect` rejects a direct
-    // setState in an effect body, and this is imperceptible on first paint.
     const start = () => {
       if (cancelled) return;
 
@@ -194,22 +138,6 @@ export default function AnimatedHero({
 
   const morphing = isMorphing(phase);
   const heartVisible = phase === 'kiss' || morphing;
-  const roseTarget = morphing ? ROSE.to : ROSE.from;
-  const heartTarget = morphing ? HEART.to : HEART.from;
-
-  const roseGroup = {
-    x: ROSE_X[phase],
-    y: ROSE_Y[phase],
-    transition: morphing ? MORPH_TRANSITION : SPRING,
-  };
-
-  const heartGroup = {
-    x: HEART_X[phase],
-    y: HEART_Y[phase],
-    opacity: heartVisible ? 1 : 0,
-    rotate: phase === 'kiss' ? [0, -6, 6, -4, 0] : 0,
-    transition: morphing ? MORPH_TRANSITION : SPRING,
-  };
 
   return (
     <div className={['relative h-full w-full', className].filter(Boolean).join(' ')}>
@@ -221,63 +149,62 @@ export default function AnimatedHero({
       >
         <HeroDefs />
 
-        {/* Soft bloom that blooms with the heart. */}
+        <rect x="0" y="0" width="1000" height="640" fill="url(#heroBack)" />
+
+        {/* The bloom grows with the kiss, then stays for the logo. */}
         <motion.circle
           cx="500"
-          cy="340"
-          r="260"
+          cy="330"
+          r="300"
           fill="url(#heroGlow)"
-          style={{ transformBox: 'fill-box', transformOrigin: '50% 50%' }}
-          animate={{ opacity: heartVisible ? 0.9 : 0 }}
-          transition={{ duration: 0.8, ease: EASE }}
+          animate={{ opacity: heartVisible ? 1 : 0.12 }}
+          transition={{ duration: 1, ease: EASE }}
         />
-
-        {/* Ground contact shadows, so the pair are standing, not floating. */}
-        <motion.g animate={{ opacity: morphing ? 0 : 0.5 }} transition={{ duration: 0.4 }}>
-          <ellipse cx="330" cy="548" rx="92" ry="15" fill="#000000" opacity="0.45" />
-          <ellipse cx="670" cy="548" rx="92" ry="15" fill="#000000" opacity="0.45" />
-        </motion.g>
 
         <Man phase={phase} />
         <Woman phase={phase} />
 
-        {/* The bouquet rose: travels to her, then morphs to the logo's rose. */}
+        {/* The lean-in heart, then the heart in the valley of the mark. */}
         <motion.g
+          animate={{
+            x: morphing ? 0 : HEART_BLOOM.x,
+            y: morphing ? 0 : HEART_BLOOM.y,
+            opacity: heartVisible ? 1 : 0,
+            scale: heartVisible ? 1 : 0.7,
+          }}
+          transition={morphing ? glideForPhase('morph') : { duration: 0.9, ease: EASE }}
           style={{ transformBox: 'fill-box', transformOrigin: '50% 50%' }}
-          animate={roseGroup}
-        >
-          <motion.path
-            d={ROSE.from}
-            fill="url(#heroRose)"
-            animate={{ d: roseTarget }}
-            transition={morphing ? MORPH_TRANSITION : { duration: 0 }}
-          />
-        </motion.g>
-
-        {/* The kiss heart, which becomes the heart in the logo's valley. */}
-        <motion.g
-          style={{ transformBox: 'fill-box', transformOrigin: '50% 50%' }}
-          animate={heartGroup}
         >
           <motion.path
             d={HEART.from}
             fill="url(#heroHeart)"
-            animate={{
-              d: heartTarget,
-              scale: phase === 'kiss' ? [0.2, 1.2, 1, 1.12, 1] : 1,
-            }}
-            transition={morphing ? MORPH_TRANSITION : SPRING}
+            animate={{ d: morphing ? HEART.to : HEART.from }}
+            transition={morphing ? MORPH_TRANSITION : { duration: 0 }}
+          />
+        </motion.g>
+
+        {/* The bloom settles as the rose at the foot of the mark. */}
+        <motion.g
+          animate={{ opacity: morphing ? 1 : 0, scale: morphing ? 1 : 0.6 }}
+          transition={morphing ? glideForPhase('morph') : { duration: 0.6, ease: EASE }}
+          style={{ transformBox: 'fill-box', transformOrigin: '50% 50%' }}
+        >
+          <motion.path
+            d={ROSE.from}
+            fill="url(#heroRose)"
+            animate={{ d: morphing ? ROSE.to : ROSE.from }}
+            transition={morphing ? MORPH_TRANSITION : { duration: 0 }}
           />
         </motion.g>
       </svg>
 
-      {/* Wordmark overlay. The mark itself is already on screen, formed by the
-          morphed characters, so only the type is drawn here. */}
+      {/* Wordmark. The mark itself is formed by the morphed silhouettes, so only
+          the type is drawn here. */}
       <motion.div
         className="pointer-events-none absolute inset-0"
         initial={false}
         animate={{ opacity: phase === 'logo' ? 1 : 0 }}
-        transition={{ duration: 0.7, ease: EASE, delay: phase === 'logo' ? 0.1 : 0 }}
+        transition={{ duration: 0.8, ease: EASE, delay: phase === 'logo' ? 0.15 : 0 }}
       >
         <MettivoLogo showMark={false} className="h-full w-full" />
       </motion.div>

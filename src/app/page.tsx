@@ -1,14 +1,14 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useLanguage } from '@/context/LanguageContext';
 import InstallButton from '@/app/components/InstallButton';
 import HeaderLanguageDropdown from '@/app/components/HeaderLanguageDropdown';
 import MobileDrawer from '@/app/components/MobileDrawer';
 import RibbonLogo from '@/app/components/RibbonLogo';
 import FounderLetterLink from '@/app/components/FounderLetterLink';
-import AnimatedHero from '@/components/hero/AnimatedHero';
+import IntroSplash from '@/components/hero/IntroSplash';
 
 /**
  * The public landing page — rebuilt as the Mettivo "Midnight Romance"
@@ -24,30 +24,48 @@ import AnimatedHero from '@/components/hero/AnimatedHero';
 // donation page, which offers both "donate" and "continue without donating".
 const DONATE_HREF = '/donate';
 
+/**
+ * Marks the intro as played for this tab. `sessionStorage` survives a reload but
+ * is cleared when the tab closes — so the splash plays on a cold start, not on
+ * every refresh.
+ */
+const INTRO_SEEN_KEY = 'mettivo_intro_seen';
+
 export default function LandingPage() {
   const { t } = useLanguage();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // Defaults to `true` (no splash). The effect below flips it to `false` only
+  // when the intro should actually play — this keeps the first client render
+  // identical to the server render (no hydration mismatch) and, under reduced
+  // motion, never mounts the overlay at all.
+  const [isIntroComplete, setIsIntroComplete] = useState(true);
+
+  useEffect(() => {
+    // Deferred a frame: reading storage/matchMedia is a one-time external sync,
+    // and deferring keeps the first paint identical to the server render.
+    const frame = window.requestAnimationFrame(() => {
+      try {
+        const seen = window.sessionStorage.getItem(INTRO_SEEN_KEY) === '1';
+        const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        if (!seen && !reduceMotion) setIsIntroComplete(false);
+      } catch {
+        // sessionStorage can be blocked (private mode); fall through to the page.
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
+
+  const handleIntroDone = useCallback(() => {
+    try {
+      window.sessionStorage.setItem(INTRO_SEEN_KEY, '1');
+    } catch {
+      // Ignore: the intro simply plays again next load.
+    }
+    setIsIntroComplete(true);
+  }, []);
 
   return (
     <div className="relative isolate min-h-screen flex flex-col overflow-x-hidden bg-[#17121C] text-[#F2E9E4] font-sans antialiased">
-      {/*
-        Background layer for the AnimatedHero.
-
-        `absolute inset-0` fills the whole page (the root is `relative isolate`,
-        which pins this layer to the page box and keeps the negative z-index
-        inside this stacking context so it can't slip behind the <body>
-        background). `-z-10` tucks it behind the nav, main and footer, and
-        `pointer-events-none` means it never intercepts a click on the CTAs.
-        `bg-[#0a0a0a]` is the hero's pure-black backdrop. `aria-hidden` keeps the
-        decorative art out of the accessibility tree.
-      */}
-      <div
-        className="absolute inset-0 -z-10 pointer-events-none bg-[#0a0a0a]"
-        aria-hidden="true"
-      >
-        <AnimatedHero className="h-full w-full" showReplay={false} />
-      </div>
-
       {/* ============================== TOP NAV ============================== */}
       <nav className="fixed top-0 left-0 right-0 z-50">
         <div className="max-w-7xl mx-auto px-6 md:px-10 py-5">
@@ -160,6 +178,14 @@ export default function LandingPage() {
 
       {/* Full-screen immersive drawer (mobile hamburger). */}
       <MobileDrawer isOpen={drawerOpen} onClose={() => setDrawerOpen(false)} />
+
+      {/*
+        The intro pre-loader. Rendered last so it stacks above the nav (both are
+        z-50; later DOM wins). Mounted only for a cold start in a motion-friendly
+        tab — see the effect above. It is self-contained and `fixed`, so it
+        never affects the flow of the page beneath it.
+      */}
+      {!isIntroComplete && <IntroSplash onDone={handleIntroDone} />}
     </div>
   );
 }

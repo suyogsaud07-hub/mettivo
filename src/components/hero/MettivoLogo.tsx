@@ -36,14 +36,32 @@ export default function MettivoLogo({
       aria-label={showWordmark ? 'Mettivo' : undefined}
       role={showWordmark ? 'img' : 'presentation'}
     >
+      {/* Self-contained fills so the mark renders correctly even when this is
+          the only hero SVG on the page (ids are local to this component). */}
+      <defs>
+        <linearGradient id="logoGold" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#e0bc93" />
+          <stop offset="1" stopColor="#b9906a" />
+        </linearGradient>
+        <linearGradient id="logoHeart" x1="0" y1="0" x2="0.4" y2="1">
+          <stop offset="0" stopColor="#e0b0b1" />
+          <stop offset="1" stopColor="#c78c8d" />
+        </linearGradient>
+        <radialGradient id="logoRose" cx="0.4" cy="0.35" r="0.8">
+          <stop offset="0" stopColor="#d15b64" />
+          <stop offset="0.6" stopColor="#a82f3c" />
+          <stop offset="1" stopColor="#6e1f2a" />
+        </radialGradient>
+      </defs>
+
       {showMark && (
         <>
           {/* The two strokes of the "M". */}
-          <path d={LOGO_MARK.left} fill="url(#heroGold)" />
-          <path d={LOGO_MARK.right} fill="url(#heroGold)" />
+          <path d={LOGO_MARK.left} fill="url(#logoGold)" />
+          <path d={LOGO_MARK.right} fill="url(#logoGold)" />
           {/* Heart in the valley, rose at the foot. */}
-          <path d={LOGO_MARK.heart} fill="url(#heroHeart)" />
-          <path d={LOGO_MARK.rose} fill="url(#heroRose)" />
+          <path d={LOGO_MARK.heart} fill="url(#logoHeart)" />
+          <path d={LOGO_MARK.rose} fill="url(#logoRose)" />
           <path d="M 500 538 C 502 556 504 574 505 590" fill="none" stroke="#4a1c2e" strokeWidth="5" strokeLinecap="round" />
         </>
       )}

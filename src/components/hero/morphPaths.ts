@@ -1,25 +1,27 @@
 /**
- * The morph geometry — every character part that becomes part of the logo.
+ * The morph geometry — every figure that becomes part of the logo.
  *
  * ============================ READ THIS FIRST ============================
  * Framer Motion animates the SVG `d` attribute by interpolating the NUMBERS in
  * the string; the command letters and their order must be IDENTICAL between the
- * `from` and `to` path of a pair. If they differ, the morph is not interpolated
- * at all — it snaps, and Framer logs a warning.
+ * `from` and `to` path of a pair. If they differ the morph is not interpolated
+ * at all — it snaps.
  *
- * So when you paste in your real vector art:
- *   1. Keep each pair's command sequence EXACTLY equal, e.g. every body path is
- *      `M … C … C … C … Z` (one move, three cubics, close).
- *   2. Keep the same NUMBER of control points, in the same order.
- *   3. Only the coordinate numbers should differ.
- * `assertMorphCompatibility()` below checks this at dev time and tells you
- * precisely which pair is mismatched.
+ * Every pair below was generated from an anchor list through the SAME closed
+ * Catmull-Rom routine, so each `from` and its `to` share a command signature
+ * exactly:
+ *   * MAN_BODY / WOMAN_BODY → `M` + 14 cubics + `Z`
+ *   * HEART                 → `M` + 8 cubics + `Z`
+ *   * ROSE                  → `M` + 8 cubics + `Z`
  *
- * The pairs are authored in the hero's world space, `0 0 1000 640`:
- *   * body paths are drawn around the ORIGIN and placed by their group's
- *     transform while the story plays, then the group returns to the origin
- *     during the morph while `d` travels to its world-space logo target;
- *   * the heart and rose do the same.
+ * `assertMorphCompatibility()` prints the offending pair in dev if that ever
+ * drifts. The figures are solid, minimal silhouettes (head → shoulders → body)
+ * so their outline maps cleanly onto the two strokes of the "M".
+ *
+ * Coordinate system: the hero's world space, `0 0 1000 640`. A figure's `from`
+ * is drawn around the ORIGIN and positioned by its group's transform while the
+ * story plays; during the morph the group returns to the origin while `d`
+ * travels to its world-space logo target.
  * ==========================================================================
  */
 
@@ -27,34 +29,34 @@
 export const HERO_VIEW_BOX = '0 0 1000 640';
 
 export interface MorphPair {
-  /** The character-phase shape (drawn around the origin). */
+  /** The active-phase shape (drawn around the origin). */
   from: string;
   /** The logo-phase shape, in world space. */
   to: string;
 }
 
-/** Man's suited silhouette → the left stroke of the "M". `M C C C C Z` both sides. */
+/** Man's silhouette → the left stroke of the "M". */
 export const MAN_BODY: MorphPair = {
-  from: 'M -58 -96 C -58 -122 -34 -132 -6 -128 C 40 -120 64 -74 66 12 C 68 156 60 302 54 356 C 18 372 -22 372 -56 356 C -66 252 -64 62 -58 -96 Z',
-  to: 'M 348 198 C 374 190 398 218 422 266 C 452 330 488 356 500 384 C 486 446 468 494 452 522 C 408 532 362 532 338 520 C 338 420 342 298 348 198 Z',
+  from: 'M 0 -150 C 11.3 -150 26 -147.7 34 -142 C 42 -136.3 46 -125 48 -116 C 50 -107 43.3 -97 46 -88 C 48.7 -79 58 -75 64 -62 C 70 -49 79.3 -40.3 82 -10 C 84.7 20.3 93.7 88.3 80 120 C 66.3 151.7 26.7 180 0 180 C -26.7 180 -66.3 151.7 -80 120 C -93.7 88.3 -84.7 20.3 -82 -10 C -79.3 -40.3 -70 -49 -64 -62 C -58 -75 -48.7 -79 -46 -88 C -43.3 -97 -50 -107 -48 -116 C -46 -125 -42 -136.3 -34 -142 C -26 -147.7 -11.3 -150 0 -150 Z',
+  to: 'M 362 200 C 363.3 198.3 373.3 207.3 378 214 C 382.7 220.7 385.5 230.7 390 240 C 394.5 249.3 398.3 259.2 405 270 C 411.7 280.8 420.5 292.7 430 305 C 439.5 317.3 452.7 332.8 462 344 C 471.3 355.2 479.7 365.3 486 372 C 492.3 378.7 502.3 383 500 384 C 497.7 385 481.7 383.3 472 378 C 462.3 372.7 451.3 362 442 352 C 432.7 342 423.7 329 416 318 C 408.3 307 401.7 296.3 396 286 C 390.3 275.7 386.3 266.3 382 256 C 377.7 245.7 373.3 233.3 370 224 C 366.7 214.7 360.7 201.7 362 200 Z',
 };
 
-/** Woman's saree silhouette → the right stroke of the "M". `M C C C C Z` both sides. */
+/** Woman's silhouette → the right stroke of the "M". */
 export const WOMAN_BODY: MorphPair = {
-  from: 'M -54 -96 C -54 -124 14 -132 44 -118 C 58 -60 82 30 96 130 C 96 230 86 300 78 356 C 40 374 -4 374 -44 356 C -62 250 -60 60 -54 -96 Z',
-  to: 'M 652 198 C 626 190 602 218 578 266 C 548 330 512 356 500 384 C 514 446 532 494 548 522 C 592 532 638 532 662 520 C 662 420 658 298 652 198 Z',
+  from: 'M 0 -152 C 10.7 -152 24.3 -151.3 32 -146 C 39.7 -140.7 43.7 -129 46 -120 C 48.3 -111 43.7 -101 46 -92 C 48.3 -83 55.3 -78.7 60 -66 C 64.7 -53.3 66.7 -50.3 74 -16 C 81.3 18.3 116.3 107 104 140 C 91.7 173 34.7 182 0 182 C -34.7 182 -91.7 173 -104 140 C -116.3 107 -81.3 18.3 -74 -16 C -66.7 -50.3 -64.7 -53.3 -60 -66 C -55.3 -78.7 -48.3 -83 -46 -92 C -43.7 -101 -48.3 -111 -46 -120 C -43.7 -129 -39.7 -140.7 -32 -146 C -24.3 -151.3 -10.7 -152 0 -152 Z',
+  to: 'M 638 200 C 636.7 198.3 626.7 207.3 622 214 C 617.3 220.7 614.5 230.7 610 240 C 605.5 249.3 601.7 259.2 595 270 C 588.3 280.8 579.5 292.7 570 305 C 560.5 317.3 547.3 332.8 538 344 C 528.7 355.2 520.3 365.3 514 372 C 507.7 378.7 497.7 383 500 384 C 502.3 385 518.3 383.3 528 378 C 537.7 372.7 548.7 362 558 352 C 567.3 342 576.3 329 584 318 C 591.7 307 598.3 296.3 604 286 C 609.7 275.7 613.7 266.3 618 256 C 622.3 245.7 626.7 233.3 630 224 C 633.3 214.7 639.3 201.7 638 200 Z',
 };
 
-/** The kiss heart → the small heart in the "M" valley. `M C C C C Z` both sides. */
+/** The lean-in heart → the small heart in the "M" valley. */
 export const HEART: MorphPair = {
-  from: 'M 0 -20 C -12 -34 -34 -44 -52 -28 C -70 -12 -60 12 0 36 C 60 12 70 -12 52 -28 C 34 -44 12 -34 0 -20 Z',
-  to: 'M 500 404 C 488 390 466 380 448 396 C 430 412 440 436 500 460 C 560 436 570 412 552 396 C 534 380 512 390 500 404 Z',
+  from: 'M 0 34 C 8 34 18.3 25 24 18 C 29.7 11 34.3 0 34 -8 C 33.7 -16 27.7 -28 22 -30 C 16.3 -32 7.3 -20 0 -20 C -7.3 -20 -16.3 -32 -22 -30 C -27.7 -28 -33.7 -16 -34 -8 C -34.3 0 -29.7 11 -24 18 C -18.3 25 -8 34 0 34 Z',
+  to: 'M 500 460 C 512 460 527.3 441.3 536 432 C 544.7 422.7 552 412.3 552 404 C 552 395.7 544.7 383.3 536 382 C 527.3 380.7 512 396 500 396 C 488 396 472.7 380.7 464 382 C 455.3 383.3 448 395.7 448 404 C 448 412.3 455.3 422.7 464 432 C 472.7 441.3 488 460 500 460 Z',
 };
 
-/** The bouquet → the rose at the foot of the logo. `M C C C Z` both sides. */
+/** The bloom → the rose at the foot of the logo. */
 export const ROSE: MorphPair = {
-  from: 'M 0 -28 C 24 -28 34 -12 34 2 C 34 18 18 30 0 30 C -18 30 -34 18 -34 2 Z',
-  to: 'M 500 488 C 524 488 534 504 534 518 C 534 534 518 546 500 546 C 482 546 466 534 466 518 Z',
+  from: 'M 0 -28 C 6.7 -28 15.3 -24.7 20 -20 C 24.7 -15.3 28 -6.7 28 0 C 28 6.7 24.7 15.3 20 20 C 15.3 24.7 6.7 28 0 28 C -6.7 28 -15.3 24.7 -20 20 C -24.7 15.3 -28 6.7 -28 0 C -28 -6.7 -24.7 -15.3 -20 -20 C -15.3 -24.7 -6.7 -28 0 -28 Z',
+  to: 'M 500 488 C 508 488 518.3 491 524 496 C 529.7 501 534 510.7 534 518 C 534 525.3 529.7 535 524 540 C 518.3 545 508 548 500 548 C 492 548 481.7 545 476 540 C 470.3 535 466 525.3 466 518 C 466 510.7 470.3 501 476 496 C 481.7 491 492 488 500 488 Z',
 };
 
 /** The logo's own full mark, for the `<MettivoLogo />` component. */
@@ -75,8 +77,7 @@ export function pathSignature(d: string): string {
 
 /**
  * Dev-only guard. Logs the offending pair if a `from`/`to` command structure
- * drifts apart (the usual cause: pasting a path authored with a different number
- * of control points). Silent in production, and never throws.
+ * drifts apart. Silent in production, and never throws.
  */
 export function assertMorphCompatibility(): void {
   if (process.env.NODE_ENV === 'production') return;
