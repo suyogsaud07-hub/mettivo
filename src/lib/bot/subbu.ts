@@ -1,30 +1,10 @@
-/**
- * M27 — the "Subbu" in-app AI companion.
- *
- * SERVER ONLY. Like `src/lib/moderation/ai.ts`, this reads its credentials
- * through the injected-source pattern so no literal environment-variable member
- * read is needed inside a module that could be bundled for the browser (see the
- * secrets scan in `tests/security/security.test.ts`). It is imported by the
- * `/api/bot/chat` route handler and its unit test, and by nothing in the UI.
- *
- * NO DATABASE, NO RLS SURFACE
- *   Subbu is a stateless chat completion: the conversation lives in the member's
- *   browser (local state) and is replayed on each request, so this feature adds
- *   no table and therefore no new authorisation boundary. The one rule that
- *   still applies is Article 1.5 — the model key never leaves the server.
- *
- * PROVIDER SHAPE
- *   An OpenAI-compatible `/chat/completions` endpoint, so the same code works
- *   against OpenAI, Groq, Azure-style gateways, or a local model. `fetchImpl` is
- *   injectable so every branch is unit-testable offline.
- */
-
 import { readAiEnv, type AiEnv } from '@/lib/moderation/ai';
 import {
   DEFAULT_BOT_MODEL,
   MAX_HISTORY_TURNS,
   MAX_TURN_CHARS,
   SUBBU_SYSTEM_PROMPT,
+  SUBBU_TOOLS,
 } from '@/lib/bot/constants';
 
 export interface BotEnv extends AiEnv {
@@ -37,12 +17,14 @@ export function readBotEnv(source: Record<string, string | undefined> = process.
   return { ...base, botModel };
 }
 
-/** The roles a replayed conversation turn may carry. */
-export type BotRole = 'user' | 'assistant';
+export type BotRole = 'user' | 'assistant' | 'tool';
 
 export interface BotTurn {
   role: BotRole;
-  content: string;
+  content: string | null;
+  imageUrl?: string; // For "Mettivo Clicks"
+  tool_calls?: any[];
+  tool_call_id?: string;
 }
 
 const MAX_RESPONSE_BYTES = 32_768;
@@ -50,10 +32,8 @@ const UPSTREAM_TIMEOUT_MS = 30_000;
 
 export type BotErrorCode = 'invalid_request' | 'not_configured' | 'upstream_error' | 'empty_result';
 
-/** A typed failure the route maps onto an HTTP status and a user-safe message. */
 export class BotError extends Error {
   readonly code: BotErrorCode;
-
   constructor(code: BotErrorCode, message: string) {
     super(message);
     this.name = 'BotError';
@@ -65,14 +45,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/**
- * Parses and clamps the client-supplied history.
- *
- * Unknown roles are dropped (an injected `system` turn cannot hijack the
- * prompt), empty turns are dropped, and only the trailing `MAX_HISTORY_TURNS`
- * survive. Throws `BotError('invalid_request')` when nothing usable remains, so
- * the route can answer 400 instead of paying for an empty provider call.
- */
 export function normaliseHistory(raw: unknown): BotTurn[] {
   if (!Array.isArray(raw)) throw new BotError('invalid_request', 'No conversation was supplied.');
 
@@ -82,10 +54,14 @@ export function normaliseHistory(raw: unknown): BotTurn[] {
     const role = item.role;
     if (role !== 'user' && role !== 'assistant') continue;
     const content = item.content;
-    if (typeof content !== 'string') continue;
-    const trimmed = content.trim().slice(0, MAX_TURN_CHARS);
-    if (trimmed.length === 0) continue;
-    turns.push({ role, content: trimmed });
+    const imageUrl = item.imageUrl;
+    
+    if (typeof content !== 'string' && typeof imageUrl !== 'string') continue;
+    const trimmed = typeof content === 'string' ? content.trim().slice(0, MAX_TURN_CHARS) : null;
+    
+    if ((!trimmed || trimmed.length === 0) && !imageUrl) continue;
+    
+    turns.push({ role, content: trimmed, imageUrl: typeof imageUrl === 'string' ? imageUrl : undefined });
   }
 
   const recent = turns.slice(-MAX_HISTORY_TURNS);
@@ -95,7 +71,6 @@ export function normaliseHistory(raw: unknown): BotTurn[] {
   return recent;
 }
 
-/** Runs one fetch under a timeout budget. The timer is always cleared. */
 async function fetchWithTimeout(
   fetchImpl: typeof fetch,
   url: string,
@@ -115,35 +90,43 @@ interface ChatDeps {
   env?: BotEnv;
 }
 
-/**
- * Sends the replayed conversation to Subbu and returns the assistant reply.
- *
- * Throws `BotError` for every failure mode so the route never has to guess:
- * `not_configured` (503), `upstream_error` (502), `empty_result` (502). A
- * missing key is a hard failure rather than a silent fallback — a companion
- * that cannot answer should say so, not pretend.
- */
 export async function chatWithSubbu(
   history: BotTurn[],
   deps: ChatDeps = {}
-): Promise<{ reply: string; model: string }> {
+): Promise<{ reply: string | null; tool_calls?: any[]; model: string }> {
   const env = deps.env ?? readBotEnv();
   if (!env.apiKey) throw new BotError('not_configured', 'Subbu is not configured.');
-
-  if (history.length === 0) {
-    throw new BotError('invalid_request', 'There is no message to reply to.');
-  }
+  if (history.length === 0) throw new BotError('invalid_request', 'There is no message to reply to.');
 
   const fetchImpl = deps.fetchImpl ?? fetch;
 
+  // Format messages for the API (handling images)
+  const formattedMessages = history.map((turn) => {
+    if (turn.role === 'tool') {
+      return { role: 'tool', content: turn.content, tool_call_id: turn.tool_call_id };
+    }
+    if (turn.imageUrl) {
+      return {
+        role: turn.role,
+        content: [
+          { type: 'text', text: turn.content || 'Look at this Mettivo Click!' },
+          { type: 'image_url', image_url: { url: turn.imageUrl } }
+        ]
+      };
+    }
+    return { role: turn.role, content: turn.content };
+  });
+
   const body = {
     model: env.botModel,
-    temperature: 0.6,
+    temperature: 0.7, // Slightly higher for flirty/creative responses
     max_tokens: 512,
     messages: [
       { role: 'system', content: SUBBU_SYSTEM_PROMPT },
-      ...history.map((turn) => ({ role: turn.role, content: turn.content })),
+      ...formattedMessages,
     ],
+    tools: SUBBU_TOOLS,
+    tool_choice: 'auto',
   };
 
   let response: Response;
@@ -161,42 +144,24 @@ export async function chatWithSubbu(
   }
 
   if (!response.ok) {
+    const errText = await response.text().catch(() => '');
+    console.error(`[Subbu] API Error: ${response.status}`, errText);
     throw new BotError('upstream_error', 'Subbu is unavailable right now.');
   }
 
-  let text: string;
-  try {
-    text = await response.text();
-  } catch {
-    throw new BotError('upstream_error', 'Subbu is unavailable right now.');
-  }
-  if (text.length > MAX_RESPONSE_BYTES) {
-    throw new BotError('upstream_error', 'Subbu is unavailable right now.');
-  }
+  const text = await response.text();
+  const payload = JSON.parse(text);
+  const message = payload.choices?.[0]?.message;
 
-  let payload: unknown;
-  try {
-    payload = JSON.parse(text);
-  } catch {
-    throw new BotError('upstream_error', 'Subbu is unavailable right now.');
-  }
-  if (!isRecord(payload)) {
-    throw new BotError('upstream_error', 'Subbu is unavailable right now.');
-  }
+  if (!message) throw new BotError('empty_result', 'Subbu did not have an answer.');
 
-  const choices = payload.choices;
-  if (!Array.isArray(choices) || choices.length === 0) {
-    throw new BotError('empty_result', 'Subbu did not have an answer.');
+  // Handle Tool Calls (Banning users)
+  if (message.tool_calls && message.tool_calls.length > 0) {
+    return { reply: null, tool_calls: message.tool_calls, model: env.botModel };
   }
-  const first = choices[0];
-  if (!isRecord(first)) throw new BotError('empty_result', 'Subbu did not have an answer.');
-  const message = first.message;
-  if (!isRecord(message)) throw new BotError('empty_result', 'Subbu did not have an answer.');
 
   const content = typeof message.content === 'string' ? message.content.trim() : '';
-  if (content.length === 0) {
-    throw new BotError('empty_result', 'Subbu did not have an answer.');
-  }
+  if (content.length === 0) throw new BotError('empty_result', 'Subbu did not have an answer.');
 
   return { reply: content, model: env.botModel };
 }

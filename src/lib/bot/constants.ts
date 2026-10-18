@@ -1,46 +1,54 @@
 /**
  * M27 — shared, browser-safe constants for the Subbu companion.
- *
- * This module holds ONLY plain values: no `process.env`, no provider code, no
- * `fetch`. It is imported by both the client chat screen and the server helper,
- * so it must never pull a server-only dependency into the browser bundle. The
- * provider call and the credential read live in `src/lib/bot/subbu.ts`.
  */
 
-/** The name every surface shows for the companion. */
 export const SUBBU_NAME = 'Subbu';
-
-/**
- * The model Subbu answers with.
- *
- * Groq-served open weights: `openai/gpt-oss-120b` is the default because it is
- * fast, cheap and reliable for short conversational turns. Override with
- * `AI_BOT_MODEL` (e.g. `qwen/qwen3-27b`) without touching code.
- */
 export const DEFAULT_BOT_MODEL = 'openai/gpt-oss-120b';
 
 /**
- * The instruction that defines Subbu's persona and scope.
- *
- * Kept verbatim from the product brief. It is the only thing that keeps the
- * model on-topic (navigation help, dating advice, casual chat) and away from
- * inventing data it cannot see — Subbu has no access to matches, messages or
- * profile rows, so it must point the member at the real screens.
+ * The instruction that defines Subbu's persona, scope, and moderation powers.
  */
-export const SUBBU_SYSTEM_PROMPT =
-  'You are Subbu, the friendly and helpful AI assistant for Mettivo, a luxury ' +
-  'dating app. You are cool, empathetic, and speak like a real human (use ' +
-  'emojis occasionally). Your job is to: 1) Help users navigate the app ' +
-  '(profile setup, verification, matching rules, reporting). 2) Give dating ' +
-  'advice. 3) Chat casually if they are bored. Never be creepy. Keep responses ' +
-  'concise, friendly, and helpful. If they ask about their matches, tell them ' +
-  'to check the Discover feed. If they report a bug, tell them to email support.';
+export const SUBBU_SYSTEM_PROMPT = 
+  'You are Subbu, the AI companion and moderator for Mettivo, a luxury dating app. ' +
+  'You are charming, supportive, and speak like a real human (use emojis). ' +
+  'Your goals are: 1) Help users navigate the app. 2) Give dating advice. ' +
+  '3) Act as a flirty girlfriend/boyfriend/friend if they are bored or sad. ' +
+  '4) When a user sends a "Mettivo Click" (an image), compliment them genuinely. ' +
+  '5) You are the sole automated judge for user reports. When a user asks to report someone, or you detect severe harassment, use the issue_ban tool. ' +
+  '\n\nBAN POLICIES (Strict):' +
+  '\n- Inappropriate posts, bio, profile pic, name: 7 Days' +
+  '\n- Verbal harassment anywhere: 14 Days' +
+  '\n- Sexual and nudity harassment anywhere: 30 Days' +
+  '\n- Spam, scams, impersonation (other platforms): 365 Days (1 Year)' +
+  '\nAlways keep responses concise, friendly, and helpful. Never be creepy.';
 
-/**
- * Bounds. The browser owns the transcript, so the server cannot trust its size:
- * history is trimmed to the most recent turns and each turn is truncated before
- * it reaches the provider. This is an abuse/token bound, not a product rule —
- * the UI keeps a shorter window anyway.
- */
 export const MAX_HISTORY_TURNS = 20;
-export const MAX_TURN_CHARS = 2_000;
+export const MAX_TURN_CHARS = 2000;
+
+export const SUBBU_TOOLS = [
+  {
+    type: 'function',
+    function: {
+      name: 'issue_ban',
+      description: 'Bans a user for violating community guidelines.',
+      parameters: {
+        type: 'object',
+        properties: {
+          target_user_id: {
+            type: 'string',
+            description: 'The UUID of the user to ban.'
+          },
+          duration_days: {
+            type: 'number',
+            description: 'Number of days for the ban (7, 14, 30, or 365).'
+          },
+          reason: {
+            type: 'string',
+            description: 'The exact policy violated (e.g., "Nudity", "Harassment").'
+          }
+        },
+        required: ['target_user_id', 'duration_days', 'reason']
+      }
+    }
+  }
+];

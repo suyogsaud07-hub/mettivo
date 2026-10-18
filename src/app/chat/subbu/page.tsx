@@ -8,6 +8,7 @@ interface BotMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+  imageUrl?: string; // Added for Mettivo Clicks
   createdAt: string;
 }
 
@@ -19,9 +20,9 @@ const GREETING: BotMessage = {
   id: 'subbu-greeting',
   role: 'assistant',
   content:
-    "Hey, I'm Subbu — your Mettivo assistant. I can help you set up your " +
-    'profile, explain how matching and verification work, hand out a little ' +
-    'dating advice, or just chat. What do you need?',
+    "Hey, I'm Subbu — your Mettivo assistant. 😊 I can help you set up your " +
+    'profile, explain how matching works, hand out dating advice, or just chat to keep you company. ' +
+    'If you\'re feeling bored, send me a Mettivo Click (📸) and I\'ll hype you up! What do you need?',
   createdAt: '',
 };
 
@@ -36,11 +37,6 @@ function formatClock(value: string): string {
 
 /**
  * `/chat/subbu` — the Subbu companion room.
- *
- * Deliberately a mirror of `/chat/[matchId]` (same header, bubbles and composer)
- * so it reads as one more conversation, with two differences: the transcript is
- * local state — there is no `messages` row and no `match_id` — and each turn is
- * answered by `/api/bot/chat`.
  */
 export default function SubbuChatPage() {
   const [messages, setMessages] = useState<BotMessage[]>([GREETING]);
@@ -48,6 +44,7 @@ export default function SubbuChatPage() {
   const [thinking, setThinking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Keep the newest bubble in view as the thread grows.
   useEffect(() => {
@@ -55,16 +52,31 @@ export default function SubbuChatPage() {
     if (node) node.scrollTop = node.scrollHeight;
   }, [messages, thinking]);
 
-  const sendMessage = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
 
-    const content = draft.trim();
-    if (!content || thinking) return;
+    // Convert to Base64
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const base64 = event.target?.result as string;
+      void sendMessage('Check out this Mettivo Click!', base64);
+    };
+    reader.readAsDataURL(file);
+    
+    // Reset input so the same file can be uploaded again if needed
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const sendMessage = async (text: string, imageUrl?: string) => {
+    const content = text.trim();
+    if ((!content && !imageUrl) || thinking) return;
 
     const outgoing: BotMessage = {
       id: crypto.randomUUID(),
       role: 'user',
-      content,
+      content: content || 'Sent a photo',
+      imageUrl,
       createdAt: new Date().toISOString(),
     };
     const history = [...messages, outgoing];
@@ -81,7 +93,11 @@ export default function SubbuChatPage() {
         // The greeting is an assistant turn, so it replays as context exactly
         // as the model produced it.
         body: JSON.stringify({
-          messages: history.map((m) => ({ role: m.role, content: m.content })),
+          messages: history.map((m) => ({ 
+            role: m.role, 
+            content: m.content,
+            imageUrl: m.imageUrl // Pass image to API
+          })),
         }),
       });
 
@@ -116,6 +132,11 @@ export default function SubbuChatPage() {
     }
   };
 
+  const onSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    void sendMessage(draft);
+  };
+
   return (
     <div className="flex flex-col h-screen max-w-md mx-auto p-4 bg-neutral-950 text-white">
       <div className="flex items-center justify-between mb-4">
@@ -134,7 +155,7 @@ export default function SubbuChatPage() {
           </span>
           <div className="text-right">
             <p className="text-sm font-semibold leading-tight">{SUBBU_NAME}</p>
-            <p className="text-[11px] leading-tight text-neutral-400">AI assistant</p>
+            <p className="text-[11px] leading-tight text-neutral-400">AI assistant & Moderator</p>
           </div>
         </div>
       </div>
@@ -152,6 +173,14 @@ export default function SubbuChatPage() {
                   isMe ? 'bg-rose-500 text-white' : 'bg-neutral-800 text-neutral-200'
                 }`}
               >
+                {/* Display the Mettivo Click image if it exists */}
+                {msg.imageUrl && (
+                  <img 
+                    src={msg.imageUrl} 
+                    alt="Mettivo Click" 
+                    className="rounded-lg mb-2 max-h-60 object-cover w-full" 
+                  />
+                )}
                 {msg.content}
               </div>
               <span className="mt-0.5 px-1 text-[10px] text-neutral-500">
@@ -182,7 +211,24 @@ export default function SubbuChatPage() {
         </p>
       )}
 
-      <form onSubmit={sendMessage} className="flex gap-2">
+      <form onSubmit={onSubmit} className="flex gap-2 items-center">
+        <input 
+          type="file" 
+          accept="image/*" 
+          className="hidden" 
+          ref={fileInputRef} 
+          onChange={handleImageUpload} 
+        />
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={thinking}
+          className="p-3 bg-neutral-800 hover:bg-neutral-700 rounded-xl text-rose-400 disabled:opacity-50 transition"
+          title="Send Mettivo Click"
+        >
+          📸
+        </button>
+
         <input
           type="text"
           value={draft}

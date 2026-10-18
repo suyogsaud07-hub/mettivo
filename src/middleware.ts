@@ -2,39 +2,11 @@ import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 
 /**
- * Session refresh middleware.
+ * Session refresh middleware & Ban enforcement.
  *
- * WHY THIS IS REQUIRED
- *   Access tokens are short-lived (one hour by default). Without something that
- *   refreshes them, the session silently expires mid-session and every guard
- *   bounces the member back to `/auth` — indistinguishable from the OAuth loop
- *   this repo already had once.
- *
- *   The Supabase session lives in cookies, and only a server-side client can
- *   rotate a refresh token and write the new cookies back. That is this file.
- *
- * `getUser()` — NOT `getSession()`
- *   `getSession()` merely reads the cookie. `getUser()` calls the Auth server,
- *   which is what actually triggers the refresh and, importantly, validates the
- *   token rather than trusting it.
- *
- * The response object is rebuilt inside `setAll` because Next.js caches the
- * headers of the original response; mutating cookies on a stale response is the
- * classic reason a refreshed session "does not stick".
- *
- * ⛔ THIS MIDDLEWARE MUST NEVER REDIRECT.
- *   It refreshes a session and nothing else — every branch returns a response
- *   that forwards the request unchanged. Route-level `redirect()` calls here are
- *   how this app previously produced a redirect cycle:
- *
- *     /profile (no readable session yet) -> /auth
- *     /auth   (session cookie now visible) -> /profile        -> repeat
- *
- *   A session can be present-but-unreadable for a request or two while the
- *   refresh cookie round-trips, so *any* session-dependent redirect in
- *   middleware is a loop waiting to happen. Authorisation decisions belong in
- *   the page-level guards, which run with a settled session; the middleware's
- *   only job is to make that session valid.
+ * ⛔ THIS MIDDLEWARE MUST NEVER REDIRECT PAGES.
+ *   It refreshes a session and blocks API access for banned users.
+ *   Authorisation redirects for pages belong in the page-level guards.
  */
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -44,7 +16,6 @@ export async function middleware(request: NextRequest) {
   let response = NextResponse.next({ request });
 
   if (!supabaseUrl || !supabaseAnonKey) {
-    // Never hard-fail the request over configuration; /api/health reports it.
     return response;
   }
 
@@ -54,11 +25,9 @@ export async function middleware(request: NextRequest) {
         return request.cookies.getAll();
       },
       setAll(cookiesToSet) {
-        // Write onto the request so downstream handlers see the fresh values…
         for (const { name, value } of cookiesToSet) {
           request.cookies.set(name, value);
         }
-        // …and rebuild the response so the browser receives them too.
         response = NextResponse.next({ request });
         for (const { name, value, options } of cookiesToSet) {
           response.cookies.set(name, value, options);
@@ -67,7 +36,36 @@ export async function middleware(request: NextRequest) {
     },
   });
 
-  await supabase.auth.getUser();
+  const { data: { user } } = await supabase.auth.getUser();
+
+  // ✅ BAN ENFORCEMENT
+  // If the user is logged in, check if Subbu has banned them.
+  if (user) {
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('banned_until, ban_reason')
+      .eq('id', user.id)
+      .single();
+
+    const isBanned = profile?.banned_until && new Date(profile.banned_until) > new Date();
+
+    if (isBanned) {
+      // Block them from posting Moments, Chatting, or going Live via API
+      if (
+        request.nextUrl.pathname.startsWith('/api/moments') ||
+        request.nextUrl.pathname.startsWith('/api/chat') ||
+        request.nextUrl.pathname.startsWith('/api/live')
+      ) {
+        return NextResponse.json(
+          { 
+            error: 'banned', 
+            message: `Action blocked. You are banned until ${new Date(profile.banned_until).toLocaleDateString()}. Reason: ${profile.ban_reason}` 
+          },
+          { status: 403 }
+        );
+      }
+    }
+  }
 
   return response;
 }
