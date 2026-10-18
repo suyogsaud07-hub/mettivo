@@ -1,5 +1,8 @@
 'use client';
 
+// ✅ FIX: Tell Next.js not to statically cache this page
+export const dynamic = 'force-dynamic';
+
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -13,11 +16,9 @@ interface ConversationSummary {
   lastMessage: string;
   lastMessageAt: string;
   isMine: boolean;
-  /** M11: unread messages from the other member, computed by the database. */
   unread: number;
 }
 
-/** `YYYY-MM-DD HH:mm` — deterministic, so it cannot differ between renders. */
 function formatTimestamp(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '';
@@ -28,16 +29,6 @@ function formatTimestamp(value: string): string {
   )}:${pad(date.getMinutes())}`;
 }
 
-/**
- * `/chat` — conversation list.
- *
- * This route previously rendered a copy of the individual chat room, but it has
- * no `[matchId]` segment, so every query ran with `match_id = undefined` and
- * the room was permanently empty.
- *
- * Rows are grouped from the `messages` table; RLS decides which conversations
- * are visible to the signed-in user.
- */
 export default function ChatListPage() {
   const router = useRouter();
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
@@ -72,7 +63,6 @@ export default function ChatListPage() {
           return;
         }
 
-        // Rows arrive newest-first, so the first row seen per match is the latest.
         const seen = new Set<string>();
         const summaries: ConversationSummary[] = [];
 
@@ -81,8 +71,6 @@ export default function ChatListPage() {
           seen.add(row.match_id);
           summaries.push({
             matchId: row.match_id,
-            // A media message carries empty content; name it so the list is not
-            // a blank row.
             lastMessage: row.content || 'Photo',
             lastMessageAt: row.created_at,
             isMine: row.sender_id === user.id,
@@ -90,8 +78,6 @@ export default function ChatListPage() {
           });
         }
 
-        // M11: the badge comes from `unread_counts()` in the database, so it
-        // agrees with the messages RLS actually lets this member see.
         const counts = await fetchUnreadCounts();
         if (!isMounted) return;
 
@@ -99,7 +85,6 @@ export default function ChatListPage() {
           summaries.map((summary) => ({ ...summary, unread: counts[summary.matchId] ?? 0 }))
         );
       } catch (err) {
-        // A rejected auth/unread call must not leave the list spinning forever.
         console.error('Failed to load conversations:', err);
       } finally {
         if (isMounted) setLoading(false);
@@ -126,9 +111,7 @@ export default function ChatListPage() {
         <h1 style={{ fontSize: '20px', fontWeight: 700, margin: 0 }}>Messages</h1>
       </header>
 
-      {/* Subbu AI is pinned above every human conversation. It is hardcoded and
-          has no `match_id`, so it renders even when the member has zero
-          matches; it links to the local-state room at `/chat/subbu`. */}
+      {/* Subbu AI is pinned above every human conversation. */}
       <ul style={{ listStyle: 'none', margin: 0, padding: '20px 20px 0' }}>
         <li>
           <Link
