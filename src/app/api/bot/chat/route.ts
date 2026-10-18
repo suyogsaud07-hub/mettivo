@@ -5,6 +5,12 @@ import { logger } from '@/lib/logger';
 import { BotError, chatWithSubbu, normaliseHistory, type BotTurn } from '@/lib/bot/subbu';
 
 export const dynamic = 'force-dynamic';
+
+// Chat generation on a cold Groq model can take tens of seconds; Vercel's
+// default is too short and surfaces as a 502/timeout. 60 s is the serverless
+// ceiling and the budget the provider client allows the upstream fetch.
+export const maxDuration = 60;
+
 const MAX_BODY_BYTES = 64_000;
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX = 30;
@@ -119,10 +125,30 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ reply: result.reply }, { status: 200 });
 
   } catch (error) {
-    if (error instanceof BotError) {
-      logger.error('bot.failed', 'Subbu provider failed.', { failure: error.code });
-      return NextResponse.json({ error: error.code, message: error.message }, { status: 502 });
+    const message = error instanceof Error ? error.message : 'unknown error';
+    const stack = error instanceof Error ? error.stack : undefined;
+
+    // A malformed request is the client's fault — not an upstream failure.
+    if (error instanceof BotError && error.code === 'invalid_request') {
+      return NextResponse.json({ error: error.code, message }, { status: 400 });
     }
-    return NextResponse.json({ error: 'server_error' }, { status: 500 });
+    // A missing key is a deployment mistake, not a provider outage.
+    if (error instanceof BotError && error.code === 'not_configured') {
+      logger.error('bot.not_configured', 'Subbu is not configured.');
+      return NextResponse.json({ error: error.code, message }, { status: 500 });
+    }
+
+    // Everything else is the provider (timeout, 4xx/5xx, unparseable reply) or
+    // an unexpected throw. Log the exact failure for Vercel Runtime Logs and
+    // hand the reason to the client as `details`.
+    console.error('[SUBBU CHAT ERROR]', message, stack);
+    logger.error('bot.failed', 'Subbu provider failed.', {
+      failure: error instanceof BotError ? error.code : 'unexpected',
+      message,
+    });
+    return NextResponse.json(
+      { error: 'upstream_error', details: message, message },
+      { status: 502 }
+    );
   }
 }

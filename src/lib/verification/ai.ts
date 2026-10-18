@@ -412,7 +412,8 @@ export async function analyzeFace(
     `Verify this live selfie. The member selected gender: ${input.gender}.`,
     [input.selfieUrl],
     env,
-    fetchImpl
+    fetchImpl,
+    deps.throwOnFailure === true
   );
   if (!parsed) return null;
 

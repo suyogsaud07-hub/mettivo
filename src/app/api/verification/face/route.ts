@@ -16,6 +16,11 @@ import { logger } from '@/lib/logger';
 // framework default.
 export const runtime = 'nodejs';
 
+// A cold vision model can take tens of seconds. 60 s is the Vercel serverless
+// ceiling and the same budget `ai.ts` allows the upstream fetch, so the function
+// never dies mid-call at a lower default limit.
+export const maxDuration = 60;
+
 // A verdict is per-member and must never be prerendered or cached.
 export const dynamic = 'force-dynamic';
 
@@ -33,15 +38,17 @@ export async function POST(request: Request): Promise<NextResponse> {
   } catch (error) {
     // A throw here means the pipeline itself failed before it could classify
     // anything (e.g. an import error or an unexpected Supabase fault).
+    const message = error instanceof Error ? error.message : 'unknown error';
+    const stack = error instanceof Error ? error.stack : undefined;
+    console.error('[FACE VERIFICATION ERROR]', message, stack);
     logger.error(
       'verification.face_route_failed',
       'The face route threw before it could return a verdict.',
       {
         errorName: error instanceof Error ? error.name : 'unknown',
-        message: error instanceof Error ? error.message : 'unknown',
+        message,
       }
     );
-    console.error('[verification.face] unhandled route error:', error);
-    return NextResponse.json({ error: 'ai_unavailable' }, { status: 503 });
+    return NextResponse.json({ error: 'ai_unavailable', details: message }, { status: 503 });
   }
 }

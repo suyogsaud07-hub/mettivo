@@ -120,6 +120,27 @@ describe('analyzeFace', () => {
     expect(verdict).toBeNull();
   });
 
+  it('throws a typed upstream error when throwOnFailure is set and the transport fails', async () => {
+    await expect(
+      analyzeFace(
+        { selfieUrl: 'data:image/png;base64,aGk=', gender: 'Woman' },
+        { env: ENV, fetchImpl: fetchThrowing(), throwOnFailure: true }
+      )
+    ).rejects.toThrow(/could not be reached/);
+  });
+
+  it('throws with the upstream status when throwOnFailure is set and the provider rejects', async () => {
+    const unauthorized: typeof fetch = (async () =>
+      new Response('invalid api key', { status: 401 })) as typeof fetch;
+
+    await expect(
+      analyzeFace(
+        { selfieUrl: 'data:image/png;base64,aGk=', gender: 'Woman' },
+        { env: ENV, fetchImpl: unauthorized, throwOnFailure: true }
+      )
+    ).rejects.toThrow(/HTTP 401/);
+  });
+
   it('returns null on an unparseable model reply', async () => {
     const verdict = await analyzeFace(
       { selfieUrl: 'data:image/png;base64,aGk=', gender: 'Woman' },

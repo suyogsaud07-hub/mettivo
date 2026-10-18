@@ -185,22 +185,30 @@ export async function verifyFace(
 
   let verdict: FaceVerdict | null;
   try {
-    verdict = await analyzeFace({ selfieUrl, gender }, aiDeps(deps));
+    // `throwOnFailure` turns a provider transport failure or non-2xx response
+    // into a `VerificationUpstreamError` carrying the reason, so the 503 below
+    // can name it instead of hiding behind a bare `ai_unavailable`.
+    verdict = await analyzeFace(
+      { selfieUrl, gender },
+      { ...aiDeps(deps), throwOnFailure: true }
+    );
   } catch (error) {
-    // `analyzeFace` is documented to return `null` rather than throw, so a throw
-    // here is a bug — log it with the stack via the provider rather than letting
-    // it escape as an opaque raw 500.
+    const message = error instanceof Error ? error.message : 'unknown error';
+    const stack = error instanceof Error ? error.stack : undefined;
+    console.error('[FACE VERIFICATION ERROR]', message, stack);
     logger.error(
       'verification.face_ai_threw',
       'The face classifier threw instead of returning a verdict.',
       errorContext(error)
     );
-    console.error('[verification.face] analyzeFace threw:', error);
-    return { status: 503, body: { error: 'ai_unavailable' } };
+    return { status: 503, body: { error: 'ai_unavailable', details: message } };
   }
   if (!verdict) {
     logger.error('verification.face_ai_unavailable', 'The face classifier returned no verdict.');
-    return { status: 503, body: { error: 'ai_unavailable' } };
+    return {
+      status: 503,
+      body: { error: 'ai_unavailable', details: 'The AI provider returned no verdict.' },
+    };
   }
 
   const passed =

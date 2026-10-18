@@ -11,6 +11,11 @@ const nextConfig: NextConfig = {
   // default bundler for `next dev` and `next build` in Next.js 16, so no
   // PostCSS config file is required.
   turbopack: {
+    // Turbopack infers the workspace root by walking up for a lockfile. A stray
+    // `package-lock.json` sits one level above this repo (outside the Git
+    // repository), so Next ignores it and warns. Pinning the root to this
+    // project directory silences the warning and scopes module resolution.
+    root: __dirname,
     rules: {
       '*.css': {
         loaders: ['@tailwindcss/turbopack'],

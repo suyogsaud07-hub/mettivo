@@ -311,13 +311,13 @@ test.describe('§3.3 — a failed profile read must not bounce to /auth', () => 
   });
 });
 
-test.describe('§3.3 — middleware is refresh-only', () => {
-  test('the middleware never issues a redirect response', () => {
+test.describe('§3.3 — proxy is refresh-only', () => {
+  test('the proxy never issues a redirect response', () => {
     // A source-level invariant. Any session-dependent `redirect()` in the
-    // middleware reintroduces the loop this change removes, and a browser test
+    // proxy reintroduces the loop this change removes, and a browser test
     // cannot see it: the loop needs the "session present but not yet readable"
     // window, which is exactly what a test cannot reproduce reliably.
-    const source = readFileSync(join(process.cwd(), 'src', 'middleware.ts'), 'utf8');
+    const source = readFileSync(join(process.cwd(), 'src', 'proxy.ts'), 'utf8');
     // Comments are stripped: the file documents the ban in prose.
     const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
 

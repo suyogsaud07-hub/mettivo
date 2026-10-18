@@ -58,11 +58,12 @@ export default function SubbuChat() {
         content: data.reply 
       }]);
 
-    } catch (err: any) {
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : 'unknown error';
       setMessages(prev => [...prev, { 
         id: Date.now().toString(), 
         role: 'assistant', 
-        content: `Oops, I glitched. 😅 ${err.message}` 
+        content: `Oops, I glitched. 😅 ${detail}` 
       }]);
     } finally {
       setIsLoading(false);

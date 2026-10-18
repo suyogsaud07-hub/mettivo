@@ -53,7 +53,7 @@ describe('verifyFace — AI configuration vs outage', () => {
     expect(result).toEqual({ status: 500, body: { error: 'Missing AI configuration' } });
   });
 
-  it('answers 503 when the provider call fails despite a configured key', async () => {
+  it('answers 503 with a reason when the provider call fails despite a configured key', async () => {
     const throwing: typeof fetch = (async () => {
       throw new Error('network down');
     }) as typeof fetch;
@@ -64,6 +64,22 @@ describe('verifyFace — AI configuration vs outage', () => {
     );
 
     expect(result.status).toBe(503);
-    expect(result.body).toEqual({ error: 'ai_unavailable' });
+    expect(result.body.error).toBe('ai_unavailable');
+    // The 503 must name the failure, not just say "unavailable".
+    expect(result.body.details).toEqual(expect.stringContaining('could not be reached'));
+  });
+
+  it('answers 503 with the upstream status when the provider rejects the key', async () => {
+    const unauthorized: typeof fetch = (async () =>
+      new Response('invalid api key', { status: 401 })) as typeof fetch;
+
+    const result = await verifyFace(
+      faceRequest(),
+      deps({ verificationEnv: ENV, aiFetchImpl: unauthorized })
+    );
+
+    expect(result.status).toBe(503);
+    expect(result.body.error).toBe('ai_unavailable');
+    expect(result.body.details).toEqual(expect.stringContaining('HTTP 401'));
   });
 });

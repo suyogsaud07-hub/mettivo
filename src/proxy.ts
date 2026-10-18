@@ -2,9 +2,9 @@ import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 
 /**
- * Session refresh middleware & Ban enforcement.
+ * Session refresh proxy & Ban enforcement.
  *
- * ⛔ THIS MIDDLEWARE MUST NEVER REDIRECT PAGES.
+ * ⛔ THIS PROXY MUST NEVER REDIRECT PAGES.
  *   It refreshes a session and blocks API access for banned users.
  *   Authorisation redirects for pages belong in the page-level guards.
  */
@@ -12,7 +12,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request });
 
   if (!supabaseUrl || !supabaseAnonKey) {

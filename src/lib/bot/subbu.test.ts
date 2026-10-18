@@ -131,6 +131,66 @@ describe('chatWithSubbu', () => {
     ).rejects.toMatchObject({ code: 'upstream_error' });
   });
 
+  it('names the upstream HTTP status in the failure message', async () => {
+    await expect(
+      chatWithSubbu([{ role: 'user', content: 'hi' }], {
+        env: ENV,
+        fetchImpl: fetchReturning({ error: 'bad model' }, {}, 400),
+      })
+    ).rejects.toMatchObject({ message: expect.stringContaining('HTTP 400') });
+  });
+
+  it('forwards assistant tool_calls so the follow-up tool message is valid', async () => {
+    const recorder: { url?: string; init?: RequestInit } = {};
+    const toolCalls = [
+      { id: 'call_1', type: 'function' as const, function: { name: 'issue_ban', arguments: '{}' } },
+    ];
+
+    await chatWithSubbu(
+      [
+        { role: 'user', content: 'please report them' },
+        { role: 'assistant', content: null, tool_calls: toolCalls },
+        { role: 'tool', content: '{"success":true}', tool_call_id: 'call_1' },
+      ],
+      { env: ENV, fetchImpl: fetchReturning(replyBody('Done.'), recorder) }
+    );
+
+    const sent = JSON.parse(String(recorder.init?.body)) as {
+      messages: { role: string; tool_calls?: unknown[] }[];
+    };
+    const assistant = sent.messages.find((m) => m.role === 'assistant');
+    expect(assistant?.tool_calls).toEqual(toolCalls);
+  });
+
+  it('routes an image turn to the vision model without the tool schema', async () => {
+    const recorder: { url?: string; init?: RequestInit } = {};
+    await chatWithSubbu(
+      [{ role: 'user', content: 'what do you think?', imageUrl: 'data:image/png;base64,AAAA' }],
+      { env: ENV, fetchImpl: fetchReturning(replyBody('Cute!'), recorder) }
+    );
+
+    const body = JSON.parse(String(recorder.init?.body)) as {
+      model: string;
+      tools?: unknown;
+      messages: { role: string; content: unknown }[];
+    };
+    expect(body.model).toBe('vision-model');
+    expect(body.tools).toBeUndefined();
+    expect(Array.isArray(body.messages.find((m) => m.role === 'user')?.content)).toBe(true);
+  });
+
+  it('keeps the text model and tool schema for text-only turns', async () => {
+    const recorder: { url?: string; init?: RequestInit } = {};
+    await chatWithSubbu([{ role: 'user', content: 'hi' }], {
+      env: ENV,
+      fetchImpl: fetchReturning(replyBody('Hello!'), recorder),
+    });
+
+    const body = JSON.parse(String(recorder.init?.body)) as { model: string; tools?: unknown[] };
+    expect(body.model).toBe('bot-model');
+    expect(Array.isArray(body.tools)).toBe(true);
+  });
+
   it('maps an empty completion to empty_result', async () => {
     await expect(
       chatWithSubbu([{ role: 'user', content: 'hi' }], {
