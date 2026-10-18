@@ -1,6 +1,6 @@
 'use client';
 
-// ✅ FIX: Tell Next.js not to statically cache this page
+// ✅ This forces Vercel to build this page dynamically, not statically
 export const dynamic = 'force-dynamic';
 
 import { useEffect, useState } from 'react';
@@ -22,7 +22,6 @@ interface ConversationSummary {
 function formatTimestamp(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '';
-
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(
     date.getHours()
@@ -111,7 +110,7 @@ export default function ChatListPage() {
         <h1 style={{ fontSize: '20px', fontWeight: 700, margin: 0 }}>Messages</h1>
       </header>
 
-      {/* Subbu AI is pinned above every human conversation. */}
+      {/* ✅ SUBBU AI BLOCK STARTS HERE */}
       <ul style={{ listStyle: 'none', margin: 0, padding: '20px 20px 0' }}>
         <li>
           <Link
@@ -157,6 +156,7 @@ export default function ChatListPage() {
           </Link>
         </li>
       </ul>
+      {/* ✅ SUBBU AI BLOCK ENDS HERE */}
 
       {loading ? (
         <p style={{ padding: '24px 20px', color: '#B58A83', fontSize: '14px' }}>
