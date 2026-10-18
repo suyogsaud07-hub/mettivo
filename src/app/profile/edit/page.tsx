@@ -55,39 +55,15 @@ const MBTI_TYPES = [
   "ISTP", "ISFP", "ESTP", "ESFP"
 ];
 
-/**
- * Languages a member may declare on their profile.
- *
- * Derived from the global catalogue (`LOCALE_OPTIONS`) instead of a local array,
- * so this step cannot drift from the language picker again — the two previously
- * held 13 and 5 entries respectively.
- *
- * The stored VALUE stays the English name. `profiles.languages_spoken` is a
- * `text[]` that past builds already filled with names, so switching to language
- * codes here would silently orphan every existing row. The label and the value
- * are therefore the same string by design, not by accident.
- */
 const LANGUAGES_LIST = LOCALE_OPTIONS.map((option) => option.englishName);
 
 const PHYSICAL_ATTRS = [
   "Athletic", "Average", "Slim", "Muscular", "Curvy", "Tall", "Petite"
 ];
 
-/**
- * Columns the wizard may read from `profiles`.
- *
- * Deliberately an allow-list rather than `select('*')`: `birth_date` has a
- * column-level revoke, so a wildcard select would be denied outright. The date
- * of birth is fetched separately via `my_birth_date()`.
- *
- * Written as a single string literal on purpose: supabase-js parses the column
- * list at the TYPE level, and a value built with `.join()` is just `string`, so
- * inference collapses to an error type.
- */
 const WIZARD_PROFILE_COLUMNS =
   'id, display_name, avatar_url, photos, gender, pronouns, age, country, city, height, physical_attributes, intention, looking_for, sexual_orientation, mbti, personality, hobbies, pets, interests, prompts, smoking, drinking, exercise, education, profession, languages_spoken, bio, onboarding_completed' as const;
 
-/** M8: how many curated prompts a member may answer during onboarding. */
 const MAX_PROMPT_SLOTS = 3;
 
 interface FormState {
@@ -107,9 +83,7 @@ interface FormState {
   sexualOrientation: string;
   mbti: string;
   personalityTraits: string[];
-  /** Curated interest ids from the M8 catalogue. */
   interests: string[];
-  /** Free-text hobbies (legacy field, still written). */
   hobbies: string[];
   pets: string[];
   smoking: string;
@@ -119,7 +93,6 @@ interface FormState {
   profession: string;
   languagesSpoken: string[];
   bio: string;
-  /** Curated prompt id -> answer (M8). */
   prompts: Record<string, string>;
 }
 
@@ -128,25 +101,10 @@ export default function EditProfileWizardPage() {
   const [currentStep, setCurrentStep] = useState(1);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  /**
-   * True while the explicit sign-out below is in flight.
-   *
-   * The wizard is where an authenticated member with an incomplete profile is
-   * held, so it must offer a way OUT — both back to the public landing page and
-   * out of the account entirely. Without this, "finish onboarding" was the only
-   * screen such a member could reach.
-   */
   const [signingOut, setSigningOut] = useState(false);
   const [userId, setUserId] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
 
-  /**
-   * M24 — authenticity verification state.
-   *
-   * A member who finished onboarding before M24 keeps editing normally (the
-   * database trigger grandfathers the transition), so the two new gates below
-   * are only REQUIRED for a first-time publish.
-   */
   const [alreadyOnboarded, setAlreadyOnboarded] = useState(false);
   const [faceVoiceVerified, setFaceVoiceVerified] = useState(false);
   const [selfieUrl, setSelfieUrl] = useState('');
@@ -184,27 +142,8 @@ export default function EditProfileWizardPage() {
   });
 
   const totalSteps = ONBOARDING_TOTAL_STEPS;
-
-  /**
-   * The current step's contract, derived during render.
-   *
-   * Derived rather than stored so the moment a field changes the `Next →`
-   * button and the inline problem below re-render together — a member never
-   * sees a stale "valid" button.
-   */
   const stepValidation = validateOnboardingStep(currentStep, formData);
-
-  // M8: the curated interest catalogue. A load failure is non-fatal — the
-  // wizard falls back to the built-in hobby list rather than blocking onboarding.
   const [catalogue, setCatalogue] = useState<Catalogue | null>(null);
-
-  /**
-   * M8: the member's answered prompts, in the order they appear on screen.
-   *
-   * `promptSlots` is the source of truth while editing — a `Record` cannot
-   * express "slot 2 is empty but slot 3 is not" — and it is flattened into
-   * `formData.prompts` on every change so the submit payload stays simple.
-   */
   const [promptSlots, setPromptSlots] = useState<{ id: string; answer: string }[]>([]);
 
   const updatePromptSlots = (next: { id: string; answer: string }[]) => {
@@ -232,12 +171,6 @@ export default function EditProfileWizardPage() {
 
         setUserId(user.id);
 
-        // `birth_date` is NOT in the column list: it carries a column-level
-        // revoke for every role (`20261015260000_m15_revoke_birth_date.sql`), so
-        // `select('*')` would fail and even naming it here would be denied. The
-        // member's own date of birth is fetched through `my_birth_date()`, which
-        // derives the caller from `auth.uid()` and can only ever return their
-        // own row.
         const [profileResult, birthDateResult] = await Promise.all([
           supabase
             .from('profiles')
@@ -254,9 +187,6 @@ export default function EditProfileWizardPage() {
         if (!isMounted) return;
 
         if (loadError) {
-          // CONSTITUTION Article 2.7: surfaced, never swallowed. The member is
-          // told their saved details did not load, rather than being shown an
-          // innocent-looking empty form they might then overwrite.
           console.error('Failed to load profile:', loadError.message);
           setError('We could not load your saved profile. Please try again.');
         } else if (data) {
@@ -296,8 +226,6 @@ export default function EditProfileWizardPage() {
 
           setAlreadyOnboarded(data.onboarding_completed === true);
 
-          // M8: seed the prompt slots from whatever is already saved, so an
-          // interrupted wizard resumes with the member's answers intact.
           const savedPrompts: Record<string, string> =
             typeof data.prompts === 'object' && data.prompts !== null
               ? (data.prompts as Record<string, string>)
@@ -325,8 +253,6 @@ export default function EditProfileWizardPage() {
     };
   }, [router]);
 
-  // M8: load the curated catalogue once. Failure is logged and ignored — the
-  // wizard must not become unusable because a reference-data table is missing.
   useEffect(() => {
     let isMounted = true;
 
@@ -343,7 +269,6 @@ export default function EditProfileWizardPage() {
     };
   }, []);
 
-  // Helper toggle functions for multi-select arrays
   const toggleArrayItem = (key: keyof FormState, item: string) => {
     setFormData((prev) => {
       const arr = (prev[key] as string[]) || [];
@@ -354,13 +279,6 @@ export default function EditProfileWizardPage() {
     });
   };
 
-  /**
-   * True age from the date of birth.
-   *
-   * This deliberately does NOT clamp to 18. The previous implementation used
-   * `Math.max(18, …)`, which stored a 15-year-old's real birth date and showed
-   * "18" — passing the gate by disguising the failure instead of blocking it.
-   */
   const ageFromDob = (dob: string): number => calculateAge(dob) ?? 0;
 
   const handleNext = () => {
@@ -368,17 +286,12 @@ export default function EditProfileWizardPage() {
 
     if (currentStep >= totalSteps) return;
 
-    // Belt and braces: the button is disabled while the step is invalid, but a
-    // programmatic click (or a future caller) must not be able to skip a
-    // blocking step, so the guard is re-run here rather than trusted to the UI.
     const validation = validateOnboardingStep(currentStep, formData);
     if (!validation.ok) {
       setError(validation.problems[0]?.message ?? 'Please complete this step to continue.');
       return;
     }
 
-    // M24: the gender step additionally requires the live face + voice check.
-    // An already-onboarded member editing their profile is grandfathered.
     if (currentStep === 2 && !faceVoiceVerified && !alreadyOnboarded) {
       setError('Please verify your face and voice to continue.');
       return;
@@ -431,9 +344,6 @@ export default function EditProfileWizardPage() {
       bio: formData.bio,
     };
 
-    // M24: a first-time publish cannot happen without authenticity verification.
-    // The database refuses it regardless; this surfaces it at the right step
-    // instead of as a raw error on the finish button.
     if (!alreadyOnboarded) {
       if (!faceVoiceVerified) {
         setError('Please verify your face and voice before finishing.');
@@ -447,9 +357,6 @@ export default function EditProfileWizardPage() {
       }
     }
 
-    // Validate BEFORE showing a spinner: a failed guard is not a loading state,
-    // and jumping to the offending step is far more useful than a red banner on
-    // the review screen.
     const validation = validateProfileDraft(draft);
     if (!validation.ok) {
       const problem = validation.problems[0];
@@ -473,22 +380,10 @@ export default function EditProfileWizardPage() {
           : 'An unexpected error occurred. Please try again.'
       );
     } finally {
-      // CONSTITUTION Article 2.8: a loading state must always terminate, even
-      // if the navigation above is cancelled.
       setSaving(false);
     }
   };
 
-  /**
-   * Sign out from the wizard itself.
-   *
-   * The counterpart to the "Back to landing page" link: a member who does not
-   * want to finish onboarding right now is not stuck here. `scope: 'local'`
-   * clears this browser's session only, which is the right default — the other
-   * devices the member is signed in on are untouched. The landing page is a
-   * deliberate destination afterwards (it never auto-redirects), so the member
-   * can immediately start over with a different account.
-   */
   const handleSignOut = async (): Promise<void> => {
     setSigningOut(true);
     setError(null);
@@ -502,7 +397,6 @@ export default function EditProfileWizardPage() {
         err instanceof Error ? err.message : 'Could not sign you out. Please try again.'
       );
     } finally {
-      // CONSTITUTION Article 2.8: a loading state must always terminate.
       setSigningOut(false);
     }
   };
@@ -517,8 +411,6 @@ export default function EditProfileWizardPage() {
 
   const progressPercent = Math.round((currentStep / totalSteps) * 100);
 
-  // Steps 1..14 own an inline blocking message. Step 15's "Next" is the submit
-  // button, which reports through `handleSubmit` instead.
   const primaryProblem =
     stepValidation.problems.length > 0 ? stepValidation.problems[0].message : null;
   const showStepError = primaryProblem !== null && currentStep < totalSteps;
@@ -549,7 +441,6 @@ export default function EditProfileWizardPage() {
     errorBox: { backgroundColor: '#3B1220', border: '1px solid #7F1D2E', color: '#FCA5B5', padding: '12px 16px', borderRadius: '12px', fontSize: '13px' },
     recommendedBox: { backgroundColor: '#1C1822', border: '1px dashed #4A1828', color: '#B58A83', padding: '10px 14px', borderRadius: '12px', fontSize: '12px', marginTop: '8px' },
     summaryRow: { display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #29202D', padding: '10px 0', fontSize: '13px' },
-    /** Escape hatch: the wizard is a holding screen, never a trap. */
     escapeRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', marginTop: '16px' },
     escapeLink: { color: '#B58A83', fontSize: '13px', textDecoration: 'underline' },
     escapeButton: { background: 'none', border: '1px solid #4A1828', borderRadius: '20px', padding: '8px 16px', color: '#D4B18A', fontSize: '13px', fontWeight: 600, cursor: 'pointer' },
@@ -557,7 +448,6 @@ export default function EditProfileWizardPage() {
 
   return (
     <div style={styles.container}>
-      {/* Header & Progress Bar */}
       <div style={styles.header}>
         <div style={styles.topNav}>
           <button style={{ background: 'none', border: 'none', color: '#B58A83', fontSize: '14px', cursor: 'pointer' }} onClick={() => router.back()}>✕ Cancel</button>
@@ -587,9 +477,7 @@ export default function EditProfileWizardPage() {
         </div>
       )}
 
-      {/* Step Content */}
       <div style={styles.contentCard}>
-        {/* STEP 1: Name & Avatar */}
         {currentStep === 1 && (
           <div>
             <div style={styles.title}>Let&apos;s start with the basics</div>
@@ -607,7 +495,6 @@ export default function EditProfileWizardPage() {
           </div>
         )}
 
-        {/* STEP 2: Gender, Pronouns & mandatory face/voice verification */}
         {currentStep === 2 && (
           <div>
             <div style={styles.title}>How do you identify?</div>
@@ -624,8 +511,6 @@ export default function EditProfileWizardPage() {
                     type="button"
                     style={{ ...styles.pill, ...(formData.gender === g ? styles.pillActive : {}) }}
                     onClick={() => {
-                      // Changing gender invalidates a prior check: the verdict is
-                      // bound to the gender it was confirmed against.
                       if (g !== formData.gender) {
                         setFaceVoiceVerified(false);
                         setSelfieUrl('');
@@ -684,7 +569,6 @@ export default function EditProfileWizardPage() {
           </div>
         )}
 
-        {/* STEP 3: DOB & Age */}
         {currentStep === 3 && (
           <div>
             <div style={styles.title}>When is your birthday?</div>
@@ -713,7 +597,6 @@ export default function EditProfileWizardPage() {
           </div>
         )}
 
-        {/* STEP 4: Location */}
         {currentStep === 4 && (
           <div>
             <div style={styles.title}>Where are you based?</div>
@@ -739,7 +622,6 @@ export default function EditProfileWizardPage() {
           </div>
         )}
 
-        {/* STEP 5: Height & Physical Attributes */}
         {currentStep === 5 && (
           <div>
             <div style={styles.title}>Height & Physical Specs</div>
@@ -768,7 +650,6 @@ export default function EditProfileWizardPage() {
           </div>
         )}
 
-        {/* STEP 6: Intentions */}
         {currentStep === 6 && (
           <div>
             <div style={styles.title}>What are your intentions?</div>
@@ -784,7 +665,6 @@ export default function EditProfileWizardPage() {
           </div>
         )}
 
-        {/* STEP 7: Looking For & Sexual Orientation */}
         {currentStep === 7 && (
           <div>
             <div style={styles.title}>Preferences & Orientation</div>
@@ -813,7 +693,6 @@ export default function EditProfileWizardPage() {
           </div>
         )}
 
-        {/* STEP 8: Personality Type & Prompts */}
         {currentStep === 8 && (
           <div>
             <div style={styles.title}>Personality & Vibe</div>
@@ -833,9 +712,6 @@ export default function EditProfileWizardPage() {
               </div>
             </div>
 
-            {/* M8: curated prompts from the catalogue. Only rendered once the
-                catalogue has loaded — a missing catalogue must not block
-                onboarding, and step 8 is optional. */}
             {catalogue && catalogue.prompts.length > 0 && (
               <div>
                 <label style={styles.label}>Prompts</label>
@@ -906,7 +782,6 @@ export default function EditProfileWizardPage() {
           </div>
         )}
 
-        {/* STEP 9: Hobbies */}
         {currentStep === 9 && (
           <div>
             <div style={styles.title}>Hobbies & Interests</div>
@@ -941,7 +816,6 @@ export default function EditProfileWizardPage() {
           </div>
         )}
 
-        {/* STEP 10: Pets */}
         {currentStep === 10 && (
           <div>
             <div style={styles.title}>Pets & Animals</div>
@@ -957,7 +831,6 @@ export default function EditProfileWizardPage() {
           </div>
         )}
 
-        {/* STEP 11: Lifestyle */}
         {currentStep === 11 && (
           <div>
             <div style={styles.title}>Lifestyle Habits</div>
@@ -996,7 +869,6 @@ export default function EditProfileWizardPage() {
           </div>
         )}
 
-        {/* STEP 12: Education & Profession */}
         {currentStep === 12 && (
           <div>
             <div style={styles.title}>Education & Career</div>
@@ -1024,7 +896,6 @@ export default function EditProfileWizardPage() {
           </div>
         )}
 
-        {/* STEP 13: Languages */}
         {currentStep === 13 && (
           <div>
             <div style={styles.title}>Languages Spoken</div>
@@ -1040,7 +911,6 @@ export default function EditProfileWizardPage() {
           </div>
         )}
 
-        {/* STEP 14: Bio */}
         {currentStep === 14 && (
           <div>
             <div style={styles.title}>Personal Bio</div>
@@ -1059,7 +929,6 @@ export default function EditProfileWizardPage() {
           </div>
         )}
 
-        {/* STEP 15: Photo verification, then review & confirm */}
         {currentStep === 15 && (
           <div>
             <div style={styles.title}>Verify your photos &amp; finish</div>
@@ -1075,8 +944,6 @@ export default function EditProfileWizardPage() {
                   initialAvatarUrl={formData.avatarUrl}
                   initialPhotos={formData.photos}
                   onProgress={({ avatarUrl, photos, ready }) => {
-                    // Only verified images are ever handed back here, so the
-                    // saved payload contains exactly what the database cleared.
                     setFormData((prev) => ({ ...prev, avatarUrl, photos }));
                     setPhotosReady(ready);
                   }}
@@ -1101,7 +968,6 @@ export default function EditProfileWizardPage() {
         )}
       </div>
 
-      {/* Footer Navigation Buttons */}
       <div style={styles.footerNav}>
         {currentStep > 1 && (
           <button type="button" style={styles.backBtn} onClick={handleBack} disabled={saving}>
@@ -1132,8 +998,10 @@ export default function EditProfileWizardPage() {
         )}
       </div>
 
+      {/* ✅ FIX: Added key={formData.gender} so the modal re-mounts with the correct gender */}
       {showVerification && (
         <FaceVoiceVerificationModal
+          key={formData.gender}
           gender={formData.gender as VerificationGender}
           displayName={formData.displayName || null}
           onCancel={() => setShowVerification(false)}
@@ -1145,12 +1013,6 @@ export default function EditProfileWizardPage() {
         />
       )}
 
-      {/*
-        The escape hatch. Onboarding is a holding screen for a member with an
-        incomplete profile, and holding screens must never be traps: the public
-        landing page stays one click away, and so does leaving the account. Both
-        are explicit choices — neither navigates on its own.
-      */}
       <div style={styles.escapeRow}>
         <Link href="/" style={styles.escapeLink} data-testid="back-to-landing">
           ← Back to landing page

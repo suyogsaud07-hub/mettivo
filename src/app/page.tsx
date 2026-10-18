@@ -27,9 +27,7 @@ export default function LandingPage() {
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   return (
-    <div
-      className="min-h-screen flex flex-col overflow-x-hidden bg-[#17121C] text-[#F2E9E4] font-sans antialiased"
-    >
+    <div className="min-h-screen flex flex-col overflow-x-hidden bg-[#17121C] text-[#F2E9E4] font-sans antialiased">
       {/* ============================== TOP NAV ============================== */}
       <nav className="fixed top-0 left-0 right-0 z-50">
         <div className="max-w-7xl mx-auto px-6 md:px-10 py-5">
@@ -54,7 +52,7 @@ export default function LandingPage() {
                 type="button"
                 onClick={() => setDrawerOpen(true)}
                 aria-label="Open menu"
-                className="w-11 h-11 rounded-2xl bg-[#29202D] border border-white/15 shadow-xl flex items-center justify-center hover:bg-[#3a303d] transition-colors                 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D4B18A]"
+                className="w-11 h-11 rounded-2xl bg-[#29202D] border border-white/15 shadow-xl flex items-center justify-center hover:bg-[#3a303d] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D4B18A]"
               >
                 <svg
                   width="20"
@@ -78,50 +76,56 @@ export default function LandingPage() {
       </nav>
 
       {/* ============================== HERO ============================== */}
-      <main className="flex-1 flex items-center justify-center pt-20 pb-0 text-center px-6">
-        <div className="max-w-xl w-full">
-          {/* Hero headline: serif, black weight, large. "people" in gold, oxblood period. */}
-          <div className="font-serif font-black text-4xl sm:text-5xl md:text-6xl leading-[1.15] text-[#F2E9E4] mb-10">
-            Meet your
-            <br />
-            kind of
-            <br />
-            <span className="font-serif italic text-[#D4B18A]">people</span>
-            <span className="text-[#4A1828]">.</span>
-          </div>
-
-          {/* Stacked CTAs: "Get started" (gold) then "Get the app" (surface + gold border). */}
-          <div className="max-w-[260px] w-full flex flex-col gap-4">
-            <div className="group w-full">
-              <Link
-                href={SIGNUP_HREF}
-                className="group w-full inline-flex items-center justify-center gap-1 py-3.5 px-6 rounded-full bg-[#D4B18A] text-[#17121C] text-sm font-bold tracking-tight uppercase shadow-lg shadow-[#D4B18A]/35 transition-all hover:bg-[#E4C9A0] hover:shadow-[#D4B18A]/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D4B18A] focus-visible:ring-offset-2 focus-visible:ring-offset-[#17121C]"
-                data-testid="landing-primary-cta"
-              >
-                {t('get_started')}
-                <span className="group-hover:translate-x-1 transition-transform inline-block ml-0.5">
-                  &rarr;
-                </span>
-              </Link>
+      <main className="flex-1 flex flex-col items-center justify-center pt-24 pb-0 text-center px-6">
+        {/* We expanded this container so the Donation Box has room to breathe */}
+        <div className="max-w-4xl w-full flex flex-col items-center">
+          
+          {/* Hero Content constrained to original width */}
+          <div className="max-w-xl w-full">
+            {/* Hero headline: serif, black weight, large. "people" in gold, oxblood period. */}
+            <div className="font-serif font-black text-4xl sm:text-5xl md:text-6xl leading-[1.15] text-[#F2E9E4] mb-10">
+              Meet your
+              <br />
+              kind of
+              <br />
+              <span className="font-serif italic text-[#D4B18A]">people</span>
+              <span className="text-[#4A1828]">.</span>
             </div>
 
-            <InstallButton />
+            {/* Stacked CTAs: "Get started" (gold) then "Get the app" (surface + gold border). */}
+            <div className="max-w-[260px] w-full flex flex-col gap-4 mx-auto">
+              <div className="group w-full">
+                <Link
+                  href={SIGNUP_HREF}
+                  className="group w-full inline-flex items-center justify-center gap-1 py-3.5 px-6 rounded-full bg-[#D4B18A] text-[#17121C] text-sm font-bold tracking-tight uppercase shadow-lg shadow-[#D4B18A]/35 transition-all hover:bg-[#E4C9A0] hover:shadow-[#D4B18A]/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D4B18A] focus-visible:ring-offset-2 focus-visible:ring-offset-[#17121C]"
+                  data-testid="landing-primary-cta"
+                >
+                  {t('get_started')}
+                  <span className="group-hover:translate-x-1 transition-transform inline-block ml-0.5">
+                    &rarr;
+                  </span>
+                </Link>
+              </div>
+
+              <InstallButton />
+            </div>
           </div>
 
           {/* Donation / support section, directly below the download CTA. */}
           <DonationSection />
+          
         </div>
       </main>
 
       {/* ============================== FOOTER ============================== */}
       <footer className="flex justify-between items-center px-6 py-16 text-xs opacity-70 text-[#F2E9E4]">
-        <div className="flex flex-col gap-1 leading-tight">
+        <div className="flex flex-col gap-1 leading-tight text-left">
           <p className="text-[#F2E9E4]">Someone on Mettivo might give you butterflies.</p>
           <p className="text-[#D4B18A] font-semibold tracking-wider uppercase leading-none">
             FIND OUT WHO &darr;
           </p>
         </div>
-        <p className="text-[#F2E9E4]">
+        <p className="text-[#F2E9E4] text-right">
           All photos are of models and used for illustrative purposes only &bull; Mettivo &copy; 2026
         </p>
       </footer>

@@ -135,8 +135,11 @@ export async function fetchChallenge(identity?: ChallengeIdentity): Promise<stri
   console.log('[Client] fetchChallenge received identity:', identity);
 
   const params = new URLSearchParams();
+  
+  // ✅ THESE ARE THE EXACT LINES YOU ASKED ABOUT:
   if (identity?.displayName) params.set('name', identity.displayName);
   if (identity?.gender) params.set('gender', identity.gender);
+  
   const query = params.toString();
   const path = query
     ? `/api/verification/challenge?${query}`
