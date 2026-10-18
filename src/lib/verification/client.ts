@@ -131,12 +131,10 @@ export interface ChallengeIdentity {
 export async function fetchChallenge(identity?: ChallengeIdentity): Promise<string> {
   const token = await accessToken();
 
-  // DEBUGGING LOG: Open your browser console. Look at what is printed here.
-  console.log('[Client] fetchChallenge received identity:', identity);
+  // ✅ BEACON 1: What did the modal pass in?
+  console.log('[BEACON 1 - Client] fetchChallenge received identity:', identity);
 
   const params = new URLSearchParams();
-  
-  // ✅ THESE ARE THE EXACT LINES YOU ASKED ABOUT:
   if (identity?.displayName) params.set('name', identity.displayName);
   if (identity?.gender) params.set('gender', identity.gender);
   
@@ -144,6 +142,9 @@ export async function fetchChallenge(identity?: ChallengeIdentity): Promise<stri
   const path = query
     ? `/api/verification/challenge?${query}`
     : '/api/verification/challenge';
+
+  // ✅ BEACON 2: What is the exact URL being fetched?
+  console.log('[BEACON 2 - Client] Fetching URL:', path);
 
   let response: Response;
   try {

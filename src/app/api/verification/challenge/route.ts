@@ -26,6 +26,9 @@ export async function GET(request: Request): Promise<NextResponse> {
   const nameParam = params.get('name')?.trim() || null;
   const suppliedGender = normaliseGender(params.get('gender'));
 
+  // ✅ BEACON 3: What did the server extract from the URL?
+  console.log('[BEACON 3 - Server] Parsed Params:', { nameParam, suppliedGender });
+
   let displayName: string | null = nameParam;
   let gender: PhraseGender = suppliedGender ?? 'Nonbinary';
 
@@ -54,6 +57,9 @@ export async function GET(request: Request): Promise<NextResponse> {
       console.error('Failed to fetch profile for phrase', e);
     }
   }
+
+  // ✅ BEACON 4: What are the final values used to build the phrase?
+  console.log('[BEACON 4 - Server] Final generation values:', { displayName, gender });
 
   const phrase = buildChallengePhrase({ displayName, gender });
   return NextResponse.json({ phrase }, { status: 200 });
