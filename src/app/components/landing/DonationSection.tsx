@@ -7,7 +7,7 @@ const PRESET_AMOUNTS = [5, 10, 25, 50, 100, 250];
 export default function DonationSection() {
   const [frequency, setFrequency] = useState<'one-time' | 'monthly'>('one-time');
   const [amount, setAmount] = useState<number | string>(10);
-  const [currency, setCurrency] = useState<'EUR' | 'USD' | 'NPR'>('EUR');
+  const [currency, setCurrency] = useState<'EUR' | 'USD'>('EUR');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -32,8 +32,8 @@ export default function DonationSection() {
         // Redirect to Stripe Checkout
         window.location.href = data.url;
       }
-    } catch (err: any) {
-      setError(err.message || 'Something went wrong. Please try again.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Something went wrong. Please try again.');
       setLoading(false);
     }
   };
@@ -103,7 +103,7 @@ export default function DonationSection() {
         <div className="flex flex-col md:flex-row gap-4 mb-6">
           <div className="relative flex-grow">
             <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold">
-              {currency === 'EUR' ? '€' : currency === 'USD' ? '$' : '₨'}
+              {currency === 'EUR' ? '€' : '$'}
             </span>
             <input
               type="number"
@@ -117,12 +117,11 @@ export default function DonationSection() {
           
           <select
             value={currency}
-            onChange={(e) => setCurrency(e.target.value as 'EUR' | 'USD' | 'NPR')}
+            onChange={(e) => setCurrency(e.target.value as 'EUR' | 'USD')}
             className="bg-black/40 border border-white/10 rounded-xl px-4 py-4 text-white focus:outline-none focus:border-rose-500 appearance-none min-w-[100px] cursor-pointer"
           >
             <option value="EUR">EUR</option>
             <option value="USD">USD</option>
-            <option value="NPR">NPR</option>
           </select>
         </div>
 

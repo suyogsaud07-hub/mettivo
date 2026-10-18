@@ -146,6 +146,21 @@ describe('analyzeFace', () => {
     expect(verdict!.score).toBeGreaterThanOrEqual(VERIFICATION_THRESHOLD);
   });
 
+  it('parses a reply the model wrapped in a markdown JSON fence', async () => {
+    const fenced = {
+      choices: [{ message: { content: '```json\n' + JSON.stringify(okHuman) + '\n```' } }],
+    };
+    const verdict = await analyzeFace(
+      { selfieUrl: 'data:image/png;base64,aGk=', gender: 'Woman' },
+      { env: ENV, fetchImpl: fetchReturning(fenced) }
+    );
+    expect(verdict).toMatchObject({
+      human: true,
+      facePresent: true,
+      apparentGender: 'woman',
+    });
+  });
+
   it('flags a gender mismatch', async () => {
     const verdict = await analyzeFace(
       { selfieUrl: 'data:image/png;base64,aGk=', gender: 'Woman' },

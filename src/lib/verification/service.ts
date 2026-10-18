@@ -20,6 +20,7 @@ import {
   matchesSelectedGender,
   readVerificationEnv,
   transcribeVoice,
+  type FaceVerdict,
   type VerificationEnv,
   type VerificationGender,
 } from '@/lib/verification/ai';
@@ -35,7 +36,7 @@ import {
   type VerificationWriterDeps,
 } from '@/lib/verification/writer';
 import { readWorkerEnv, type WorkerEnv } from '@/lib/moderation/worker';
-import { logger } from '@/lib/logger';
+import { logger, errorContext } from '@/lib/logger';
 
 export interface VerificationResult {
   status: number;
@@ -105,6 +106,18 @@ function aiDeps(deps: ServiceDeps) {
   };
 }
 
+/**
+ * True only when the AI provider has an API key.
+ *
+ * A missing key is a deployment/operator mistake (HTTP 500), not a provider
+ * outage (HTTP 503): returning the two as the same generic `ai_unavailable`
+ * hides the real reason a route is refusing every request. The verdict itself
+ * is still fail-closed either way — no key, no verification.
+ */
+function aiIsConfigured(deps: ServiceDeps): boolean {
+  return aiDeps(deps).env.apiKey !== null;
+}
+
 async function parseJsonBody(request: Request): Promise<Record<string, unknown> | null> {
   try {
     const parsed: unknown = await request.json();
@@ -162,8 +175,31 @@ export async function verifyFace(
     return { status: 413, body: { error: 'image_too_large' } };
   }
 
-  const verdict = await analyzeFace({ selfieUrl, gender }, aiDeps(deps));
+  if (!aiIsConfigured(deps)) {
+    logger.error(
+      'verification.face_ai_misconfigured',
+      'AI_MODERATION_API_KEY is not set, so face verification cannot run.'
+    );
+    return { status: 500, body: { error: 'Missing AI configuration' } };
+  }
+
+  let verdict: FaceVerdict | null;
+  try {
+    verdict = await analyzeFace({ selfieUrl, gender }, aiDeps(deps));
+  } catch (error) {
+    // `analyzeFace` is documented to return `null` rather than throw, so a throw
+    // here is a bug — log it with the stack via the provider rather than letting
+    // it escape as an opaque raw 500.
+    logger.error(
+      'verification.face_ai_threw',
+      'The face classifier threw instead of returning a verdict.',
+      errorContext(error)
+    );
+    console.error('[verification.face] analyzeFace threw:', error);
+    return { status: 503, body: { error: 'ai_unavailable' } };
+  }
   if (!verdict) {
+    logger.error('verification.face_ai_unavailable', 'The face classifier returned no verdict.');
     return { status: 503, body: { error: 'ai_unavailable' } };
   }
 

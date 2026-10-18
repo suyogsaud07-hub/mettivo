@@ -29,12 +29,11 @@ const stripePromise: Promise<Stripe | null> | null = PUBLISHABLE_KEY
   : null;
 
 type Frequency = 'one-time' | 'monthly';
-type Currency = 'EUR' | 'USD' | 'NPR';
+type Currency = 'EUR' | 'USD';
 
 const CURRENCY_LABELS: Record<Currency, { code: Currency; symbol: string; label: string }> = {
   EUR: { code: 'EUR', symbol: '€', label: 'EUR €' },
   USD: { code: 'USD', symbol: '$', label: 'USD $' },
-  NPR: { code: 'NPR', symbol: '₨', label: 'NPR ₨' },
 };
 
 const PRESET_AMOUNTS = [5, 10, 25, 50, 100, 250] as const;
@@ -44,7 +43,16 @@ const FREQUENCIES: Frequency[] = ['one-time', 'monthly'];
 const AMOUNT_MIN = 1;
 const AMOUNT_MAX = 50_000;
 
-export default function DonationSection() {
+interface DonationSectionProps {
+  /**
+   * Optional content rendered inside the donation card, directly below the
+   * "Donate" button. The `/donate` page uses it for the "continue without
+   * donating" link, so the escape hatch sits with the payment affordance.
+   */
+  afterDonate?: React.ReactNode;
+}
+
+export default function DonationSection({ afterDonate }: DonationSectionProps = {}) {
   const [frequency, setFrequency] = useState<Frequency>('one-time');
   const [selectedAmount, setSelectedAmount] = useState<number | null>(null);
   const [customAmount, setCustomAmount] = useState('');
@@ -339,6 +347,9 @@ export default function DonationSection() {
             Donate ❤️
             {isLoading ? <span className="text-xs">Processing…</span> : null}
           </button>
+
+          {/* Escape hatch, e.g. "Continue without donation". */}
+          {afterDonate ? <div className="mt-4">{afterDonate}</div> : null}
         </div>
       </div>
     </section>

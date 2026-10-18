@@ -100,8 +100,8 @@ describe('POST /api/donate/checkout', () => {
     expect(params.line_items[0].price_data).toMatchObject({ currency: 'eur', unit_amount: 2500 });
     expect(params.line_items[0].price_data).not.toHaveProperty('recurring');
     expect(params.billing_address_collection).toBe('required');
-    expect(params.success_url).toContain('https://mettivo.test/?donation=success');
-    expect(params.cancel_url).toBe('https://mettivo.test/?donation=canceled');
+    expect(params.success_url).toContain('https://mettivo.test/auth?donation=success');
+    expect(params.cancel_url).toBe('https://mettivo.test/donate?donation=canceled');
   });
 
   it('creates a monthly subscription for a custom amount', async () => {

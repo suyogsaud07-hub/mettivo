@@ -158,6 +158,24 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * Logs an upstream AI failure with the provider's exact error message and stack.
+ *
+ * This module is server-only and never bundled for the browser, so the stack is
+ * safe here and is the fastest way to tell a bad key, an oversized payload and a
+ * cold-model timeout apart. The request body (which holds the member's selfie)
+ * is never logged.
+ */
+function logProviderError(event: string, error: unknown): void {
+  if (error instanceof Error) {
+    console.error(
+      `[verification.ai] ${event}: ${error.name}: ${error.message}\n${error.stack ?? ''}`
+    );
+    return;
+  }
+  console.error(`[verification.ai] ${event}:`, error);
+}
+
 async function fetchWithTimeout(
   fetchImpl: typeof fetch,
   url: string,
@@ -180,23 +198,30 @@ async function fetchWithTimeout(
 async function fetchWithRetry(
   fetchImpl: typeof fetch,
   url: string,
-  init: RequestInit
+  init: RequestInit,
+  label: string
 ): Promise<Response | null> {
   let response: Response;
   try {
     response = await fetchWithTimeout(fetchImpl, url, init);
-  } catch {
+  } catch (error) {
+    logProviderError(`${label} request failed (transport or timeout)`, error);
     return null;
   }
   if (!RETRY_STATUSES.has(response.status)) return response;
 
-  // Drain the failed body so the connection can be reused.
-  await response.text().catch(() => '');
+  // Drain the failed body so the connection can be reused, and keep it for the
+  // log — a 429's body names the rate-limit window, a 400's names the bad field.
+  const retryBody = await response.text().catch(() => '');
+  console.error(
+    `[verification.ai] ${label} returned ${response.status}; retrying once. Body: ${retryBody.slice(0, 500)}`
+  );
 
   await sleep(RETRY_DELAY_MS);
   try {
     return await fetchWithTimeout(fetchImpl, url, init);
-  } catch {
+  } catch (error) {
+    logProviderError(`${label} retry failed (transport or timeout)`, error);
     return null;
   }
 }
@@ -209,8 +234,14 @@ async function callVision(
   env: VerificationEnv,
   fetchImpl: typeof fetch
 ): Promise<Record<string, unknown> | null> {
-  if (!env.apiKey) return null;
-  if (imageUrls.some((url) => !url)) return null;
+  if (!env.apiKey) {
+    console.error('[verification.ai] vision blocked: AI_MODERATION_API_KEY is not configured');
+    return null;
+  }
+  if (imageUrls.some((url) => !url)) {
+    console.error('[verification.ai] vision blocked: an image URL was empty');
+    return null;
+  }
 
   const content: VisionMessage['content'] = [
     { type: 'text', text: userText },
@@ -220,53 +251,99 @@ async function callVision(
     })),
   ];
 
-  const response = await fetchWithRetry(fetchImpl, `${env.baseUrl}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${env.apiKey}`,
-      'Content-Type': 'application/json',
+  const response = await fetchWithRetry(
+    fetchImpl,
+    `${env.baseUrl}/chat/completions`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${env.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: env.visionModel,
+        temperature: 0,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content },
+        ] satisfies VisionMessage[],
+      }),
     },
-    body: JSON.stringify({
-      model: env.visionModel,
-      temperature: 0,
-      response_format: { type: 'json_object' },
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content },
-      ] satisfies VisionMessage[],
-    }),
-  });
-  if (!response || !response.ok) return null;
+    'vision chat/completions'
+  );
+  if (!response) return null;
+  if (!response.ok) {
+    const errorBody = await response.text().catch(() => '');
+    console.error(
+      `[verification.ai] vision chat/completions returned ${response.status}: ${errorBody.slice(0, 500)}`
+    );
+    return null;
+  }
 
   let text: string;
   try {
     text = await response.text();
-  } catch {
+  } catch (error) {
+    logProviderError('vision response body could not be read', error);
     return null;
   }
-  if (text.length > MAX_RESPONSE_BYTES) return null;
+  if (text.length > MAX_RESPONSE_BYTES) {
+    console.error(
+      `[verification.ai] vision response was ${text.length} bytes (cap ${MAX_RESPONSE_BYTES})`
+    );
+    return null;
+  }
 
   let payload: unknown;
   try {
     payload = JSON.parse(text);
-  } catch {
+  } catch (error) {
+    logProviderError('vision response was not valid JSON', error);
     return null;
   }
-  if (!isRecord(payload)) return null;
+  if (!isRecord(payload)) {
+    console.error('[verification.ai] vision response was not a JSON object');
+    return null;
+  }
 
   const choices = payload.choices;
-  if (!Array.isArray(choices) || choices.length === 0) return null;
+  if (!Array.isArray(choices) || choices.length === 0) {
+    console.error('[verification.ai] vision response had no choices');
+    return null;
+  }
   const first = choices[0];
-  if (!isRecord(first)) return null;
+  if (!isRecord(first)) {
+    console.error('[verification.ai] vision response choice was not an object');
+    return null;
+  }
   const message = first.message;
-  if (!isRecord(message)) return null;
+  if (!isRecord(message)) {
+    console.error('[verification.ai] vision response choice had no message object');
+    return null;
+  }
   const messageContent = message.content;
-  if (typeof messageContent !== 'string') return null;
+  if (typeof messageContent !== 'string') {
+    console.error('[verification.ai] vision response message.content was not a string');
+    return null;
+  }
+
+  // Groq's vision models reject `response_format: json_object`, so the prompt
+  // only *asks* for JSON — the model may still fence it in a ```json block.
+  // Strip that before parsing.
+  const cleanContent = messageContent
+    .replace(/^```(?:json)?\n?/, '')
+    .replace(/\n?```$/, '')
+    .trim();
 
   try {
-    const parsed: unknown = JSON.parse(messageContent);
-    return isRecord(parsed) ? parsed : null;
-  } catch {
+    const parsed: unknown = JSON.parse(cleanContent);
+    if (!isRecord(parsed)) {
+      console.error('[verification.ai] vision model content was not a JSON object');
+      return null;
+    }
+    return parsed;
+  } catch (error) {
+    logProviderError('vision model content was not valid JSON', error);
     return null;
   }
 }
@@ -449,21 +526,26 @@ export async function transcribeVoice(
   form.append('model', model);
   form.append('file', blob, `voice.${extension}`);
 
-  const response = await fetchWithRetry(fetchImpl, `${env.baseUrl}/audio/transcriptions`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${env.apiKey}` },
-    body: form,
-  });
-  
+  const response = await fetchWithRetry(
+    fetchImpl,
+    `${env.baseUrl}/audio/transcriptions`,
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${env.apiKey}` },
+      body: form,
+    },
+    'audio transcription'
+  );
+
   if (!response) {
-    console.error('[verification.ai] Groq audio fetch failed (timeout/network)');
+    console.error('[verification.ai] audio transcription fetch failed (timeout/network)');
     return null;
   }
 
   if (!response.ok) {
-    // Log the actual error from Groq to help debug
+    // Log the actual error from the provider to help debug.
     const errText = await response.text().catch(() => '');
-    console.error(`[verification.ai] Groq audio returned ${response.status}: ${errText}`);
+    console.error(`[verification.ai] audio transcription returned ${response.status}: ${errText}`);
     return null;
   }
 

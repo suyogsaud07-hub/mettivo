@@ -92,8 +92,10 @@ export async function POST(request: Request): Promise<NextResponse> {
         quantity: 1,
       },
     ],
-    success_url: `${origin}/?donation=success&session_id={CHECKOUT_SESSION_ID}`,
-    cancel_url: `${origin}/?donation=canceled`,
+    // A completed donation hands the member straight to signup/login; a
+    // cancel returns them to the donation page so they can try again or skip.
+    success_url: `${origin}/auth?donation=success&session_id={CHECKOUT_SESSION_ID}`,
+    cancel_url: `${origin}/donate?donation=canceled`,
     billing_address_collection: 'required',
     metadata: {
       frequency,

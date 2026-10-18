@@ -8,19 +8,20 @@ import HeaderLanguageDropdown from '@/app/components/HeaderLanguageDropdown';
 import MobileDrawer from '@/app/components/MobileDrawer';
 import RibbonLogo from '@/app/components/RibbonLogo';
 import FounderLetterLink from '@/app/components/FounderLetterLink';
-import DonationSection from '@/components/landing/DonationSection';
 
 /**
  * The public landing page — rebuilt as the Mettivo "Midnight Romance"
  * Bumble-style entry surface.
  *
  * It never reads the session and never redirects: every visitor, signed in or
- * not, sees the same page and is handed to the signup surface by the primary
- * CTA. Local storage is only touched inside effects, so there are no hydration
- * mismatches.
+ * not, sees the same page. The primary CTA hands off to the intermediate
+ * `/donate` page, which in turn offers signup/login. Local storage is only
+ * touched inside effects, so there are no hydration mismatches.
  */
 
-const SIGNUP_HREF = '/signup';
+// The CTA no longer goes straight to auth: it lands on the intermediate
+// donation page, which offers both "donate" and "continue without donating".
+const DONATE_HREF = '/donate';
 
 export default function LandingPage() {
   const { t } = useLanguage();
@@ -76,56 +77,61 @@ export default function LandingPage() {
       </nav>
 
       {/* ============================== HERO ============================== */}
-      <main className="flex-1 flex flex-col items-center justify-center pt-24 pb-0 text-center px-6">
-        {/* We expanded this container so the Donation Box has room to breathe */}
-        <div className="max-w-4xl w-full flex flex-col items-center">
-          
-          {/* Hero Content constrained to original width */}
-          <div className="max-w-xl w-full">
-            {/* Hero headline: serif, black weight, large. "people" in gold, oxblood period. */}
-            <div className="font-serif font-black text-4xl sm:text-5xl md:text-6xl leading-[1.15] text-[#F2E9E4] mb-10">
-              Meet your
-              <br />
-              kind of
-              <br />
-              <span className="font-serif italic text-[#D4B18A]">people</span>
-              <span className="text-[#4A1828]">.</span>
-            </div>
-
-            {/* Stacked CTAs: "Get started" (gold) then "Get the app" (surface + gold border). */}
-            <div className="max-w-[260px] w-full flex flex-col gap-4 mx-auto">
-              <div className="group w-full">
-                <Link
-                  href={SIGNUP_HREF}
-                  className="group w-full inline-flex items-center justify-center gap-1 py-3.5 px-6 rounded-full bg-[#D4B18A] text-[#17121C] text-sm font-bold tracking-tight uppercase shadow-lg shadow-[#D4B18A]/35 transition-all hover:bg-[#E4C9A0] hover:shadow-[#D4B18A]/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D4B18A] focus-visible:ring-offset-2 focus-visible:ring-offset-[#17121C]"
-                  data-testid="landing-primary-cta"
-                >
-                  {t('get_started')}
-                  <span className="group-hover:translate-x-1 transition-transform inline-block ml-0.5">
-                    &rarr;
-                  </span>
-                </Link>
-              </div>
-
-              <InstallButton />
-            </div>
+      <main className="flex-1 flex flex-col items-center justify-center pt-24 pb-16 text-center px-6">
+        <div className="max-w-xl w-full">
+          {/* Hero headline: serif, black weight, large. "people" in gold, oxblood period. */}
+          <div className="font-serif font-black text-4xl sm:text-5xl md:text-6xl leading-[1.15] text-[#F2E9E4] mb-10">
+            Meet your
+            <br />
+            kind of
+            <br />
+            <span className="font-serif italic text-[#D4B18A]">people</span>
+            <span className="text-[#4A1828]">.</span>
           </div>
 
-          {/* Donation / support section, directly below the download CTA. */}
-          <DonationSection />
-          
+          {/* Stacked CTAs. The butterflies invitation now leads straight into the
+              primary action, followed by the donation and install options. */}
+          <div className="max-w-[260px] w-full flex flex-col gap-4 mx-auto">
+            {/* Invitation, moved up from the footer to sit directly above the CTA. */}
+            <div className="flex flex-col gap-1 leading-tight">
+              <p className="text-[#F2E9E4] text-xs">
+                Someone on Mettivo might give you butterflies.
+              </p>
+              <p className="text-[#D4B18A] font-semibold tracking-wider uppercase leading-none text-xs">
+                FIND OUT WHO &darr;
+              </p>
+            </div>
+
+            <div className="group w-full">
+              <Link
+                href={DONATE_HREF}
+                className="group w-full inline-flex items-center justify-center gap-1 py-3.5 px-6 rounded-full bg-[#D4B18A] text-[#17121C] text-sm font-bold tracking-tight uppercase shadow-lg shadow-[#D4B18A]/35 transition-all hover:bg-[#E4C9A0] hover:shadow-[#D4B18A]/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D4B18A] focus-visible:ring-offset-2 focus-visible:ring-offset-[#17121C]"
+                data-testid="landing-primary-cta"
+              >
+                {t('get_started')}
+                <span className="group-hover:translate-x-1 transition-transform inline-block ml-0.5">
+                  &rarr;
+                </span>
+              </Link>
+            </div>
+
+            {/* Secondary CTA — same destination, framed as a donation. */}
+            <Link
+              href={DONATE_HREF}
+              className="w-full inline-flex items-center justify-center gap-2 py-3.5 px-6 rounded-full bg-[#29202D] border border-[#D4B18A]/60 text-[#D4B18A] text-sm font-bold tracking-tight uppercase transition-all hover:bg-[#D4B18A]/10 hover:text-[#F2E9E4] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D4B18A]"
+              data-testid="landing-donate-cta"
+            >
+              Donate to Mettivo
+            </Link>
+
+            <InstallButton />
+          </div>
         </div>
       </main>
 
       {/* ============================== FOOTER ============================== */}
-      <footer className="flex justify-between items-center px-6 py-16 text-xs opacity-70 text-[#F2E9E4]">
-        <div className="flex flex-col gap-1 leading-tight text-left">
-          <p className="text-[#F2E9E4]">Someone on Mettivo might give you butterflies.</p>
-          <p className="text-[#D4B18A] font-semibold tracking-wider uppercase leading-none">
-            FIND OUT WHO &darr;
-          </p>
-        </div>
-        <p className="text-[#F2E9E4] text-right">
+      <footer className="flex justify-center items-center px-6 py-16 text-xs opacity-70 text-[#F2E9E4]">
+        <p className="text-center">
           All photos are of models and used for illustrative purposes only &bull; Mettivo &copy; 2026
         </p>
       </footer>
