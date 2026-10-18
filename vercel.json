@@ -1,8 +1,8 @@
 {
   "crons": [
     {
-      "path": "/api/moderation/scan",
-      "schedule": "*/5 * * * *"
+      "path": "/api/your-cron-route",
+      "schedule": "0 0 * * *"
     }
   ]
 }
