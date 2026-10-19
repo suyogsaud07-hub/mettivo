@@ -69,7 +69,7 @@ describe('verifyFace — AI configuration vs outage', () => {
     expect(result.body.details).toEqual(expect.stringContaining('could not be reached'));
   });
 
-  it('answers 503 with the upstream status when the provider rejects the key', async () => {
+  it('answers 500 ai_misconfigured when the provider rejects the credential, without echoing its body', async () => {
     const unauthorized: typeof fetch = (async () =>
       new Response('invalid api key', { status: 401 })) as typeof fetch;
 
@@ -78,8 +78,26 @@ describe('verifyFace — AI configuration vs outage', () => {
       deps({ verificationEnv: ENV, aiFetchImpl: unauthorized })
     );
 
+    // A rejected key is an operator misconfiguration, not a retryable outage.
+    expect(result.status).toBe(500);
+    expect(result.body.error).toBe('ai_misconfigured');
+    expect(result.body.details).toEqual(expect.stringContaining('HTTP 401'));
+    // The provider's raw error body must never reach the browser.
+    expect(result.body.details).not.toEqual(expect.stringContaining('invalid api key'));
+    expect(typeof result.body.requestId).toBe('string');
+  });
+
+  it('answers 503 ai_unavailable (with a request id) when the provider returns a non-auth error', async () => {
+    const badRequest: typeof fetch = (async () =>
+      new Response('bad request', { status: 400 })) as typeof fetch;
+
+    const result = await verifyFace(
+      faceRequest(),
+      deps({ verificationEnv: ENV, aiFetchImpl: badRequest })
+    );
+
     expect(result.status).toBe(503);
     expect(result.body.error).toBe('ai_unavailable');
-    expect(result.body.details).toEqual(expect.stringContaining('HTTP 401'));
+    expect(typeof result.body.requestId).toBe('string');
   });
 });

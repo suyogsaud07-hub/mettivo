@@ -26,6 +26,8 @@ import {
 } from './surface';
 
 import Icebreaker from './Icebreaker';
+import LudoDash from './LudoDash';
+import LudoRoyale from './LudoRoyale';
 import MemoryMatch from './MemoryMatch';
 import SpeedMatching from './SpeedMatching';
 import SpinTheWheel from './SpinTheWheel';
@@ -101,6 +103,8 @@ export type GameEmbed = ReactEmbed | CanvasEmbed | IframeEmbed;
 export const GAME_PLAYERS: Record<string, ComponentType<GamePlayerProps>> = {
   'tic-tac-toe': TicTacToe,
   'uno-lite': UnoLite,
+  'ludo-royale': LudoRoyale,
+  'ludo-dash': LudoDash,
   'memory-match': MemoryMatch,
   'word-guess': WordGuess,
   icebreaker: Icebreaker,
@@ -113,12 +117,14 @@ export const GAME_PLAYERS: Record<string, ComponentType<GamePlayerProps>> = {
 /**
  * Score ceilings. MUST stay identical to `public.game_catalog.max_score`:
  * too low silently truncates a legitimate result, too high makes the server
- * reject the write. `ludo-royale` / `ludo-dash` are not playable and have no
- * ceiling, so they are deliberately absent.
+ * reject the write. `ludo-royale` / `ludo-dash` are now playable solo against
+ * bots, so they carry their ceiling here too.
  */
 export const GAME_MAX_SCORES: Record<string, number> = {
   'tic-tac-toe': 10,
   'uno-lite': 500,
+  'ludo-royale': 100,
+  'ludo-dash': 100,
   'memory-match': 100,
   'word-guess': 60,
   icebreaker: 50,
@@ -132,6 +138,8 @@ export const GAME_MAX_SCORES: Record<string, number> = {
 export const GAME_EMBEDS: Record<string, GameEmbed> = {
   'tic-tac-toe': { mode: 'react', title: 'Tic Tac Toe', maxScore: 10 },
   'uno-lite': { mode: 'react', title: 'UNO', maxScore: 500 },
+  'ludo-royale': { mode: 'react', title: 'Ludo Royale', maxScore: 100 },
+  'ludo-dash': { mode: 'react', title: 'Ludo Dash', maxScore: 100 },
   'memory-match': {
     mode: 'canvas',
     title: 'Memory Match',
@@ -333,6 +341,7 @@ export function GameShell({ gameId, onFinish, title, subtitle, maxScore }: GameS
 
   const reportedRef = useRef(false);
   const onFinishRef = useRef(onFinish);
+  const startedAtRef = useRef(0);
 
   // Keep the latest callback without making the stable `report` below change
   // identity on every parent render.
@@ -340,10 +349,17 @@ export function GameShell({ gameId, onFinish, title, subtitle, maxScore }: GameS
     onFinishRef.current = onFinish;
   });
 
-  // The shared running timer. Cleared on unmount and frozen once the game ends.
+  // The shared running timer. Wall-clock based, so a throttled background tab
+  // cannot make it drift behind the real elapsed time. Cleared on unmount,
+  // restarted on every `round`, and frozen once the game ends.
   useEffect(() => {
     if (finished) return undefined;
-    const handle = window.setInterval(() => setElapsed((prev) => prev + 1), 1000);
+
+    startedAtRef.current = Date.now();
+    // `restart` already resets `elapsed` to 0 before bumping `round`; a fresh
+    // mount starts at 0 by construction, so no setState is needed here.
+    const tick = () => setElapsed(Math.floor((Date.now() - startedAtRef.current) / 1000));
+    const handle = window.setInterval(tick, 1000);
     return () => window.clearInterval(handle);
   }, [finished, round]);
 

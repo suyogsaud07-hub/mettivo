@@ -40,13 +40,106 @@ const UPSTREAM_TIMEOUT_MS = 30_000;
 
 export type BotErrorCode = 'invalid_request' | 'not_configured' | 'upstream_error' | 'empty_result';
 
+/**
+ * Why a provider call failed, so the route can answer with a status that means
+ * something. Collapsing every failure into a generic 502 tells an operator
+ * nothing and tells a member to retry when a retry cannot possibly help.
+ *
+ *   config     — missing/invalid provider credentials or a rejected request
+ *                shape (bad model). A deployment mistake, not an outage.
+ *   rate_limit — the provider throttled us (429/quota).
+ *   timeout    — the fetch aborted or the network refused (no HTTP response).
+ *   provider   — the provider itself failed (5xx).
+ *   malformed  — the provider answered with an unreadable/oversized body.
+ *   empty      — the provider answered 200 with no usable completion.
+ */
+export type BotFailureCategory =
+  | 'config'
+  | 'rate_limit'
+  | 'timeout'
+  | 'provider'
+  | 'malformed'
+  | 'empty';
+
 export class BotError extends Error {
   readonly code: BotErrorCode;
-  constructor(code: BotErrorCode, message: string) {
+  readonly category: BotFailureCategory | null;
+
+  constructor(code: BotErrorCode, message: string, category: BotFailureCategory | null = null) {
     super(message);
     this.name = 'BotError';
     this.code = code;
+    this.category = category;
   }
+}
+
+/** Buckets an upstream HTTP status into the failure the route acts on. */
+export function classifyHttpFailure(status: number): BotFailureCategory {
+  if (status === 401 || status === 403) return 'config';
+  if (status === 429) return 'rate_limit';
+  if (status >= 500) return 'provider';
+  // Any other 4xx is the provider rejecting our request (e.g. an unknown model):
+  // a configuration problem, not a transient outage.
+  return 'config';
+}
+
+/** The HTTP answer the chat route should return for a failed Subbu call. */
+export interface BotFailure {
+  status: number;
+  error: string;
+  message: string;
+}
+
+/**
+ * Maps any thrown value from `chatWithSubbu` to a client-facing response.
+ *
+ * The provider's own error body is deliberately never echoed here: it can carry
+ * request details. The full reason is logged server-side by the caller. Client
+ * errors keep their status (400/401), a misconfiguration is a 500, a throttled
+ * provider is a retryable 503, and only genuine upstream failures are a 502.
+ */
+export function botFailureFromError(error: unknown): BotFailure {
+  if (error instanceof BotError) {
+    switch (error.code) {
+      case 'invalid_request':
+        return { status: 400, error: 'invalid_request', message: error.message };
+      case 'not_configured':
+        return {
+          status: 500,
+          error: 'ai_misconfigured',
+          message: 'Subbu is not configured correctly.',
+        };
+      case 'empty_result':
+        return {
+          status: 502,
+          error: 'upstream_error',
+          message: 'Subbu is unavailable right now.',
+        };
+      case 'upstream_error':
+        switch (error.category) {
+          case 'config':
+            return {
+              status: 500,
+              error: 'ai_misconfigured',
+              message: 'Subbu is not configured correctly.',
+            };
+          case 'rate_limit':
+            return {
+              status: 503,
+              error: 'ai_unavailable',
+              message: 'Subbu is busy right now. Please try again shortly.',
+            };
+          default:
+            return {
+              status: 502,
+              error: 'upstream_error',
+              message: 'Subbu is unavailable right now.',
+            };
+        }
+    }
+  }
+  // An unexpected throw is an internal fault, not a provider outage.
+  return { status: 500, error: 'internal_error', message: 'Subbu is unavailable right now.' };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -103,7 +196,7 @@ export async function chatWithSubbu(
   deps: ChatDeps = {}
 ): Promise<{ reply: string | null; tool_calls?: SubbuToolCall[]; model: string }> {
   const env = deps.env ?? readBotEnv();
-  if (!env.apiKey) throw new BotError('not_configured', 'Subbu is not configured.');
+  if (!env.apiKey) throw new BotError('not_configured', 'Subbu is not configured.', 'config');
   if (history.length === 0) throw new BotError('invalid_request', 'There is no message to reply to.');
 
   const fetchImpl = deps.fetchImpl ?? fetch;
@@ -169,18 +262,18 @@ export async function chatWithSubbu(
     const message = error instanceof Error ? error.message : 'unknown error';
     const stack = error instanceof Error ? error.stack : undefined;
     console.error('[SUBBU CHAT ERROR]', message, stack);
-    throw new BotError('upstream_error', `Subbu did not answer in time: ${message}`);
+    throw new BotError('upstream_error', `Subbu did not answer in time (${message}).`, 'timeout');
   }
 
   if (!response.ok) {
-    // A 400/401/429 here is a payload/key/throttle problem, not an outage. Keep
-    // the provider's own words in the message so the client's `details` is useful.
+    // A 400/401/429 here is a payload/key/throttle problem, not an outage. The
+    // provider's own body is logged server-side but NOT echoed to the client.
     const errText = await response.text().catch(() => '');
     console.error('[SUBBU CHAT ERROR]', `HTTP ${response.status}`, errText.slice(0, 500));
-    const detail = errText.trim().slice(0, 200);
     throw new BotError(
       'upstream_error',
-      `Subbu is unavailable right now (HTTP ${response.status}${detail ? `: ${detail}` : ''}).`
+      `Subbu is unavailable right now (HTTP ${response.status}).`,
+      classifyHttpFailure(response.status)
     );
   }
 
@@ -191,13 +284,17 @@ export async function chatWithSubbu(
     const message = error instanceof Error ? error.message : 'unknown error';
     const stack = error instanceof Error ? error.stack : undefined;
     console.error('[SUBBU CHAT ERROR]', message, stack);
-    throw new BotError('upstream_error', `Subbu returned an unreadable response: ${message}`);
+    throw new BotError(
+      'upstream_error',
+      `Subbu returned an unreadable response: ${message}`,
+      'malformed'
+    );
   }
   if (text.length > MAX_RESPONSE_BYTES) {
     console.error(
       `[SUBBU CHAT ERROR] response was ${text.length} bytes (cap ${MAX_RESPONSE_BYTES})`
     );
-    throw new BotError('upstream_error', 'Subbu returned an oversized response.');
+    throw new BotError('upstream_error', 'Subbu returned an oversized response.', 'malformed');
   }
 
   let payload: unknown;
@@ -207,13 +304,17 @@ export async function chatWithSubbu(
     const message = error instanceof Error ? error.message : 'unknown error';
     const stack = error instanceof Error ? error.stack : undefined;
     console.error('[SUBBU CHAT ERROR]', message, stack);
-    throw new BotError('upstream_error', `Subbu returned an unreadable response: ${message}`);
+    throw new BotError(
+      'upstream_error',
+      `Subbu returned an unreadable response: ${message}`,
+      'malformed'
+    );
   }
   const message = isRecord(payload) ? (payload.choices as unknown[] | undefined)?.[0] : undefined;
   const assistantMessage = isRecord(message) ? message.message : undefined;
 
   if (!isRecord(assistantMessage)) {
-    throw new BotError('empty_result', 'Subbu did not have an answer.');
+    throw new BotError('empty_result', 'Subbu did not have an answer.', 'empty');
   }
 
   // Handle Tool Calls (Banning users)
@@ -223,7 +324,7 @@ export async function chatWithSubbu(
   }
 
   const content = typeof assistantMessage.content === 'string' ? assistantMessage.content.trim() : '';
-  if (content.length === 0) throw new BotError('empty_result', 'Subbu did not have an answer.');
+  if (content.length === 0) throw new BotError('empty_result', 'Subbu did not have an answer.', 'empty');
 
   return { reply: content, model };
 }

@@ -123,18 +123,17 @@ async function cardPosition(
 }
 
 test.describe('§3.3 — the Game Hub', () => {
-  test('lists every new mini-game and keeps the unbuilt ones honest', async ({ page }) => {
+  test('lists every mini-game and marks the playable ones', async ({ page }) => {
     await openHub(page);
 
     for (const title of NEW_GAME_TITLES) {
       await expect(page.getByRole('button', { name: `Play ${title}` })).toBeVisible();
     }
 
-    // The two Ludo variants are still cards, still not pretending to be ready.
-    const ludoRoyale = page.getByRole('button', { name: 'Play Ludo Royale' });
-    await expect(ludoRoyale).toBeVisible();
-    await expect(ludoRoyale).toContainText('SOON');
-    await expect(page.getByRole('button', { name: 'Play Ludo Dash' })).toContainText('SOON');
+    // The two Ludo variants became playable against a bot in M30, so neither
+    // carries the SOON badge any more.
+    await expect(page.getByRole('button', { name: 'Play Ludo Royale' })).toContainText('PLAY');
+    await expect(page.getByRole('button', { name: 'Play Ludo Dash' })).toContainText('PLAY');
 
     // A playable game must not carry the SOON badge.
     await expect(page.getByRole('button', { name: 'Play Speed Matching' })).toContainText('PLAY');
@@ -147,6 +146,15 @@ test.describe('§3.3 — the Game Hub', () => {
     await expect(page.getByTestId('game-timer')).toBeVisible();
     await expect(page.getByTestId('game-restart')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Square 1, empty' })).toBeVisible();
+  });
+
+  test('opens the Ludo board with a roll control', async ({ page }) => {
+    await openHub(page);
+    await openGame(page, 'Ludo Dash');
+
+    await expect(page.getByTestId('ludo')).toHaveAttribute('data-variant', 'dash');
+    await expect(page.getByTestId('ludo-roll')).toBeEnabled();
+    await expect(page.getByTestId('ludo-token-0-0')).toBeVisible();
   });
 });
 

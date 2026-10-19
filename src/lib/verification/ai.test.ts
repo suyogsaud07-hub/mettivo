@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   analyzeFace,
   analyzePhoto,
+  classifyUpstreamStatus,
   dataUrlToBlob,
   matchesSelectedGender,
   phraseMatches,
@@ -58,6 +59,17 @@ describe('readVerificationEnv', () => {
   it('honours a configured transcription model, trimmed', () => {
     const env = readVerificationEnv({ AI_VERIFICATION_TRANSCRIBE_MODEL: '  gpt-4o-transcribe  ' });
     expect(env.transcribeModel).toBe('gpt-4o-transcribe');
+  });
+});
+
+describe('classifyUpstreamStatus', () => {
+  it('separates a rejected credential from a transient outage', () => {
+    expect(classifyUpstreamStatus(401)).toBe('auth');
+    expect(classifyUpstreamStatus(403)).toBe('auth');
+    expect(classifyUpstreamStatus(429)).toBe('rate_limit');
+    expect(classifyUpstreamStatus(503)).toBe('provider');
+    expect(classifyUpstreamStatus(400)).toBe('request');
+    expect(classifyUpstreamStatus(null)).toBe('transport');
   });
 });
 

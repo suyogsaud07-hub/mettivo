@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   BotError,
+  botFailureFromError,
   chatWithSubbu,
+  classifyHttpFailure,
   normaliseHistory,
   readBotEnv,
   type BotTurn,
@@ -208,5 +210,89 @@ describe('chatWithSubbu', () => {
     await expect(
       chatWithSubbu([{ role: 'user', content: 'hi' }], { env: ENV, fetchImpl: failing })
     ).rejects.toMatchObject({ code: 'upstream_error' });
+  });
+
+  it('classifies a rejected credential as config, not an outage', async () => {
+    await expect(
+      chatWithSubbu([{ role: 'user', content: 'hi' }], {
+        env: ENV,
+        fetchImpl: fetchReturning({ error: 'invalid api key' }, {}, 401),
+      })
+    ).rejects.toMatchObject({ code: 'upstream_error', category: 'config' });
+  });
+
+  it('classifies a throttle as rate_limit', async () => {
+    await expect(
+      chatWithSubbu([{ role: 'user', content: 'hi' }], {
+        env: ENV,
+        fetchImpl: fetchReturning({ error: 'slow down' }, {}, 429),
+      })
+    ).rejects.toMatchObject({ category: 'rate_limit' });
+  });
+
+  it('does not echo the provider error body into the failure message', async () => {
+    await expect(
+      chatWithSubbu([{ role: 'user', content: 'hi' }], {
+        env: ENV,
+        fetchImpl: fetchReturning({ error: 'secret internal detail' }, {}, 500),
+      })
+    ).rejects.toMatchObject({
+      message: expect.not.stringContaining('secret internal detail'),
+    });
+  });
+});
+
+describe('classifyHttpFailure', () => {
+  it('separates credentials, throttling and outages', () => {
+    expect(classifyHttpFailure(401)).toBe('config');
+    expect(classifyHttpFailure(403)).toBe('config');
+    expect(classifyHttpFailure(429)).toBe('rate_limit');
+    expect(classifyHttpFailure(503)).toBe('provider');
+    // A provider 4xx (e.g. an unknown model) is a configuration problem.
+    expect(classifyHttpFailure(400)).toBe('config');
+  });
+});
+
+describe('botFailureFromError', () => {
+  it('maps a missing key to a 500 misconfiguration', () => {
+    expect(
+      botFailureFromError(new BotError('not_configured', 'Subbu is not configured.', 'config'))
+    ).toEqual({
+      status: 500,
+      error: 'ai_misconfigured',
+      message: 'Subbu is not configured correctly.',
+    });
+  });
+
+  it('maps a rejected credential to a 500, not a misleading 502', () => {
+    const failure = botFailureFromError(new BotError('upstream_error', 'x', 'config'));
+    expect(failure.status).toBe(500);
+    expect(failure.error).toBe('ai_misconfigured');
+  });
+
+  it('maps a provider throttle to a retryable 503', () => {
+    expect(botFailureFromError(new BotError('upstream_error', 'x', 'rate_limit'))).toEqual({
+      status: 503,
+      error: 'ai_unavailable',
+      message: 'Subbu is busy right now. Please try again shortly.',
+    });
+  });
+
+  it('maps a genuine upstream failure to the specified 502 shape', () => {
+    expect(botFailureFromError(new BotError('upstream_error', 'x', 'provider'))).toEqual({
+      status: 502,
+      error: 'upstream_error',
+      message: 'Subbu is unavailable right now.',
+    });
+  });
+
+  it('keeps client errors at 400', () => {
+    expect(botFailureFromError(new BotError('invalid_request', 'no message')).status).toBe(400);
+  });
+
+  it('maps an unexpected throw to an internal error, never a 502', () => {
+    const failure = botFailureFromError(new Error('boom'));
+    expect(failure.status).toBe(500);
+    expect(failure.error).toBe('internal_error');
   });
 });

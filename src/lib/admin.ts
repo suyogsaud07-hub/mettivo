@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import type { ReportStatus } from '@/lib/types';
+import type { ReportRecord, TriageAssessment } from '@/lib/moderation/triage';
 
 /**
  * Moderation data access.
@@ -242,6 +243,77 @@ export async function unsuspendUser(targetUserId: string): Promise<void> {
     console.error('[admin] unsuspend user failed:', error.message);
     throw new ModerationError(error.message, error.code);
   }
+}
+
+export interface TriageResponse {
+  assessment: TriageAssessment;
+  /** False when the classifier was unavailable; the assessment is evidence-only. */
+  aiAvailable: boolean;
+  requestedAi: boolean;
+}
+
+const TRIAGE_ERROR_MESSAGES: Record<string, string> = {
+  unauthenticated: 'Please sign in again to run an assessment.',
+  forbidden: 'You do not have permission to run assessments.',
+  rate_limited: 'Too many assessments. Please wait a moment and try again.',
+  payload_too_large: 'That report is too large to assess.',
+  invalid_body: 'That report could not be read.',
+  internal_error: 'The assessment could not be produced. Please try again.',
+};
+
+function triageMessage(code: string): string {
+  return TRIAGE_ERROR_MESSAGES[code] ?? 'The assessment could not be produced. Please try again.';
+}
+
+/**
+ * Requests an AI-assisted assessment for one report.
+ *
+ * The route re-checks moderator access server-side, so a success here is the
+ * only proof the caller was authorised. The response is an advisory: it never
+ * enforces anything, and `assessment.requiresHumanApproval` states whether a
+ * human must confirm any action.
+ */
+export async function requestTriage(input: {
+  report: ReportRecord;
+  relatedReports?: ReportRecord[];
+  evidenceImage?: string | null;
+}): Promise<TriageResponse> {
+  let response: Response;
+  try {
+    response = await fetch('/api/admin/triage', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    });
+  } catch {
+    throw new ModerationError('Could not reach the assessment service.', 'network');
+  }
+
+  let body: Record<string, unknown> = {};
+  try {
+    const parsed: unknown = await response.json();
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      body = parsed as Record<string, unknown>;
+    }
+  } catch {
+    // fall through
+  }
+
+  if (!response.ok) {
+    const code = typeof body.error === 'string' ? body.error : `http_${response.status}`;
+    throw new ModerationError(triageMessage(code), code);
+  }
+
+  const assessment = body.assessment as TriageAssessment | undefined;
+  if (!assessment || typeof assessment !== 'object') {
+    throw new ModerationError('The assessment service returned an unexpected response.', 'bad_response');
+  }
+
+  return {
+    assessment,
+    aiAvailable: body.aiAvailable === true,
+    requestedAi: body.requestedAi === true,
+  };
 }
 
 export interface ModeratedProfile {

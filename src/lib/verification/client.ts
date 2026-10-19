@@ -102,6 +102,8 @@ function messageForCode(code: string): string {
   switch (code) {
     case 'ai_unavailable':
       return 'Verification is temporarily unavailable. Please try again shortly.';
+    case 'ai_misconfigured':
+      return 'Verification is temporarily unavailable. Please try again later.';
     case 'image_too_large':
       return 'That image is too large to verify. Try again with a smaller photo.';
     case 'audio_too_large':

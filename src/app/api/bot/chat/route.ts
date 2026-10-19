@@ -1,8 +1,14 @@
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
-import { logger } from '@/lib/logger';
-import { BotError, chatWithSubbu, normaliseHistory, type BotTurn } from '@/lib/bot/subbu';
+import { errorContext, logger } from '@/lib/logger';
+import {
+  BotError,
+  botFailureFromError,
+  chatWithSubbu,
+  normaliseHistory,
+  type BotTurn,
+} from '@/lib/bot/subbu';
 import {
   SUBBU_IMAGE_BAN_DAYS,
   banDeniedMessage,
@@ -246,30 +252,25 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ reply: result.reply }, { status: 200 });
 
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'unknown error';
-    const stack = error instanceof Error ? error.stack : undefined;
-
-    // A malformed request is the client's fault — not an upstream failure.
-    if (error instanceof BotError && error.code === 'invalid_request') {
-      return NextResponse.json({ error: error.code, message }, { status: 400 });
-    }
-    // A missing key is a deployment mistake, not a provider outage.
-    if (error instanceof BotError && error.code === 'not_configured') {
-      logger.error('bot.not_configured', 'Subbu is not configured.');
-      return NextResponse.json({ error: error.code, message }, { status: 500 });
-    }
-
-    // Everything else is the provider (timeout, 4xx/5xx, unparseable reply) or
-    // an unexpected throw. Log the exact failure for Vercel Runtime Logs and
-    // hand the reason to the client as `details`.
-    console.error('[SUBBU CHAT ERROR]', message, stack);
-    logger.error('bot.failed', 'Subbu provider failed.', {
-      failure: error instanceof BotError ? error.code : 'unexpected',
-      message,
+    // One mapper decides the status: client errors stay 4xx, a misconfiguration
+    // is a 500, a throttled provider is a retryable 503, and only a genuine
+    // upstream failure is a 502. The provider's raw body never reaches the
+    // client — it is logged here (redacted) for the operator instead.
+    const failure = botFailureFromError(error);
+    const diagnostic =
+      error instanceof Error ? `${error.name}: ${error.message}` : 'unknown error';
+    // Requested Vercel-log marker. The value is a sanitized string, never the
+    // raw error object (which can carry a provider response body).
+    console.error('CHATBOT API ERROR:', diagnostic);
+    logger.error('bot.failed', 'Subbu request failed.', {
+      ...errorContext(error),
+      status: failure.status,
+      code: failure.error,
+      category: error instanceof BotError ? error.category : null,
     });
     return NextResponse.json(
-      { error: 'upstream_error', details: message, message },
-      { status: 502 }
+      { error: failure.error, message: failure.message },
+      { status: failure.status }
     );
   }
 }

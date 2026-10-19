@@ -87,10 +87,8 @@ export const GAMES: GameDefinition[] = [
     image: 'https://images.unsplash.com/photo-1605870445919-838d190e8e1b?q=80&w=400&auto=format&fit=crop',
     players: 6,
     duration: '15m',
-    playable: false,
+    playable: true,
     category: 'competitive',
-    pendingReason:
-      'Ludo needs realtime turn synchronisation between up to four players, which this build does not have yet. The board, rules engine and Supabase Realtime turn channel are the next piece of work.',
   },
   {
     id: 'ludo-dash',
@@ -100,10 +98,8 @@ export const GAMES: GameDefinition[] = [
     image: 'https://images.unsplash.com/photo-1611996575749-79a3a250f948?q=80&w=400&auto=format&fit=crop',
     players: 8,
     duration: '8m',
-    playable: false,
+    playable: true,
     category: 'competitive',
-    pendingReason:
-      'Ludo Dash shares the realtime turn system with Ludo Royale, so it lands at the same time.',
   },
   {
     id: 'memory-match',

@@ -577,19 +577,22 @@ describe('game zone', () => {
 
   it('seeds the playable catalogue', async () => {
     // M14 seeded tic-tac-toe + uno-lite; M16 added the seven social mini-games
-    // the Game Hub renders. Nine playable rows, and every id the client
-    // registry can launch must exist here or `record_game_result()` rejects its
-    // score as an unknown game.
+    // the Game Hub renders; M30 made both Ludo variants playable solo against a
+    // bot. Eleven playable rows, and every id the client registry can launch
+    // must exist here or `record_game_result()` rejects its score as an unknown
+    // game.
     const result = await db.query<{ n: number }>(
       `select count(*)::int as n from public.game_catalog where is_playable`
     );
-    expect(result.rows[0].n).toBe(9);
+    expect(result.rows[0].n).toBe(11);
 
     const ids = await db.query<{ game_id: string }>(
       `select game_id from public.game_catalog where is_playable order by game_id`
     );
     expect(ids.rows.map((row) => row.game_id)).toEqual([
       'icebreaker',
+      'ludo-dash',
+      'ludo-royale',
       'memory-match',
       'speed-matching',
       'spin-the-wheel',
@@ -613,9 +616,15 @@ describe('game zone', () => {
     await expect(record(USER_C, 'truth-or-dare', 'win', 16)).rejects.toThrow(/out of range/i);
   });
 
-  it('rejects unknown, non-playable, malformed and out-of-range results', async () => {
+  it('accepts the Ludo games and enforces their ceiling', async () => {
+    // M30 turned both variants playable; their client ceiling is 100.
+    expect((await record(USER_C, 'ludo-royale', 'win', 100)).outcome).toBe('win');
+    expect((await record(USER_C, 'ludo-dash', 'loss', 40)).outcome).toBe('loss');
+    await expect(record(USER_C, 'ludo-royale', 'win', 101)).rejects.toThrow(/out of range/i);
+  });
+
+  it('rejects unknown, malformed and out-of-range results', async () => {
     await expect(record(USER_A, 'pac-man', 'win', 1)).rejects.toThrow(/unknown game/i);
-    await expect(record(USER_A, 'ludo-royale', 'win', 1)).rejects.toThrow(/not playable/i);
     await expect(record(USER_A, 'tic-tac-toe', 'destroyed', 1)).rejects.toThrow(/invalid outcome/i);
     await expect(record(USER_A, 'tic-tac-toe', 'win', 9999)).rejects.toThrow(/out of range/i);
   });

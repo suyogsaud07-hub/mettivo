@@ -12,9 +12,10 @@
  * Nothing is recorded unless a real, positive verdict came back from the model.
  */
 
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   VERIFICATION_THRESHOLD,
+  VerificationUpstreamError,
   analyzeFace,
   analyzePhoto,
   matchesSelectedGender,
@@ -118,6 +119,51 @@ function aiIsConfigured(deps: ServiceDeps): boolean {
   return aiDeps(deps).env.apiKey !== null;
 }
 
+/**
+ * Turns a thrown face-classifier failure into a response, preserving the
+ * upstream status and category in the server log.
+ *
+ * A rejected credential (HTTP 401/403) is an operator misconfiguration — the
+ * same class of problem as a missing key — so it answers 500 `ai_misconfigured`
+ * and stops the client advising a pointless retry. Everything else (a
+ * throttle, a provider 5xx, a timeout, an unparseable reply) stays 503
+ * `ai_unavailable`, which is genuinely retryable. Every response carries a
+ * `requestId` that also appears in the log line, so one failing attempt can be
+ * traced end-to-end.
+ */
+function faceAiFailure(error: unknown, deps: ServiceDeps): VerificationResult {
+  const requestId = randomUUID();
+  const message = error instanceof Error ? error.message : 'unknown error';
+  const upstreamStatus = error instanceof VerificationUpstreamError ? error.status : null;
+  const category = error instanceof VerificationUpstreamError ? error.category : 'unknown';
+
+  console.error('[FACE VERIFICATION ERROR]', message, error instanceof Error ? error.stack : undefined);
+  logger.error(
+    'verification.face_ai_threw',
+    'The face classifier threw instead of returning a verdict.',
+    {
+      ...errorContext(error),
+      requestId,
+      aiKeyPresent: aiIsConfigured(deps),
+      upstreamStatus,
+      category,
+    }
+  );
+
+  if (category === 'auth') {
+    return {
+      status: 500,
+      body: {
+        error: 'ai_misconfigured',
+        details: `The AI provider rejected the verification credentials (HTTP ${upstreamStatus ?? 401}).`,
+        requestId,
+      },
+    };
+  }
+
+  return { status: 503, body: { error: 'ai_unavailable', details: message, requestId } };
+}
+
 async function parseJsonBody(request: Request): Promise<Record<string, unknown> | null> {
   try {
     const parsed: unknown = await request.json();
@@ -193,21 +239,21 @@ export async function verifyFace(
       { ...aiDeps(deps), throwOnFailure: true }
     );
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'unknown error';
-    const stack = error instanceof Error ? error.stack : undefined;
-    console.error('[FACE VERIFICATION ERROR]', message, stack);
-    logger.error(
-      'verification.face_ai_threw',
-      'The face classifier threw instead of returning a verdict.',
-      errorContext(error)
-    );
-    return { status: 503, body: { error: 'ai_unavailable', details: message } };
+    return faceAiFailure(error, deps);
   }
   if (!verdict) {
-    logger.error('verification.face_ai_unavailable', 'The face classifier returned no verdict.');
+    const requestId = randomUUID();
+    logger.error('verification.face_ai_unavailable', 'The face classifier returned no verdict.', {
+      requestId,
+      aiKeyPresent: aiIsConfigured(deps),
+    });
     return {
       status: 503,
-      body: { error: 'ai_unavailable', details: 'The AI provider returned no verdict.' },
+      body: {
+        error: 'ai_unavailable',
+        details: 'The AI provider returned no verdict.',
+        requestId,
+      },
     };
   }
 

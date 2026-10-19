@@ -11,12 +11,14 @@ import {
   fetchProfilesByIds,
   fetchReportQueue,
   isCurrentUserModerator,
+  requestTriage,
   resolveReport,
   suspendUser,
   unsuspendUser,
   type ModeratedProfile,
   type ReportQueueEntry,
 } from '@/lib/admin';
+import type { ReportRecord, TriageAssessment } from '@/lib/moderation/triage';
 
 type AccessState = 'checking' | 'denied' | 'granted';
 
@@ -69,6 +71,8 @@ export default function AdminPage() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [triage, setTriage] = useState<Record<string, TriageAssessment>>({});
+  const [triageBusy, setTriageBusy] = useState<string | null>(null);
 
   const loadConsole = useCallback(async () => {
     try {
@@ -134,6 +138,47 @@ export default function AdminPage() {
     } finally {
       // Guarantees buttons never stay stuck in a pending state.
       setBusy(null);
+    }
+  };
+
+  const toRecord = (entry: ReportQueueEntry): ReportRecord => ({
+    reportId: entry.reportId,
+    category: entry.reason,
+    targetType: null,
+    targetId: null,
+    details: entry.details,
+    hasEvidenceImage: false,
+    reporterId: entry.reporterId,
+    reportedId: entry.reportedId,
+    status: entry.status,
+    createdAt: entry.createdAt,
+  });
+
+  /**
+   * Requests an AI-assisted assessment for one report. The server re-checks
+   * moderator access, so a result here is proof the caller was authorised. The
+   * assessment is advisory only: any action still goes through the audited RPCs.
+   */
+  const runTriage = async (entry: ReportQueueEntry, queue: ReportQueueEntry[]) => {
+    if (triageBusy) return;
+    setTriageBusy(entry.reportId);
+    setError(null);
+    try {
+      const result = await requestTriage({
+        report: toRecord(entry),
+        relatedReports: queue
+          .filter((other) => other.reportedId === entry.reportedId && other.reportId !== entry.reportId)
+          .map(toRecord),
+      });
+      setTriage((prev) => ({ ...prev, [entry.reportId]: result.assessment }));
+    } catch (err) {
+      console.error('Triage failed:', err);
+      setError(
+        err instanceof ModerationError ? err.message : 'The assessment could not be produced.'
+      );
+    } finally {
+      // Always clears the pending state.
+      setTriageBusy(null);
     }
   };
 
@@ -216,6 +261,30 @@ export default function AdminPage() {
       fontSize: '12px',
       fontWeight: 600,
       cursor: 'pointer',
+    },
+    triagePanel: {
+      marginTop: '14px',
+      border: '1px solid #4A1828',
+      borderRadius: '14px',
+      padding: '14px',
+      backgroundColor: '#160F1A',
+    },
+    triageRow: { display: 'flex', gap: '8px', flexWrap: 'wrap' as const, alignItems: 'center' },
+    triageLabel: {
+      fontSize: '10px',
+      fontWeight: 700,
+      textTransform: 'uppercase' as const,
+      letterSpacing: '0.5px',
+      color: '#D4B18A',
+      margin: '12px 0 4px',
+    },
+    triageText: { fontSize: '12px', color: '#F2E9E4', margin: 0, lineHeight: 1.5 },
+    triageList: {
+      margin: '4px 0 0',
+      paddingLeft: '18px',
+      fontSize: '12px',
+      color: '#B58A83',
+      lineHeight: 1.5,
     },
     error: {
       margin: '0 20px',
@@ -315,6 +384,7 @@ export default function AdminPage() {
             const isSuspended = subject?.isSuspended === true;
             const snapshot = entry.evidence?.reportedProfile ?? null;
             const note = notes[entry.reportId] ?? '';
+            const assessment = triage[entry.reportId];
 
             return (
               <li key={entry.reportId} style={styles.card}>
@@ -428,6 +498,96 @@ export default function AdminPage() {
                     </button>
                   )}
                 </div>
+
+                <div style={{ ...styles.actions, marginTop: '10px' }}>
+                  <button
+                    type="button"
+                    disabled={triageBusy !== null}
+                    style={{ ...styles.btn, color: '#93C5FD', opacity: triageBusy ? 0.5 : 1 }}
+                    onClick={() => void runTriage(entry, reports)}
+                  >
+                    {triageBusy === entry.reportId ? 'Assessing...' : 'AI assessment'}
+                  </button>
+                </div>
+
+                {assessment && (
+                  <div style={styles.triagePanel}>
+                    <div style={styles.triageRow}>
+                      <span
+                        style={{
+                          ...styles.badge,
+                          backgroundColor: '#1E3A8A55',
+                          color: '#93C5FD',
+                        }}
+                      >
+                        {assessment.outcome.replace(/_/g, ' ')}
+                      </span>
+                      <span
+                        style={{
+                          ...styles.badge,
+                          backgroundColor: '#4A182855',
+                          color: '#D4B18A',
+                        }}
+                      >
+                        {assessment.severity}
+                      </span>
+                      <span style={{ ...styles.meta }}>
+                        confidence {assessment.confidence.toFixed(2)}
+                      </span>
+                    </div>
+
+                    <p style={styles.triageLabel}>Recommendation</p>
+                    <p style={styles.triageText}>
+                      {assessment.recommendedAction
+                        ? assessment.recommendedAction.replace(/_/g, ' ')
+                        : 'none'}
+                      {' · '}
+                      {assessment.requiresHumanApproval
+                        ? 'human approval required'
+                        : 'policy allows without approval'}
+                    </p>
+
+                    <p style={styles.triageLabel}>Policy</p>
+                    <p style={styles.triageText}>
+                      {assessment.policyRefs.join(', ')} · v{assessment.policyVersion}
+                    </p>
+
+                    {assessment.reasons.length > 0 && (
+                      <>
+                        <p style={styles.triageLabel}>Reasoning</p>
+                        <ul style={styles.triageList}>
+                          {assessment.reasons.map((reason) => (
+                            <li key={reason}>{reason}</li>
+                          ))}
+                        </ul>
+                      </>
+                    )}
+
+                    {assessment.missingEvidence.length > 0 && (
+                      <>
+                        <p style={styles.triageLabel}>Missing evidence</p>
+                        <ul style={styles.triageList}>
+                          {assessment.missingEvidence.map((item) => (
+                            <li key={item}>{item}</li>
+                          ))}
+                        </ul>
+                      </>
+                    )}
+
+                    {assessment.coordinatedReporting && (
+                      <p style={{ ...styles.triageText, color: '#FCA5B5', marginTop: '8px' }}>
+                        {assessment.distinctReporterCount} independent reporters in a short window —
+                        check for coordinated reporting.
+                      </p>
+                    )}
+
+                    {assessment.injectionSignals.length > 0 && (
+                      <p style={{ ...styles.triageText, color: '#FCA5B5', marginTop: '8px' }}>
+                        Report text contained instruction-like content; it was treated as data.
+                      </p>
+                    )}
+                  </div>
+                )}
               </li>
             );
           })}

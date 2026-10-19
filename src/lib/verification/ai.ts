@@ -287,9 +287,12 @@ async function callVision(
       `[verification.ai] vision chat/completions returned ${response.status}: ${errorBody.slice(0, 500)}`
     );
     if (throwOnFailure) {
-      const detail = errorBody.trim().slice(0, 200);
+      // The provider's error body (which may echo request details) is logged
+      // above but deliberately kept out of the thrown message: that message
+      // reaches the browser. The HTTP status is enough for the caller to tell a
+      // bad key apart from a throttle or an outage.
       throw new VerificationUpstreamError(
-        `The AI provider returned HTTP ${response.status}${detail ? `: ${detail}` : ''}.`,
+        `The AI provider returned HTTP ${response.status}.`,
         response.status
       );
     }
@@ -365,21 +368,46 @@ async function callVision(
 }
 
 /**
+ * How a provider failure should be acted on. `auth` is an operator problem (a
+ * missing/expired/revoked credential) and must never be presented as a
+ * retryable outage; `rate_limit` and `provider` clear on their own; `request`
+ * is a malformed call; `transport` is a timeout/network fault with no status.
+ */
+export type UpstreamFailureCategory =
+  | 'auth'
+  | 'rate_limit'
+  | 'provider'
+  | 'request'
+  | 'transport';
+
+/** Buckets an upstream HTTP status into the category the caller acts on. */
+export function classifyUpstreamStatus(status: number | null): UpstreamFailureCategory {
+  if (status === null) return 'transport';
+  if (status === 401 || status === 403) return 'auth';
+  if (status === 429) return 'rate_limit';
+  if (status === 408 || status === 425 || status >= 500) return 'provider';
+  return 'request';
+}
+
+/**
  * Raised instead of returning `null` when the provider call itself failed and
  * the caller asked for a reason (`throwOnFailure`). `status` is the upstream
- * HTTP status when there was one, so a 401/429/timeout can be told apart.
+ * HTTP status when there was one, so a 401/429/timeout can be told apart, and
+ * `category` is its actionable bucket.
  *
- * The message is safe to send to the browser: it names the HTTP status and a
- * bounded slice of the provider's error body — never the request payload (which
- * holds the member's selfie).
+ * The message is safe to send to the browser: it names only the HTTP status —
+ * never the provider's error body and never the request payload (which holds
+ * the member's selfie).
  */
 export class VerificationUpstreamError extends Error {
   readonly status: number | null;
+  readonly category: UpstreamFailureCategory;
 
   constructor(message: string, status: number | null = null) {
     super(message);
     this.name = 'VerificationUpstreamError';
     this.status = status;
+    this.category = classifyUpstreamStatus(status);
   }
 }
 
