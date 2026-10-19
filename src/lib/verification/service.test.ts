@@ -190,6 +190,22 @@ describe('verifyFace — recording the verdict', () => {
     expect(String(result.body.details)).not.toContain('Worker access required');
   });
 
+  it('returns a structured internal_server_error when the pipeline throws', async () => {
+    const broken = deps({ verificationEnv: ENV });
+    Object.defineProperty(broken, 'verificationEnv', {
+      configurable: true,
+      get() {
+        throw new Error('boom');
+      },
+    });
+
+    const result = await verifyFace(faceRequest(), broken);
+
+    expect(result.status).toBe(500);
+    expect(result.body.error).toBe('internal_server_error');
+    expect(result.body.details).toBe('boom');
+  });
+
   it('sanitises an unexpected writer failure', async () => {
     const result = await verifyFace(
       faceRequest(),

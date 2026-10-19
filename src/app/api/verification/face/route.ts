@@ -1,7 +1,5 @@
-import { randomUUID } from 'node:crypto';
 import { NextResponse } from 'next/server';
 import { verifyFace } from '@/lib/verification/service';
-import { logger } from '@/lib/logger';
 
 /**
  * M24 — live face verification.
@@ -34,33 +32,21 @@ export const dynamic = 'force-dynamic';
  */
 export async function POST(request: Request): Promise<NextResponse> {
   try {
+    // `verifyFace` returns a structured `{ status, body }` for every failure it
+    // knows about; this pass-through is what the frontend actually reads.
     const { status, body } = await verifyFace(request);
     return NextResponse.json(body, { status });
   } catch (error) {
-    // A throw here means the pipeline itself failed before it could classify
-    // anything (e.g. an import error or an unexpected Supabase fault). The
-    // message and stack stay in the server log; the client gets a correlation
-    // id and a fixed sentence, never internals.
-    const requestId = randomUUID();
-    const message = error instanceof Error ? error.message : 'unknown error';
-    const stack = error instanceof Error ? error.stack : undefined;
-    console.error('[FACE VERIFICATION ERROR]', message, stack);
-    logger.error(
-      'verification.face_route_failed',
-      'The face route threw before it could return a verdict.',
-      {
-        errorName: error instanceof Error ? error.name : 'unknown',
-        message,
-        requestId,
-      }
-    );
+    // `verifyFace` now wraps its own body in a try/catch, so reaching here means
+    // the handler itself failed. Return the same structured shape instead of an
+    // opaque framework 500 the frontend cannot read.
+    console.error("[VERIFY FACE ROUTE ERROR]", error);
     return NextResponse.json(
       {
-        error: 'ai_unavailable',
-        details: 'The verification service failed unexpectedly.',
-        requestId,
+        error: 'internal_server_error',
+        details: error instanceof Error ? error.message : 'Unknown error',
       },
-      { status: 503 }
+      { status: 500 }
     );
   }
 }

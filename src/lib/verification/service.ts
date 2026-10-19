@@ -255,100 +255,111 @@ export async function verifyFace(
   request: Request,
   deps: ServiceDeps = {}
 ): Promise<VerificationResult> {
-  const start = await begin(request, deps);
-  if (!start.ok) return start.result;
-  const { body, userId, accessToken } = start;
+  try {
+    const start = await begin(request, deps);
+    if (!start.ok) return start.result;
+    const { body, userId, accessToken } = start;
 
-  const selfieUrl = readString(body, 'selfieUrl');
-  const gender = genderOf(body);
-  if (!selfieUrl || !gender || !dataUrlWithPrefix(selfieUrl, 'data:image/')) {
-    return { status: 400, body: { error: 'invalid_body' } };
-  }
-  if (selfieUrl.length > MAX_IMAGE_CHARS) {
-    return { status: 413, body: { error: 'image_too_large' } };
-  }
+    const selfieUrl = readString(body, 'selfieUrl');
+    const gender = genderOf(body);
+    if (!selfieUrl || !gender || !dataUrlWithPrefix(selfieUrl, 'data:image/')) {
+      return { status: 400, body: { error: 'invalid_body' } };
+    }
+    if (selfieUrl.length > MAX_IMAGE_CHARS) {
+      return { status: 413, body: { error: 'image_too_large' } };
+    }
 
-  if (!aiIsConfigured(deps)) {
-    const requestId = randomUUID();
-    logger.error(
-      'verification.face_ai_misconfigured',
-      'AI_MODERATION_API_KEY is not set, so face verification cannot run.',
-      { requestId, aiKeyPresent: false }
-    );
-    // Same code as a rejected credential: both are operator misconfiguration,
-    // not a retryable outage. The variable NAME is safe to report; its value
-    // never is.
+    if (!aiIsConfigured(deps)) {
+      const requestId = randomUUID();
+      logger.error(
+        'verification.face_ai_misconfigured',
+        'AI_MODERATION_API_KEY is not set, so face verification cannot run.',
+        { requestId, aiKeyPresent: false }
+      );
+      // Same code as a rejected credential: both are operator misconfiguration,
+      // not a retryable outage. The variable NAME is safe to report; its value
+      // never is.
+      return {
+        status: 500,
+        body: {
+          error: 'ai_misconfigured',
+          details: 'AI_MODERATION_API_KEY is not configured on the server.',
+          requestId,
+        },
+      };
+    }
+
+    let verdict: FaceVerdict | null;
+    try {
+      // `throwOnFailure` turns a provider transport failure or non-2xx response
+      // into a `VerificationUpstreamError` carrying the reason, so the 503 below
+      // can name it instead of hiding behind a bare `ai_unavailable`.
+      verdict = await analyzeFace(
+        { selfieUrl, gender },
+        { ...aiDeps(deps), throwOnFailure: true }
+      );
+    } catch (error) {
+      return faceAiFailure(error, deps);
+    }
+    if (!verdict) {
+      const requestId = randomUUID();
+      logger.error('verification.face_ai_unavailable', 'The face classifier returned no verdict.', {
+        requestId,
+        aiKeyPresent: aiIsConfigured(deps),
+      });
+      return {
+        status: 503,
+        body: {
+          error: 'ai_unavailable',
+          details: 'The AI provider returned no verdict.',
+          requestId,
+        },
+      };
+    }
+
+    const passed =
+      verdict.human && verdict.facePresent && verdict.genderMatch && verdict.score >= VERIFICATION_THRESHOLD;
+
+    try {
+      const reply = await recordVerification(
+        {
+          userId,
+          kind: 'face',
+          passed,
+          gender,
+          provider: verdict.provider,
+          model: verdict.model,
+          score: verdict.score,
+          faceRefHash: md5(selfieUrl),
+        },
+        writerDeps(deps, accessToken ?? undefined)
+      );
+      return {
+        status: 200,
+        body: {
+          ok: true,
+          passed,
+          complete: completeOf(reply),
+          apparentGender: verdict.apparentGender,
+          reason: passed ? null : reasonForFace(verdict.human, verdict.facePresent, verdict.genderMatch),
+        },
+      };
+    } catch (error) {
+      return recordFailed(
+        error,
+        'verification.face_record_failed',
+        'Could not record a face verdict.'
+      );
+    }
+  } catch (error) {
+    console.error("[VERIFY FACE SERVICE ERROR]", error);
     return {
       status: 500,
       body: {
-        error: 'ai_misconfigured',
-        details: 'AI_MODERATION_API_KEY is not configured on the server.',
-        requestId,
+        error: 'internal_server_error',
+        details: error instanceof Error ? error.message : 'Unknown error',
       },
     };
-  }
-
-  let verdict: FaceVerdict | null;
-  try {
-    // `throwOnFailure` turns a provider transport failure or non-2xx response
-    // into a `VerificationUpstreamError` carrying the reason, so the 503 below
-    // can name it instead of hiding behind a bare `ai_unavailable`.
-    verdict = await analyzeFace(
-      { selfieUrl, gender },
-      { ...aiDeps(deps), throwOnFailure: true }
-    );
-  } catch (error) {
-    return faceAiFailure(error, deps);
-  }
-  if (!verdict) {
-    const requestId = randomUUID();
-    logger.error('verification.face_ai_unavailable', 'The face classifier returned no verdict.', {
-      requestId,
-      aiKeyPresent: aiIsConfigured(deps),
-    });
-    return {
-      status: 503,
-      body: {
-        error: 'ai_unavailable',
-        details: 'The AI provider returned no verdict.',
-        requestId,
-      },
-    };
-  }
-
-  const passed =
-    verdict.human && verdict.facePresent && verdict.genderMatch && verdict.score >= VERIFICATION_THRESHOLD;
-
-  try {
-    const reply = await recordVerification(
-      {
-        userId,
-        kind: 'face',
-        passed,
-        gender,
-        provider: verdict.provider,
-        model: verdict.model,
-        score: verdict.score,
-        faceRefHash: md5(selfieUrl),
-      },
-      writerDeps(deps, accessToken ?? undefined)
-    );
-    return {
-      status: 200,
-      body: {
-        ok: true,
-        passed,
-        complete: completeOf(reply),
-        apparentGender: verdict.apparentGender,
-        reason: passed ? null : reasonForFace(verdict.human, verdict.facePresent, verdict.genderMatch),
-      },
-    };
-  } catch (error) {
-    return recordFailed(
-      error,
-      'verification.face_record_failed',
-      'Could not record a face verdict.'
-    );
   }
 }
 
