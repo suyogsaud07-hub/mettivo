@@ -23,13 +23,14 @@
 export const AI_CATEGORIES = ['nudity', 'harassment', 'underage', 'spam'] as const;
 export type AiCategory = (typeof AI_CATEGORIES)[number];
 
-/** The content shapes the queue produces. */
+/** The content shapes the queue produces (plus direct chat uploads). */
 export type ModerationContentType =
   | 'message'
   | 'moment_caption'
   | 'comment'
   | 'bio'
   | 'profile_photo'
+  | 'chat_media'
   | 'live_snapshot';
 
 /** The enforcement scope a verdict points at. `null` = no action suggested. */
@@ -206,7 +207,10 @@ export async function classifyContent(
   if (!env.apiKey) return null;
 
   const fetchImpl = deps.fetchImpl ?? fetch;
-  const isImage = input.contentType === 'profile_photo' || input.contentType === 'live_snapshot';
+  const isImage =
+    input.contentType === 'profile_photo' ||
+    input.contentType === 'chat_media' ||
+    input.contentType === 'live_snapshot';
   const model = isImage ? env.visionModel : env.textModel;
 
   const userContent: ChatMessage['content'] = isImage

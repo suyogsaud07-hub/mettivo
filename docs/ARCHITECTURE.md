@@ -135,7 +135,7 @@ moderation tables in §5.1 (`moderation_settings`, `moderation_secrets`, `bans`,
 
 | Table | Status | Key columns |
 | --- | --- | --- |
-| `profiles` | exists | `id`, `display_name`, `age`, `birth_date`, `gender`, `city`, `country`, `avatar_url`, `photos`, `intention`, `looking_for`, `hobbies`, `pets`, `personality`, `religion`, `politics`, `drinking`, `smoking`, `is_online`, `onboarding_completed`, `followers_count`, `following_count`, `friends_count`, `interests`, `prompts`, `bio`, `height`, `education`, `profession`, `languages_spoken`, `exercise` |
+| `profiles` | exists | `id`, `display_name`, `age`, `birth_date`, `gender`, `city`, `country`, `avatar_url`, `photos`, `intention`, `looking_for`, `hobbies`, `pets`, `personality`, `religion`, `politics`, `drinking`, `smoking`, `is_online`, `onboarding_completed`, `followers_count`, `following_count`, `friends_count`, `interests`, `prompts`, `bio`, `height`, `education`, `profession`, `languages_spoken`, `exercise`, `banned_until`, `ban_reason` |
 | `messages` | exists | `id`, `match_id`, `sender_id`, `content`, `created_at` |
 | `follows` | exists | `follower_id`, `following_id` |
 | `matches` | exists (0 rows, unused by code — **columns not yet introspected**) | — |
@@ -184,6 +184,33 @@ content id, and the *server* captures the context and decides the action.
 - **Client notices.** `my_restrictions()` drives read-only notices (chat muted,
   Mettivo Live unavailable, account suspended). Mettivo Live is client-gated on
   `is_video_restricted()` because there is no live server to enforce it.
+
+### 5.2 Subbu bans (M29)
+
+`20261015400000_m29_subbu_bans.sql` makes the companion's moderation real rather
+than roleplay.
+
+- **Storage.** `profiles.banned_until` / `ban_reason` (NULL or past = not
+  banned). The columns are deliberately **not** granted to `authenticated`; they
+  are read only through `my_ban_status()`, so one member cannot inspect another's
+  ban state and `select *` cannot expose it.
+- **One writer.** `apply_self_ban(days, reason)` is SECURITY DEFINER, derives the
+  subject from `auth.uid()`, accepts **no user id**, and is the only path past
+  `protect_moderation_columns` (the same tx-local `mettivo.moderation_action`
+  GUC). A prompt-injected model can therefore only ever ban the caller.
+- **API enforcement.** `/api/bot/chat` checks `my_ban_status()` **before** the
+  model is called (403 `banned`). Image uploads are classified with
+  `classifyContent`; `nudity`/`underage` applies a 30-day ban before the image
+  reaches the vision model, and every other image is stripped from the history.
+  A classifier outage refuses the image (`503`) but never punishes (an outage is
+  not evidence). Subbu may only emit the fixed
+  `{"action":"ban","duration":"2_days","reason":"verbal_harassment"}` flag, which
+  the route parses into a 2-day ban.
+- **Early rejection.** `src/proxy.ts` rejects banned callers on `/api/bot`,
+  `/api/moments` and `/api/live`; the route remains authoritative.
+- **UI.** `/chat/subbu` reads `my_ban_status()` on load, disables the text/send/
+  image controls and shows a red expiry banner. A 403 mid-conversation locks the
+  composer immediately and survives a refresh.
 
 ## 6. Known gaps (as of this revision)
 

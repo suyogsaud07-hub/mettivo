@@ -3,6 +3,13 @@ import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 import { logger } from '@/lib/logger';
 import { BotError, chatWithSubbu, normaliseHistory, type BotTurn } from '@/lib/bot/subbu';
+import {
+  SUBBU_IMAGE_BAN_DAYS,
+  banDeniedMessage,
+  parseBanFlag,
+  parseBanStatus,
+} from '@/lib/bot/moderation';
+import { classifyContent } from '@/lib/moderation/ai';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,7 +18,11 @@ export const dynamic = 'force-dynamic';
 // ceiling and the budget the provider client allows the upstream fetch.
 export const maxDuration = 60;
 
-const MAX_BODY_BYTES = 64_000;
+// A chat with one compressed image is a few hundred KB as base64. The old 64 KB
+// cap rejected every image before it could be moderated, so the upload path
+// could never work. This is a DoS ceiling, not a content policy: the image
+// classifier and Subbu each cap the image they forward.
+const MAX_BODY_BYTES = 2_000_000;
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX = 30;
 
@@ -59,6 +70,80 @@ async function resolveUser(supabase: ServerSupabaseClient): Promise<{ id: string
   return { id: user.id };
 }
 
+interface BanRecord {
+  until: string;
+  reason: string | null;
+}
+
+function bannedResponse(ban: BanRecord): NextResponse {
+  return NextResponse.json(
+    {
+      error: 'banned',
+      banned_until: ban.until,
+      reason: ban.reason,
+      message: banDeniedMessage(ban.until, ban.reason),
+    },
+    { status: 403 },
+  );
+}
+
+/**
+ * The caller's own ban, read through `my_ban_status()`.
+ *
+ * It accepts no user id, so this can never be used to inspect another member.
+ * A failure here is treated as an enforcement failure (500), not as "not
+ * banned": silently allowing chat when the ban store is unavailable would make
+ * the whole system bypassable.
+ */
+async function readOwnBan(supabase: ServerSupabaseClient): Promise<BanRecord | null> {
+  const { data, error } = await supabase.rpc('my_ban_status');
+  if (error) {
+    console.error('[SUBBU BAN CHECK FAILED]', error.message);
+    logger.error('bot.ban_check_failed', 'Could not read the caller ban state.', {
+      message: error.message,
+    });
+    throw new Error('ban_check_failed');
+  }
+
+  const status = parseBanStatus(data);
+  return status.banned && status.until ? { until: status.until, reason: status.reason } : null;
+}
+
+/**
+ * Writes a ban for the caller only. Returns the new end timestamp, or `null`
+ * when the write failed. `apply_self_ban` derives the subject from `auth.uid()`
+ * and has no target parameter.
+ */
+async function persistBan(
+  supabase: ServerSupabaseClient,
+  days: number,
+  reason: string,
+): Promise<string | null> {
+  const { data, error } = await supabase.rpc('apply_self_ban', {
+    p_duration_days: days,
+    p_reason: reason,
+  });
+
+  if (error) {
+    console.error('[SUBBU BAN FAILED]', error.message);
+    logger.error('bot.ban_failed', 'Could not persist the ban.', {
+      message: error.message,
+      days,
+      reason,
+    });
+    return null;
+  }
+
+  const status = parseBanStatus(data);
+  if (!status.until) {
+    console.error('[SUBBU BAN FAILED]', 'apply_self_ban returned no banned_until');
+    return null;
+  }
+
+  logger.warn('bot.ban_applied', 'Subbu issued a ban.', { days, reason, until: status.until });
+  return status.until;
+}
+
 export async function POST(request: Request): Promise<NextResponse> {
   const now = Date.now();
   const declaredLength = Number(request.headers.get('content-length') ?? '');
@@ -82,46 +167,82 @@ export async function POST(request: Request): Promise<NextResponse> {
   const user = await resolveUser(supabase);
   if (!user) return NextResponse.json({ error: 'unauthenticated' }, { status: 401 });
 
+  // 1. Enforcement BEFORE the model is called. A banned member can never reach
+  //    Subbu, no matter what the client sends.
+  try {
+    const ban = await readOwnBan(supabase);
+    if (ban) return bannedResponse(ban);
+  } catch {
+    return NextResponse.json({ error: 'ban_check_failed' }, { status: 500 });
+  }
+
   if (isRateLimited(user.id, now)) return NextResponse.json({ error: 'rate_limited' }, { status: 429 });
 
   try {
-    let result = await chatWithSubbu(history);
+    // 2. Image moderation.
+    //
+    //    The client is not trusted: it could tuck an image into an old turn and
+    //    put text last, hoping it reaches the vision model unchecked. So we find
+    //    the most recent image in the (already normalised) history, screen it,
+    //    and strip every other image before the model sees the conversation.
+    //    Only the upload being sent now can reach the vision model.
+    const lastImageIndex = history.reduce(
+      (last, turn, index) => (turn.role === 'user' && turn.imageUrl ? index : last),
+      -1,
+    );
+    const imageUrl = lastImageIndex >= 0 ? history[lastImageIndex].imageUrl : undefined;
 
-    // ✅ EXECUTE TOOL CALLS (Automated Punishments)
-    if (result.tool_calls && result.tool_calls.length > 0) {
-      const toolCall = result.tool_calls[0];
-      
-      if (toolCall.function.name === 'issue_ban') {
-        const args = JSON.parse(toolCall.function.arguments);
-        const { target_user_id, duration_days, reason } = args;
+    if (imageUrl) {
+      const verdict = await classifyContent({
+        contentType: 'chat_media',
+        contentText: null,
+        contentUrl: imageUrl,
+      });
 
-        logger.warn('bot.automated_ban', 'Subbu issued a ban.', { target_user_id, duration_days, reason });
+      // No verdict means the classifier is unconfigured or down. We must not
+      // punish on an outage (a provider failure is not evidence), but we also
+      // must not hand an unscreened image to the bot.
+      if (!verdict) {
+        return NextResponse.json(
+          {
+            error: 'moderation_unavailable',
+            message: 'Image moderation is unavailable right now. Please try again shortly.',
+          },
+          { status: 503 },
+        );
+      }
 
-        // Calculate ban end date
-        const banUntil = new Date();
-        banUntil.setDate(banUntil.getDate() + duration_days);
+      const explicit =
+        verdict.flagged &&
+        (verdict.categories.includes('nudity') || verdict.categories.includes('underage'));
 
-        // 1. Update the target user's profile
-        await supabase
-          .from('profiles')
-          .update({ 
-            banned_until: banUntil.toISOString(), 
-            ban_reason: reason 
-          })
-          .eq('id', target_user_id);
-
-        // 2. Feed the tool result back to Subbu so he can reply to the user
-        const updatedHistory: BotTurn[] = [
-          ...history,
-          { role: 'assistant', content: null, tool_calls: result.tool_calls },
-          { role: 'tool', content: JSON.stringify({ success: true, message: `User banned for ${duration_days} days.` }), tool_call_id: toolCall.id }
-        ];
-
-        result = await chatWithSubbu(updatedHistory);
+      if (explicit) {
+        const reason = verdict.categories.includes('underage') ? 'underage_image' : 'explicit_image';
+        const until = await persistBan(supabase, SUBBU_IMAGE_BAN_DAYS, reason);
+        if (!until) return NextResponse.json({ error: 'ban_failed' }, { status: 500 });
+        return bannedResponse({ until, reason });
       }
     }
 
+    const safeHistory: BotTurn[] = imageUrl
+      ? history.map((turn, index) =>
+          index === lastImageIndex ? turn : { ...turn, imageUrl: undefined },
+        )
+      : history;
+
+    // 3. Talk to Subbu.
+    const result = await chatWithSubbu(safeHistory);
     if (!result.reply) throw new Error('No reply generated');
+
+    // 4. Text moderation. Subbu cannot write to the database; it can only emit
+    //    the fixed flag. We parse it here and apply a real 2-day ban.
+    const flag = parseBanFlag(result.reply);
+    if (flag) {
+      const until = await persistBan(supabase, flag.days, flag.reason);
+      if (!until) return NextResponse.json({ error: 'ban_failed' }, { status: 500 });
+      return bannedResponse({ until, reason: flag.reason });
+    }
+
     return NextResponse.json({ reply: result.reply }, { status: 200 });
 
   } catch (error) {

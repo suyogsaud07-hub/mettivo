@@ -1,13 +1,20 @@
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
+import { parseBanStatus } from '@/lib/bot/moderation';
 
 /**
- * Session refresh proxy & Ban enforcement.
+ * Session refresh proxy & ban enforcement.
  *
  * ⛔ THIS PROXY MUST NEVER REDIRECT PAGES.
  *   It refreshes a session and blocks API access for banned users.
  *   Authorisation redirects for pages belong in the page-level guards.
+ *
+ * The ban itself is enforced authoritatively in the API routes (and in the
+ * database); this is an early, cheap rejection. The caller's state is read via
+ * `my_ban_status()`, which can only ever return the caller's own row.
  */
+
+const BANNED_API_PREFIXES = ['/api/bot', '/api/moments', '/api/live'] as const;
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -39,29 +46,27 @@ export async function proxy(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser();
 
   // ✅ BAN ENFORCEMENT
-  // If the user is logged in, check if Subbu has banned them.
+  // If the user is logged in, check whether Subbu has banned them. The RPC
+  // derives identity from auth.uid() and takes no arguments, so this cannot be
+  // pointed at another member.
   if (user) {
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('banned_until, ban_reason')
-      .eq('id', user.id)
-      .single();
+    const { data } = await supabase.rpc('my_ban_status');
+    const ban = parseBanStatus(data);
 
-    const isBanned = profile?.banned_until && new Date(profile.banned_until) > new Date();
+    if (ban.banned && ban.until) {
+      const isBlockedApi = BANNED_API_PREFIXES.some((prefix) =>
+        request.nextUrl.pathname.startsWith(prefix),
+      );
 
-    if (isBanned) {
-      // Block them from posting Moments, Chatting, or going Live via API
-      if (
-        request.nextUrl.pathname.startsWith('/api/moments') ||
-        request.nextUrl.pathname.startsWith('/api/chat') ||
-        request.nextUrl.pathname.startsWith('/api/live')
-      ) {
+      if (isBlockedApi) {
         return NextResponse.json(
-          { 
-            error: 'banned', 
-            message: `Action blocked. You are banned until ${new Date(profile.banned_until).toLocaleDateString()}. Reason: ${profile.ban_reason}` 
+          {
+            error: 'banned',
+            banned_until: ban.until,
+            reason: ban.reason,
+            message: `Action blocked. You are banned until ${new Date(ban.until).toLocaleString()}.`,
           },
-          { status: 403 }
+          { status: 403 },
         );
       }
     }

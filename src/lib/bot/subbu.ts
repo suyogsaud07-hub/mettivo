@@ -4,7 +4,6 @@ import {
   MAX_HISTORY_TURNS,
   MAX_TURN_CHARS,
   SUBBU_SYSTEM_PROMPT,
-  SUBBU_TOOLS,
 } from '@/lib/bot/constants';
 
 export interface BotEnv extends AiEnv {
@@ -135,8 +134,12 @@ export async function chatWithSubbu(
 
   // A text-only bot model (the default, `openai/gpt-oss-120b`) rejects
   // `image_url` parts with a 400, so an image turn must go to the vision model —
-  // the same split `classifyContent` makes. The vision model is not asked to
-  // drive the ban tool, so the tool schema is only attached to text turns.
+  // the same split `classifyContent` makes.
+  //
+  // There is deliberately no tool schema: moderation is a structured JSON flag
+  // in the reply (see `SUBBU_SYSTEM_PROMPT`), which the API parses. A tool can
+  // name a target; the JSON flag cannot, which is what keeps a prompt-injected
+  // model from banning somebody else.
   const hasImage = history.some((turn) => Boolean(turn.imageUrl));
   const model = hasImage ? env.visionModel : env.botModel;
 
@@ -148,7 +151,6 @@ export async function chatWithSubbu(
       { role: 'system', content: SUBBU_SYSTEM_PROMPT },
       ...formattedMessages,
     ],
-    ...(hasImage ? {} : { tools: SUBBU_TOOLS, tool_choice: 'auto' as const }),
   };
 
   let response: Response;

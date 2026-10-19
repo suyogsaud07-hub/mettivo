@@ -91,6 +91,32 @@ body {
   }
 }
 
+/* Hero rig joints. Framer Motion writes an inline `transform-origin: 50% 50%`
+   for every animated SVG group; these classes restore the anatomical pivot
+   (shoulder, hip, waist) that the rig is built around. */
+.hero-pivot-top,
+.hero-pivot-waist,
+.hero-pivot-hair,
+.hero-pivot-center {
+  transform-box: fill-box;
+}
+
+.hero-pivot-top {
+  transform-origin: 50% 0% !important;
+}
+
+.hero-pivot-waist {
+  transform-origin: 50% 100% !important;
+}
+
+.hero-pivot-hair {
+  transform-origin: 50% 35% !important;
+}
+
+.hero-pivot-center {
+  transform-origin: 50% 50% !important;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

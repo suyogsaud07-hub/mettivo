@@ -179,7 +179,7 @@ describe('chatWithSubbu', () => {
     expect(Array.isArray(body.messages.find((m) => m.role === 'user')?.content)).toBe(true);
   });
 
-  it('keeps the text model and tool schema for text-only turns', async () => {
+  it('keeps the text model and sends no tool schema (bans are JSON flags)', async () => {
     const recorder: { url?: string; init?: RequestInit } = {};
     await chatWithSubbu([{ role: 'user', content: 'hi' }], {
       env: ENV,
@@ -188,7 +188,7 @@ describe('chatWithSubbu', () => {
 
     const body = JSON.parse(String(recorder.init?.body)) as { model: string; tools?: unknown[] };
     expect(body.model).toBe('bot-model');
-    expect(Array.isArray(body.tools)).toBe(true);
+    expect(body.tools).toBeUndefined();
   });
 
   it('maps an empty completion to empty_result', async () => {
