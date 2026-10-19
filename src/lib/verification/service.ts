@@ -161,7 +161,15 @@ function faceAiFailure(error: unknown, deps: ServiceDeps): VerificationResult {
     };
   }
 
-  return { status: 503, body: { error: 'ai_unavailable', details: message, requestId } };
+  // Only our own typed message is known to omit the provider body and the
+  // request payload. An unexpected throw could contain internals, so it is
+  // logged above but replaced with a fixed sentence before it reaches a client.
+  const safeMessage =
+    error instanceof VerificationUpstreamError
+      ? error.message
+      : 'The AI provider failed unexpectedly.';
+
+  return { status: 503, body: { error: 'ai_unavailable', details: safeMessage, requestId } };
 }
 
 async function parseJsonBody(request: Request): Promise<Record<string, unknown> | null> {
@@ -201,6 +209,45 @@ function completeOf(reply: Record<string, unknown>): boolean {
   return reply.complete === true;
 }
 
+/**
+ * A 401/403 carrying PostgreSQL's `42501`/`Worker access required` means the
+ * writer's shared secret does not match `moderation_secrets.worker_secret`.
+ * That is operator misconfiguration, not a bad member token, and the raw RPC
+ * body (which names internal functions) must not reach the browser.
+ */
+const WORKER_ACCESS_REJECTED = /rpc_\w+_http_40[13][\s\S]*?(?:42501|Worker access required)/i;
+
+function recordFailed(
+  error: unknown,
+  event: string,
+  message: string
+): VerificationResult {
+  const requestId = randomUUID();
+  console.error('[DB RECORD FAILED]', error);
+  logger.error(event, message, { ...errorContext(error), requestId });
+
+  if (error instanceof Error && WORKER_ACCESS_REJECTED.test(error.message)) {
+    return {
+      status: 500,
+      body: {
+        error: 'verification_store_misconfigured',
+        details:
+          'The verification store rejected the server credential. An operator must configure the worker secret.',
+        requestId,
+      },
+    };
+  }
+
+  return {
+    status: 500,
+    body: {
+      error: 'record_failed',
+      details: 'The verification result could not be saved. Please try again.',
+      requestId,
+    },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Face
 // ---------------------------------------------------------------------------
@@ -222,11 +269,23 @@ export async function verifyFace(
   }
 
   if (!aiIsConfigured(deps)) {
+    const requestId = randomUUID();
     logger.error(
       'verification.face_ai_misconfigured',
-      'AI_MODERATION_API_KEY is not set, so face verification cannot run.'
+      'AI_MODERATION_API_KEY is not set, so face verification cannot run.',
+      { requestId, aiKeyPresent: false }
     );
-    return { status: 500, body: { error: 'Missing AI configuration' } };
+    // Same code as a rejected credential: both are operator misconfiguration,
+    // not a retryable outage. The variable NAME is safe to report; its value
+    // never is.
+    return {
+      status: 500,
+      body: {
+        error: 'ai_misconfigured',
+        details: 'AI_MODERATION_API_KEY is not configured on the server.',
+        requestId,
+      },
+    };
   }
 
   let verdict: FaceVerdict | null;
@@ -285,18 +344,11 @@ export async function verifyFace(
       },
     };
   } catch (error) {
-    console.error('[DB RECORD FAILED]', error);
-    logger.error('verification.face_record_failed', 'Could not record a face verdict.', {
-      errorName: error instanceof Error ? error.name : 'unknown',
-      message: error instanceof Error ? error.message : 'unknown',
-    });
-    return {
-      status: 500,
-      body: {
-        error: 'record_failed',
-        details: error instanceof Error ? error.message : 'unknown',
-      },
-    };
+    return recordFailed(
+      error,
+      'verification.face_record_failed',
+      'Could not record a face verdict.'
+    );
   }
 }
 
@@ -379,18 +431,11 @@ export async function verifyPhoto(
       },
     };
   } catch (error) {
-    console.error('[DB RECORD FAILED]', error);
-    logger.error('verification.photo_record_failed', 'Could not record a photo verdict.', {
-      errorName: error instanceof Error ? error.name : 'unknown',
-      message: error instanceof Error ? error.message : 'unknown',
-    });
-    return {
-      status: 500,
-      body: {
-        error: 'record_failed',
-        details: error instanceof Error ? error.message : 'unknown',
-      },
-    };
+    return recordFailed(
+      error,
+      'verification.photo_record_failed',
+      'Could not record a photo verdict.'
+    );
   }
 }
 
@@ -461,17 +506,10 @@ export async function verifyVoice(
       },
     };
   } catch (error) {
-    console.error('[DB RECORD FAILED]', error);
-    logger.error('verification.voice_record_failed', 'Could not record a voice verdict.', {
-      errorName: error instanceof Error ? error.name : 'unknown',
-      message: error instanceof Error ? error.message : 'unknown',
-    });
-    return {
-      status: 500,
-      body: {
-        error: 'record_failed',
-        details: error instanceof Error ? error.message : 'unknown',
-      },
-    };
+    return recordFailed(
+      error,
+      'verification.voice_record_failed',
+      'Could not record a voice verdict.'
+    );
   }
 }

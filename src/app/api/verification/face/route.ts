@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { NextResponse } from 'next/server';
 import { verifyFace } from '@/lib/verification/service';
 import { logger } from '@/lib/logger';
@@ -37,7 +38,10 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json(body, { status });
   } catch (error) {
     // A throw here means the pipeline itself failed before it could classify
-    // anything (e.g. an import error or an unexpected Supabase fault).
+    // anything (e.g. an import error or an unexpected Supabase fault). The
+    // message and stack stay in the server log; the client gets a correlation
+    // id and a fixed sentence, never internals.
+    const requestId = randomUUID();
     const message = error instanceof Error ? error.message : 'unknown error';
     const stack = error instanceof Error ? error.stack : undefined;
     console.error('[FACE VERIFICATION ERROR]', message, stack);
@@ -47,8 +51,16 @@ export async function POST(request: Request): Promise<NextResponse> {
       {
         errorName: error instanceof Error ? error.name : 'unknown',
         message,
+        requestId,
       }
     );
-    return NextResponse.json({ error: 'ai_unavailable', details: message }, { status: 503 });
+    return NextResponse.json(
+      {
+        error: 'ai_unavailable',
+        details: 'The verification service failed unexpectedly.',
+        requestId,
+      },
+      { status: 503 }
+    );
   }
 }

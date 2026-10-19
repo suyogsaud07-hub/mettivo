@@ -44,13 +44,16 @@ function deps(overrides: Partial<ServiceDeps> = {}): ServiceDeps {
 }
 
 describe('verifyFace — AI configuration vs outage', () => {
-  it('answers 500 when the provider key is not configured', async () => {
+  it('answers 500 ai_misconfigured (with a request id) when the provider key is not configured', async () => {
     const result = await verifyFace(
       faceRequest(),
       deps({ verificationEnv: { ...ENV, apiKey: null } })
     );
 
-    expect(result).toEqual({ status: 500, body: { error: 'Missing AI configuration' } });
+    expect(result.status).toBe(500);
+    expect(result.body.error).toBe('ai_misconfigured');
+    expect(result.body.details).toEqual(expect.stringContaining('AI_MODERATION_API_KEY'));
+    expect(typeof result.body.requestId).toBe('string');
   });
 
   it('answers 503 with a reason when the provider call fails despite a configured key', async () => {
@@ -87,6 +90,23 @@ describe('verifyFace — AI configuration vs outage', () => {
     expect(typeof result.body.requestId).toBe('string');
   });
 
+  it('never retries a rejected credential', async () => {
+    let calls = 0;
+    const unauthorized: typeof fetch = (async () => {
+      calls += 1;
+      return new Response('invalid api key', { status: 401 });
+    }) as typeof fetch;
+
+    const result = await verifyFace(
+      faceRequest(),
+      deps({ verificationEnv: ENV, aiFetchImpl: unauthorized })
+    );
+
+    expect(result.body.error).toBe('ai_misconfigured');
+    // Retrying a bad key cannot succeed and only delays the operator's fix.
+    expect(calls).toBe(1);
+  });
+
   it('answers 503 ai_unavailable (with a request id) when the provider returns a non-auth error', async () => {
     const badRequest: typeof fetch = (async () =>
       new Response('bad request', { status: 400 })) as typeof fetch;
@@ -99,5 +119,97 @@ describe('verifyFace — AI configuration vs outage', () => {
     expect(result.status).toBe(503);
     expect(result.body.error).toBe('ai_unavailable');
     expect(typeof result.body.requestId).toBe('string');
+  });
+});
+
+const AI_OK: unknown = {
+  choices: [
+    {
+      message: {
+        content: JSON.stringify({
+          human: true,
+          face_present: true,
+          apparent_gender: 'woman',
+          score: 0.92,
+        }),
+      },
+    },
+  ],
+};
+
+function aiOkFetch(): typeof fetch {
+  return (async () =>
+    new Response(JSON.stringify(AI_OK), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })) as typeof fetch;
+}
+
+/** Routes the auth check and the verdict write to separate canned replies. */
+function writerFetch(rejection: () => Response): typeof fetch {
+  return (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith('/auth/v1/user')) {
+      return new Response(JSON.stringify({ id: 'user-1' }), { status: 200 });
+    }
+    if (url.endsWith('/rest/v1/rpc/record_verification')) {
+      return rejection();
+    }
+    throw new Error(`unexpected ${url}`);
+  }) as typeof fetch;
+}
+
+describe('verifyFace — recording the verdict', () => {
+  const writerEnv = {
+    supabaseUrl: 'https://db.example',
+    anonKey: 'anon',
+    workerSecret: 'secret',
+  };
+
+  it('names a rejected worker secret without echoing the RPC body', async () => {
+    const result = await verifyFace(
+      faceRequest(),
+      deps({
+        verificationEnv: ENV,
+        aiFetchImpl: aiOkFetch(),
+        fetchImpl: writerFetch(
+          () =>
+            new Response(
+              JSON.stringify({ code: '42501', message: 'Worker access required' }),
+              { status: 403 }
+            )
+        ),
+        writerEnv,
+      })
+    );
+
+    expect(result.status).toBe(500);
+    expect(result.body.error).toBe('verification_store_misconfigured');
+    expect(typeof result.body.requestId).toBe('string');
+    expect(String(result.body.details)).not.toContain('rpc_');
+    expect(String(result.body.details)).not.toContain('Worker access required');
+  });
+
+  it('sanitises an unexpected writer failure', async () => {
+    const result = await verifyFace(
+      faceRequest(),
+      deps({
+        verificationEnv: ENV,
+        aiFetchImpl: aiOkFetch(),
+        fetchImpl: writerFetch(
+          () =>
+            new Response('rpc_record_verification_http_500:internal detail', {
+              status: 500,
+            })
+        ),
+        writerEnv,
+      })
+    );
+
+    expect(result.status).toBe(500);
+    expect(result.body.error).toBe('record_failed');
+    expect(typeof result.body.requestId).toBe('string');
+    expect(String(result.body.details)).not.toContain('internal detail');
+    expect(String(result.body.details)).not.toContain('rpc_');
   });
 });

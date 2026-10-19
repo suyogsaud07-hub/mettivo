@@ -433,7 +433,7 @@ export default function EditProfileWizardPage() {
     textarea: { width: '100%', padding: '16px', borderRadius: '16px', border: '1px solid #4A1828', backgroundColor: '#0D0A10', color: '#F2E9E4', fontSize: '15px', outline: 'none', minHeight: '120px', resize: 'vertical' as const, boxSizing: 'border-box' as const },
     pillContainer: { display: 'flex', flexWrap: 'wrap' as const, gap: '10px' },
     pill: { padding: '10px 18px', borderRadius: '20px', border: '1px solid #4A1828', backgroundColor: '#0D0A10', color: '#B58A83', cursor: 'pointer', fontSize: '13px', fontWeight: '600' },
-    pillActive: { backgroundColor: '#D4B18A', color: '#17121C', borderColor: '#D4B18A' },
+    pillActive: { backgroundColor: '#D4B18A', color: '#17121C', border: '1px solid #D4B18A' },
     footerNav: { display: 'flex', gap: '12px' },
     backBtn: { flex: 1, padding: '16px', borderRadius: '30px', backgroundColor: '#29202D', color: '#B58A83', border: 'none', fontWeight: '700', cursor: 'pointer' },
     nextBtn: { flex: 2, padding: '16px', borderRadius: '30px', backgroundColor: '#D4B18A', color: '#17121C', border: 'none', fontWeight: '700', cursor: 'pointer' },

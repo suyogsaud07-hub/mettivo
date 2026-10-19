@@ -7,6 +7,7 @@ import {
   matchesSelectedGender,
   phraseMatches,
   readVerificationEnv,
+  retryDelayMs,
   transcribeVoice,
   VERIFICATION_THRESHOLD,
   type VerificationEnv,
@@ -70,6 +71,32 @@ describe('classifyUpstreamStatus', () => {
     expect(classifyUpstreamStatus(503)).toBe('provider');
     expect(classifyUpstreamStatus(400)).toBe('request');
     expect(classifyUpstreamStatus(null)).toBe('transport');
+  });
+});
+
+describe('retryDelayMs', () => {
+  it('honours Retry-After seconds', () => {
+    const response = new Response('', {
+      status: 429,
+      headers: { 'Retry-After': '16' },
+    });
+    expect(retryDelayMs(response, '')).toBe(16_000);
+  });
+
+  it('honours the provider hint, in seconds and milliseconds', () => {
+    expect(
+      retryDelayMs(new Response('', { status: 429 }), 'Please try again in 16.43s')
+    ).toBe(16_430);
+    expect(
+      retryDelayMs(new Response('', { status: 429 }), 'Please try again in 942.85ms')
+    ).toBe(943);
+  });
+
+  it('caps an excessive wait and falls back when there is no hint', () => {
+    expect(
+      retryDelayMs(new Response('', { status: 429 }), 'Please try again in 120s')
+    ).toBe(20_000);
+    expect(retryDelayMs(new Response('', { status: 500 }), 'oops')).toBe(2_500);
   });
 });
 
@@ -208,6 +235,30 @@ describe('analyzeFace', () => {
       { env: ENV, fetchImpl: fetchReturning(modelReply({ ...okHuman, human: false })) }
     );
     expect(verdict?.human).toBe(false);
+  });
+
+  it('sends the bearer key and configured vision model, with no response_format', async () => {
+    const recorder: { url?: string; init?: RequestInit } = {};
+    await analyzeFace(
+      { selfieUrl: 'data:image/png;base64,aGk=', gender: 'Woman' },
+      { env: ENV, fetchImpl: fetchReturning(modelReply(okHuman), recorder) }
+    );
+
+    expect(recorder.url).toBe('https://ai.example/v1/chat/completions');
+    const headers = recorder.init?.headers as Record<string, string>;
+    expect(headers.Authorization).toBe('Bearer test-key');
+    expect(headers['Content-Type']).toBe('application/json');
+
+    const body = JSON.parse(String(recorder.init?.body)) as {
+      model: string;
+      response_format?: unknown;
+      messages: { content: unknown }[];
+    };
+    expect(body.model).toBe('vision-model');
+    // Groq's vision models reject json_object mode; the prompt already asks for
+    // JSON, so sending response_format would turn a valid request into a failure.
+    expect(body).not.toHaveProperty('response_format');
+    expect(JSON.stringify(body.messages[1]?.content)).toContain('image_url');
   });
 });
 

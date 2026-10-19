@@ -37,6 +37,15 @@ interface FaceVoiceVerificationModalProps {
 
 type Phase = 'face' | 'voice' | 'verified';
 
+/**
+ * A full camera frame (e.g. 1280×720) costs ~2,200 input tokens at the vision
+ * provider, enough to exhaust a 7,000-token/minute budget in three requests.
+ * 640 px on the longest edge keeps the face legible while cutting that cost by
+ * roughly 3× (measured: 2,205 → 792 tokens), so one verification no longer
+ * trips the rate limit.
+ */
+const MAX_FACE_FRAME_EDGE_PX = 640;
+
 export default function FaceVoiceVerificationModal({
   gender,
   displayName,
@@ -105,9 +114,13 @@ export default function FaceVoiceVerificationModal({
   const captureFrame = useCallback((): string | null => {
     const video = videoRef.current;
     if (!video || video.videoWidth === 0) return null;
+    const scale = Math.min(
+      1,
+      MAX_FACE_FRAME_EDGE_PX / Math.max(video.videoWidth, video.videoHeight)
+    );
     const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
+    canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
+    canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
     const context = canvas.getContext('2d');
     if (!context) return null;
     context.drawImage(video, 0, 0, canvas.width, canvas.height);

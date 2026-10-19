@@ -53,6 +53,7 @@ const MAX_IMAGE_URL_CHARS = 2_000_000;
  * would make a genuine outage look like a slow success.
  */
 const RETRY_DELAY_MS = 2_500;
+const MAX_RETRY_DELAY_MS = 20_000;
 const RETRY_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
 
 /** Confidence a face/photo verdict must reach to count as a pass. */
@@ -191,9 +192,43 @@ async function fetchWithTimeout(
 }
 
 /**
+ * How long to wait before the single retry.
+ *
+ * A free-tier 429 names the exact time the token window reopens (e.g.
+ * "try again in 16.4s"); retrying after a fixed 2.5 s just burns the one retry
+ * inside the same exhausted window. Prefer `Retry-After`, then the provider's
+ * prose hint, and cap the wait so a huge header cannot outlive the route.
+ */
+export function retryDelayMs(response: Response, body: string): number {
+  const retryAfter = response.headers.get('retry-after');
+  if (retryAfter) {
+    const seconds = Number(retryAfter);
+    if (Number.isFinite(seconds) && seconds >= 0) {
+      return Math.min(Math.round(seconds * 1000), MAX_RETRY_DELAY_MS);
+    }
+    const at = Date.parse(retryAfter);
+    if (Number.isFinite(at)) {
+      return Math.min(Math.max(0, at - Date.now()), MAX_RETRY_DELAY_MS);
+    }
+  }
+
+  const hint = /try again in\s+([\d.]+)\s*(ms|s)\b/i.exec(body);
+  if (hint) {
+    const value = Number(hint[1]);
+    if (Number.isFinite(value)) {
+      const ms = hint[2]?.toLowerCase() === 'ms' ? value : value * 1000;
+      return Math.min(Math.max(0, Math.round(ms)), MAX_RETRY_DELAY_MS);
+    }
+  }
+
+  return RETRY_DELAY_MS;
+}
+
+/**
  * Runs one upstream call with the timeout. Retries once on 408/425/429/5xx
- * after a short delay — the free tier's per-minute burst limit and a cold
- * model start both surface as those statuses and both clear within seconds.
+ * after the provider's advertised delay (or a short fallback) — the free
+ * tier's per-minute burst limit and a cold model start both surface as those
+ * statuses and both clear on their own.
  */
 async function fetchWithRetry(
   fetchImpl: typeof fetch,
@@ -217,7 +252,7 @@ async function fetchWithRetry(
     `[verification.ai] ${label} returned ${response.status}; retrying once. Body: ${retryBody.slice(0, 500)}`
   );
 
-  await sleep(RETRY_DELAY_MS);
+  await sleep(retryDelayMs(response, retryBody));
   try {
     return await fetchWithTimeout(fetchImpl, url, init);
   } catch (error) {
