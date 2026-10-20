@@ -1,12 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import {
-  E2E_OTHER_USER_ID,
-  candidate,
-  signedIn,
-  stubBrowserMedia,
-  stubSupabase,
-  stubVerification,
-} from './fixtures';
+import { E2E_OTHER_USER_ID, candidate, signedIn, stubSupabase } from './fixtures';
 
 /**
  * §3.3 — the journeys that must never regress.
@@ -149,37 +142,11 @@ const PNG_PIXEL = Buffer.from(
 /**
  * Four DISTINCT gallery images.
  *
- * `PhotoVerificationStep` rejects duplicates by data-URL identity, so reusing one
- * buffer four times would drop three photos. Each append makes the byte stream —
- * and therefore the data URL — unique; the gallery stage never decodes them, it
- * only forwards them to the (stubbed) verifier.
+ * The uploader rejects duplicates by data-URL identity, so reusing one buffer
+ * four times would drop three photos. Each append makes the byte stream — and
+ * therefore the data URL — unique.
  */
 const GALLERY_PNGS = [1, 2, 3, 4].map((n) => Buffer.concat([PNG_PIXEL, Buffer.from([n])]));
-
-/**
- * Drives the mandatory face + voice check to a pass.
- *
- * `stubBrowserMedia` supplies the camera/analyser/recorder and `stubVerification`
- * the route verdicts, so this exercises the real modal wiring — phase
- * transitions, the busy states and the `onVerified` hand-off — without a device.
- */
-async function verifyFaceAndVoice(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Verify my face & voice' }).click();
-
-  const dialog = page.getByRole('dialog', { name: 'Face and voice verification' });
-  await expect(dialog).toBeVisible();
-
-  await page.getByRole('button', { name: 'Capture & verify face' }).click();
-  await page.getByRole('button', { name: 'Record phrase' }).click();
-
-  // The analyser reports a steady 200 Hz tone, which is what proves a sample was
-  // actually collected before stopping (an empty sample set would be rejected).
-  await expect(page.getByText(/Listening/)).toBeVisible();
-  await expect(page.getByText(/Hz/)).toBeVisible();
-
-  await page.getByRole('button', { name: 'Stop & submit' }).click();
-  await expect(dialog).toHaveCount(0);
-}
 
 /** The wizard starts on step 1 and reports its position in this exact format. */
 const STEP_LABEL = /Step (\d+) of 15/;
@@ -197,8 +164,7 @@ async function completeStep(page: Page, step: number): Promise<void> {
   const next = page.getByRole('button', { name: 'Next →' });
 
   if (step === 1) {
-    // M24: step 1 is the display name ONLY. Photos moved to the final step and
-    // now require AI authenticity verification, so the name is the sole gate.
+    // Step 1 is the display name ONLY. Photos live on the final step.
     await page.getByPlaceholder('Your name or nickname').fill('Sujata');
   }
 
@@ -275,8 +241,6 @@ async function completeStep(page: Page, step: number): Promise<void> {
 test.describe('§3.3 — the onboarding wizard', () => {
   test('blocks every incomplete step, then submits a complete adult profile', async ({ page }) => {
     await signedIn(page);
-    await stubVerification(page);
-    await stubBrowserMedia(page);
 
     const stub = await stubSupabase(page, {
       // A brand-new account: no profiles row yet.
@@ -315,13 +279,12 @@ test.describe('§3.3 — the onboarding wizard', () => {
     await next.click();
     await expect(stepLabel).toHaveText('Step 2 of 15');
 
-    // --- step 2: identity is mandatory, and so is the live face/voice check ---
+    // --- step 2: identity is mandatory, with no face/voice check --------------
     await expect(next).toBeDisabled();
-    await page.getByRole('button', { name: 'Woman', exact: true }).click();
-    // A gender alone is not enough: the step refuses to advance unverified.
-    await expect(next).toBeDisabled();
+    await expect(page.getByText(/face & voice/i)).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /verify my face/i })).toHaveCount(0);
 
-    await verifyFaceAndVoice(page);
+    await page.getByRole('button', { name: 'Woman', exact: true }).click();
     await expect(next).toBeEnabled();
     await next.click();
     await expect(stepLabel).toHaveText('Step 3 of 15');
@@ -361,8 +324,8 @@ test.describe('§3.3 — the onboarding wizard', () => {
       await expect(stepLabel).toHaveText(`Step ${step + 1} of 15`);
     }
 
-    // --- step 15: photos must be uploaded AND verified before submit --------
-    await expect(page.getByText('Verify your photos & finish')).toBeVisible();
+    // --- step 15: photos must be uploaded before submit ---------------------
+    await expect(page.getByText('Add your photos & finish')).toBeVisible();
     const submit = page.getByRole('button', { name: /Complete & Launch/ });
     await expect(submit).toBeDisabled();
 
@@ -374,9 +337,9 @@ test.describe('§3.3 — the onboarding wizard', () => {
       buffer: PNG_PIXEL,
     });
     await page.getByRole('button', { name: 'Save picture' }).click();
-    await expect(page.getByText('Verified ✓')).toBeVisible();
+    await expect(page.getByRole('img', { name: 'Profile picture' })).toBeVisible();
 
-    // Gallery: exactly four DISTINCT photos, each forwarded to the verifier.
+    // Gallery: exactly four DISTINCT photos.
     await page
       .locator('input[type="file"]')
       .nth(1)
@@ -387,7 +350,7 @@ test.describe('§3.3 — the onboarding wizard', () => {
           buffer,
         }))
       );
-    await expect(page.getByText('All four verified ✓')).toBeVisible();
+    await expect(page.getByTestId('photos-ready')).toBeVisible();
     await expect(submit).toBeEnabled();
 
     await submit.click();

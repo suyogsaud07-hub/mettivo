@@ -20,9 +20,7 @@ import {
   ONBOARDING_TOTAL_STEPS,
   validateOnboardingStep,
 } from '@/lib/onboarding-steps';
-import FaceVoiceVerificationModal from '@/app/components/verification/FaceVoiceVerificationModal';
-import PhotoVerificationStep from '@/app/components/verification/PhotoVerificationStep';
-import type { VerificationGender } from '@/lib/verification/client';
+import PhotoUploadStep from '@/app/components/profile/PhotoUploadStep';
 import {
   PROFILE_DRINKING_OPTIONS,
   PROFILE_HOBBIES_OPTIONS as HOBBIES_LIST,
@@ -106,9 +104,6 @@ export default function EditProfileWizardPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [alreadyOnboarded, setAlreadyOnboarded] = useState(false);
-  const [faceVoiceVerified, setFaceVoiceVerified] = useState(false);
-  const [selfieUrl, setSelfieUrl] = useState('');
-  const [showVerification, setShowVerification] = useState(false);
   const [photosReady, setPhotosReady] = useState(false);
 
   const [formData, setFormData] = useState<FormState>({
@@ -292,11 +287,6 @@ export default function EditProfileWizardPage() {
       return;
     }
 
-    if (currentStep === 2 && !faceVoiceVerified && !alreadyOnboarded) {
-      setError('Please verify your face and voice to continue.');
-      return;
-    }
-
     setCurrentStep((prev) => prev + 1);
   };
 
@@ -344,17 +334,10 @@ export default function EditProfileWizardPage() {
       bio: formData.bio,
     };
 
-    if (!alreadyOnboarded) {
-      if (!faceVoiceVerified) {
-        setError('Please verify your face and voice before finishing.');
-        setCurrentStep(2);
-        return;
-      }
-      if (!photosReady) {
-        setError('Please verify one profile picture and four gallery photos before finishing.');
-        setCurrentStep(ONBOARDING_TOTAL_STEPS);
-        return;
-      }
+    if (!alreadyOnboarded && !photosReady) {
+      setError('Please add one profile picture and four gallery photos before finishing.');
+      setCurrentStep(ONBOARDING_TOTAL_STEPS);
+      return;
     }
 
     const validation = validateProfileDraft(draft);
@@ -481,7 +464,7 @@ export default function EditProfileWizardPage() {
         {currentStep === 1 && (
           <div>
             <div style={styles.title}>Let&apos;s start with the basics</div>
-            <div style={styles.subtitle}>Start with your display name. Photos come last, after you verify.</div>
+            <div style={styles.subtitle}>Start with your display name. You can add your photos at the end.</div>
 
             <div style={{ marginBottom: '16px' }}>
               <label style={styles.label}>Display Name *</label>
@@ -498,9 +481,7 @@ export default function EditProfileWizardPage() {
         {currentStep === 2 && (
           <div>
             <div style={styles.title}>How do you identify?</div>
-            <div style={styles.subtitle}>
-              Select your gender identity. We then verify your face and voice to keep fake profiles out.
-            </div>
+            <div style={styles.subtitle}>Select your gender identity.</div>
 
             <div style={{ marginBottom: '16px' }}>
               <label style={styles.label}>Gender</label>
@@ -510,13 +491,7 @@ export default function EditProfileWizardPage() {
                     key={g}
                     type="button"
                     style={{ ...styles.pill, ...(formData.gender === g ? styles.pillActive : {}) }}
-                    onClick={() => {
-                      if (g !== formData.gender) {
-                        setFaceVoiceVerified(false);
-                        setSelfieUrl('');
-                      }
-                      setFormData({ ...formData, gender: g });
-                    }}
+                    onClick={() => setFormData({ ...formData, gender: g })}
                   >
                     {g}
                   </button>
@@ -532,39 +507,6 @@ export default function EditProfileWizardPage() {
                 value={formData.pronouns}
                 onChange={(e) => setFormData({ ...formData, pronouns: e.target.value })}
               />
-            </div>
-
-            <div style={{ marginTop: '20px' }}>
-              <label style={styles.label}>Face &amp; voice check *</label>
-              {faceVoiceVerified ? (
-                <div style={{ color: '#34D399', fontSize: '13px', fontWeight: 700 }}>
-                  Verified ✓ — your face and voice match {formData.gender}.
-                </div>
-              ) : alreadyOnboarded ? (
-                <div style={{ color: '#B58A83', fontSize: '13px' }}>
-                  Your account is already verified. You can continue without re-checking.
-                </div>
-              ) : (
-                <>
-                  <button
-                    type="button"
-                    disabled={!ONBOARDING_GENDERS.includes(formData.gender as (typeof ONBOARDING_GENDERS)[number])}
-                    onClick={() => setShowVerification(true)}
-                    style={{
-                      ...styles.nextBtn,
-                      flex: 'none',
-                      width: '100%',
-                      opacity: formData.gender ? 1 : 0.5,
-                      cursor: formData.gender ? 'pointer' : 'not-allowed',
-                    }}
-                  >
-                    Verify my face &amp; voice
-                  </button>
-                  <p style={{ fontSize: '12px', color: '#B58A83', marginTop: '8px' }}>
-                    You cannot continue until the check passes.
-                  </p>
-                </>
-              )}
             </div>
           </div>
         )}
@@ -931,16 +873,14 @@ export default function EditProfileWizardPage() {
 
         {currentStep === 15 && (
           <div>
-            <div style={styles.title}>Verify your photos &amp; finish</div>
+            <div style={styles.title}>Add your photos &amp; finish</div>
             <div style={styles.subtitle}>
-              Every photo is checked against your verified face before it can appear on your profile.
+              Choose one profile picture and four gallery photos for your profile.
             </div>
 
             {!alreadyOnboarded && (
               <div style={{ marginBottom: '24px' }}>
-                <PhotoVerificationStep
-                  gender={formData.gender as VerificationGender}
-                  selfieUrl={selfieUrl}
+                <PhotoUploadStep
                   initialAvatarUrl={formData.avatarUrl}
                   initialPhotos={formData.photos}
                   onProgress={({ avatarUrl, photos, ready }) => {
@@ -962,7 +902,7 @@ export default function EditProfileWizardPage() {
               <div style={styles.summaryRow}><span>MBTI</span><span style={{ color: '#D4B18A' }}>{formData.mbti || 'Not set'}</span></div>
               <div style={styles.summaryRow}><span>Hobbies</span><span style={{ color: '#D4B18A' }}>{formData.hobbies.join(', ') || 'None selected'}</span></div>
               <div style={styles.summaryRow}><span>Languages</span><span style={{ color: '#D4B18A' }}>{formData.languagesSpoken.join(', ') || 'None selected'}</span></div>
-              <div style={styles.summaryRow}><span>Photos</span><span style={{ color: '#D4B18A' }}>{formData.photos.length} verified</span></div>
+              <div style={styles.summaryRow}><span>Photos</span><span style={{ color: '#D4B18A' }}>{formData.photos.length} added</span></div>
             </div>
           </div>
         )}
@@ -980,9 +920,7 @@ export default function EditProfileWizardPage() {
             type="button"
             style={styles.nextBtn}
             onClick={handleNext}
-            disabled={
-              !stepValidation.ok || (currentStep === 2 && !faceVoiceVerified && !alreadyOnboarded)
-            }
+            disabled={!stepValidation.ok}
           >
             Next →
           </button>
@@ -997,21 +935,6 @@ export default function EditProfileWizardPage() {
           </button>
         )}
       </div>
-
-      {/* ✅ THIS IS THE FIX: key={formData.gender} forces the modal to remount and get the new props */}
-      {showVerification && (
-        <FaceVoiceVerificationModal
-          key={formData.gender}
-          gender={formData.gender as VerificationGender}
-          displayName={formData.displayName || null}
-          onCancel={() => setShowVerification(false)}
-          onVerified={(capturedSelfie) => {
-            setSelfieUrl(capturedSelfie);
-            setFaceVoiceVerified(true);
-            setShowVerification(false);
-          }}
-        />
-      )}
 
       <div style={styles.escapeRow}>
         <Link href="/" style={styles.escapeLink} data-testid="back-to-landing">

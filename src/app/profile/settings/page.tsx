@@ -20,7 +20,7 @@ import { PreferencesError, saveInterfaceLanguage } from '@/lib/preferences';
 import { TRANSLATION_LANGUAGE_OPTIONS } from '@/lib/translation';
 import { usePreferredTranslationLanguage } from '@/app/components/chat/usePreferredTranslationLanguage';
 import { AvatarError, saveAvatar } from '@/lib/avatar';
-import PhotoCropperModal from '@/app/components/verification/PhotoCropperModal';
+import PhotoCropperModal from '@/app/components/profile/PhotoCropperModal';
 import { LEGAL_DOC_TITLES, type LegalDocId } from '@/lib/legal-content';
 import BottomSheet from './components/BottomSheet';
 import Toast, { type ToastMessage } from './components/Toast';

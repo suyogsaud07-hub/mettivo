@@ -22,11 +22,10 @@ import {
  *
  * THE PHOTO REQUIREMENT IS STEP-LOCAL
  *   Exactly four gallery photos (plus one separate avatar) is an onboarding-flow
- *   rule, not a database invariant: the count lives here (step 15) ONLY, while
- *   the M24 database trigger separately refuses to publish a profile whose
- *   photos were not each AI-verified. `validateProfileDraft`/`saveProfile` are
- *   unchanged, and no migration was added for the count itself. Step 15
- *   delegates to the full-draft guard AND adds the gallery-count rule.
+ *   rule, not a database invariant: the count lives here (step 15) ONLY.
+ *   `validateProfileDraft`/`saveProfile` are unchanged and the database caps the
+ *   array without demanding a minimum. Step 15 delegates to the full-draft guard
+ *   AND adds the gallery-count rule.
  */
 
 /** Re-exported so wizard callers read the photo cap from one place. */
@@ -36,14 +35,11 @@ export { MAX_PHOTOS };
  * The onboarding gallery requirement — EXACTLY this many distinct photos.
  *
  * This is an onboarding-flow rule, not a database invariant: it lives here and
- * is enforced again (for real) by the M24 database trigger, which refuses to
- * publish a profile unless four gallery photos and one avatar have each passed
- * an AI authenticity check. The wizard enforces the count; the database enforces
- * the count *and* the verification.
+ * is applied when the member first completes the wizard.
  */
 export const MIN_PHOTOS = 4;
 
-/** The onboarding has fifteen steps; step 15 is photo verification + launch. */
+/** The onboarding has fifteen steps; step 15 is photo upload + launch. */
 export const ONBOARDING_TOTAL_STEPS = 15;
 
 /** The closed set of gender identities the wizard offers on step 2. */
@@ -460,10 +456,10 @@ function blockingProblems(step: number, state: OnboardingState): ValidationProbl
     }
 
     case ONBOARDING_TOTAL_STEPS: {
-      // Step 15 is the final photo-verification screen. The full-draft guard is
-      // still the single authority for the profile fields, and the gallery
-      // requirement is added on top because the draft guard has no photo count
-      // (the database caps the array but does not demand a minimum).
+      // Step 15 is the final photo screen. The full-draft guard is still the
+      // single authority for the profile fields, and the gallery requirement is
+      // added on top because the draft guard has no photo count (the database
+      // caps the array but does not demand a minimum).
       problems.push(...validateProfileDraft(toProfileDraft(state)).problems);
 
       const galleryCount = countFilled(state.photos);

@@ -194,7 +194,7 @@ const completeState = (overrides: Partial<OnboardingState> = {}): OnboardingStat
   ...overrides,
 });
 
-/** Steps that block locally: 1..14. Step 15 is photo verification + submit. */
+/** Steps that block locally: 1..14. Step 15 is photo upload + submit. */
 const BLOCKING_STEPS = ONBOARDING_STEPS.filter(
   (spec) => spec.step < ONBOARDING_TOTAL_STEPS
 );
@@ -345,8 +345,8 @@ describe('onboarding — step 15, the photo requirement', () => {
   });
 
   it('keeps the photo rule out of the full-draft guard', () => {
-    // The gallery count is onboarding-flow only; the database enforces the real
-    // rule (each photo must be AI-verified) in the M24 trigger.
+    // The gallery count is an onboarding-flow rule only. Profile edits are not
+    // forced to re-upload a gallery.
     expect(validateProfileDraft(draft({ photos: [] }), NOW).ok).toBe(true);
     expect(
       validateOnboardingStep(ONBOARDING_TOTAL_STEPS, completeState({ photos: [] })).ok

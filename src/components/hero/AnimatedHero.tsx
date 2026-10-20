@@ -80,6 +80,10 @@ export default function AnimatedHero({
     onCompleteRef.current = onComplete;
   }, [onComplete]);
 
+  // One completion notification per run. Replay bumps `runId`, so the ref is
+  // keyed by run rather than being a plain boolean.
+  const completedRunRef = useRef<number | null>(null);
+
   useEffect(() => {
     assertLogoGeometry();
   }, []);
@@ -95,7 +99,10 @@ export default function AnimatedHero({
 
       if (prefersReducedMotion) {
         setPhase('logo');
-        onCompleteRef.current?.();
+        if (completedRunRef.current !== runId) {
+          completedRunRef.current = runId;
+          onCompleteRef.current?.();
+        }
         return;
       }
 
@@ -114,7 +121,9 @@ export default function AnimatedHero({
 
       timers.push(
         window.setTimeout(() => {
-          if (!cancelled) onCompleteRef.current?.();
+          if (cancelled || completedRunRef.current === runId) return;
+          completedRunRef.current = runId;
+          onCompleteRef.current?.();
         }, TOTAL_DURATION_MS),
       );
     };

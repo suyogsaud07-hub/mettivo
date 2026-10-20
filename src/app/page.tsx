@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLanguage } from '@/context/LanguageContext';
 import InstallButton from '@/app/components/InstallButton';
 import HeaderLanguageDropdown from '@/app/components/HeaderLanguageDropdown';
@@ -39,11 +39,15 @@ export default function LandingPage() {
   // identical to the server render (no hydration mismatch) and, under reduced
   // motion, never mounts the overlay at all.
   const [isIntroComplete, setIsIntroComplete] = useState(true);
+  // Set only once the splash has fully faded out. Guards against a late
+  // `requestAnimationFrame` (or a repeated `onDone`) re-opening the intro.
+  const introDoneRef = useRef(false);
 
   useEffect(() => {
     // Deferred a frame: reading storage/matchMedia is a one-time external sync,
     // and deferring keeps the first paint identical to the server render.
     const frame = window.requestAnimationFrame(() => {
+      if (introDoneRef.current) return;
       try {
         const seen = window.sessionStorage.getItem(INTRO_SEEN_KEY) === '1';
         const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -56,6 +60,8 @@ export default function LandingPage() {
   }, []);
 
   const handleIntroDone = useCallback(() => {
+    if (introDoneRef.current) return;
+    introDoneRef.current = true;
     try {
       window.sessionStorage.setItem(INTRO_SEEN_KEY, '1');
     } catch {

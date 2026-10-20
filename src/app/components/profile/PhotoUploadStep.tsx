@@ -1,29 +1,17 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import PhotoCropperModal from '@/app/components/verification/PhotoCropperModal';
-import {
-  submitPhoto,
-  VerificationError,
-  type VerificationGender,
-} from '@/lib/verification/client';
+import PhotoCropperModal from '@/app/components/profile/PhotoCropperModal';
 
 /**
- * The final onboarding step: strict photo verification.
+ * The final onboarding step: profile picture and gallery upload.
  *
  * One distinct profile picture (adjusted with the cropper) and exactly four
- * distinct gallery photos. Every image is sent to the server, which classifies
- * it against the member's verified live selfie and rejects anything that is not
- * a human, is not the same person, or does not match the verified gender — so
- * pets, objects, landscapes and stock images never reach the profile.
- *
- * Only verified images are ever reported upward, which means the payload the
- * wizard saves contains exactly the photos the database has a passing check for.
+ * distinct gallery photos. Images are stored as data URLs by the profile
+ * payload; no verification service is involved.
  */
 
-interface PhotoVerificationStepProps {
-  gender: VerificationGender;
-  selfieUrl: string;
+interface PhotoUploadStepProps {
   initialAvatarUrl: string;
   initialPhotos: string[];
   onProgress: (next: { avatarUrl: string; photos: string[]; ready: boolean }) => void;
@@ -31,13 +19,11 @@ interface PhotoVerificationStepProps {
 
 const GALLERY_TARGET = 4;
 
-export default function PhotoVerificationStep({
-  gender,
-  selfieUrl,
+export default function PhotoUploadStep({
   initialAvatarUrl,
   initialPhotos,
   onProgress,
-}: PhotoVerificationStepProps) {
+}: PhotoUploadStepProps) {
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
 
@@ -50,9 +36,9 @@ export default function PhotoVerificationStep({
 
   const ready = avatar.length > 0 && gallery.length === GALLERY_TARGET;
 
-  // Report verified state up. The callback is kept in a ref so that a parent
-  // re-render (which happens on every `onProgress`) never re-fires this effect
-  // and loops. The report itself only fires when the verified set changes.
+  // Keep the callback in a ref so a parent re-render (which happens on every
+  // `onProgress`) never re-fires this effect and loops. The report only fires
+  // when the selected set changes.
   const onProgressRef = useRef(onProgress);
   useEffect(() => {
     onProgressRef.current = onProgress;
@@ -62,48 +48,26 @@ export default function PhotoVerificationStep({
     onProgressRef.current({ avatarUrl: avatar, photos: gallery, ready });
   }, [avatar, gallery, ready]);
 
-  const verifyImage = async (
-    url: string,
-    role: 'gallery' | 'avatar'
-  ): Promise<{ passed: boolean; reasons: string[] }> => {
-    try {
-      const result = await submitPhoto(url, selfieUrl, role, gender);
-      return { passed: result.passed, reasons: result.reasons };
-    } catch (err) {
-      throw err instanceof VerificationError ? err : new VerificationError('Verification failed.');
-    }
-  };
-
   const handleAvatarFile = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = '';
     if (!file) return;
     setError(null);
+    setBusyAvatar(true);
     fileToDataUrl(file)
       .then((dataUrl) => setCropperSrc(dataUrl))
-      .catch(() => setError('That image could not be read.'));
+      .catch(() => setError('That image could not be read.'))
+      .finally(() => setBusyAvatar(false));
   };
 
-  const handleCroppedAvatar = async (cropped: string) => {
+  const handleCroppedAvatar = (cropped: string) => {
     setCropperSrc(null);
     if (gallery.includes(cropped)) {
       setError('Your profile picture must be different from your gallery photos.');
       return;
     }
-    setBusyAvatar(true);
     setError(null);
-    try {
-      const { passed, reasons } = await verifyImage(cropped, 'avatar');
-      if (!passed) {
-        setError(photoMessage(reasons, 'profile picture'));
-        return;
-      }
-      setAvatar(cropped);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not verify your profile picture.');
-    } finally {
-      setBusyAvatar(false);
-    }
+    setAvatar(cropped);
   };
 
   const handleGalleryFiles = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -130,16 +94,9 @@ export default function PhotoVerificationStep({
           setError('Each photo must be different. One was skipped.');
           continue;
         }
-        const { passed, reasons } = await verifyImage(dataUrl, 'gallery');
-        if (!passed) {
-          setError(photoMessage(reasons, 'gallery photo'));
-          continue;
-        }
         next.push(dataUrl);
       }
       setGallery(next.slice(0, GALLERY_TARGET));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not verify those photos.');
     } finally {
       setBusyGallery(false);
     }
@@ -150,11 +107,11 @@ export default function PhotoVerificationStep({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
       <div style={{ fontSize: '22px', fontWeight: 800, color: '#F2E9E4' }}>
-        Verify your photos
+        Add your photos
       </div>
       <div style={{ fontSize: '14px', color: '#B58A83', lineHeight: 1.4 }}>
-        Upload one profile picture and exactly four gallery photos. Every photo is checked by AI
-        against your verified face — pets, objects, landscapes and stock images are rejected.
+        Upload one profile picture and exactly four gallery photos. You can adjust your profile
+        picture before saving.
       </div>
 
       {/* Profile picture */}
@@ -183,17 +140,14 @@ export default function PhotoVerificationStep({
               👤
             </div>
           )}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => avatarInputRef.current?.click()}
-              style={secondaryButton}
-            >
-              {busyAvatar ? 'Verifying…' : avatar ? 'Replace & adjust' : 'Upload & adjust'}
-            </button>
-            {avatar && <span style={{ fontSize: '12px', color: '#34D399' }}>Verified ✓</span>}
-          </div>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => avatarInputRef.current?.click()}
+            style={secondaryButton}
+          >
+            {busyAvatar ? 'Opening…' : avatar ? 'Replace & adjust' : 'Upload & adjust'}
+          </button>
         </div>
       </div>
 
@@ -241,7 +195,7 @@ export default function PhotoVerificationStep({
           Exactly four distinct photos.{' '}
           {gallery.length < GALLERY_TARGET
             ? `${GALLERY_TARGET - gallery.length} to go.`
-            : 'All four verified ✓'}
+            : 'All four photos added.'}
         </p>
       </div>
 
@@ -252,8 +206,11 @@ export default function PhotoVerificationStep({
       )}
 
       {ready && (
-        <div style={{ color: '#34D399', fontSize: '13px', fontWeight: 700 }}>
-          All photos verified. You can finish now.
+        <div
+          data-testid="photos-ready"
+          style={{ color: '#34D399', fontSize: '13px', fontWeight: 700 }}
+        >
+          Photos ready. You can finish now.
         </div>
       )}
 
@@ -262,24 +219,11 @@ export default function PhotoVerificationStep({
           src={cropperSrc}
           shape="circle"
           onCancel={() => setCropperSrc(null)}
-          onSave={(dataUrl) => void handleCroppedAvatar(dataUrl)}
+          onSave={handleCroppedAvatar}
         />
       )}
     </div>
   );
-}
-
-function photoMessage(reasons: string[], what: string): string {
-  if (reasons.includes('not_human')) {
-    return 'That image does not show a real person. Please choose a photo of yourself.';
-  }
-  if (reasons.includes('different_person')) {
-    return 'That photo does not match your verified face. Please use a photo of yourself.';
-  }
-  if (reasons.includes('gender_mismatch')) {
-    return 'That photo did not match your verified gender.';
-  }
-  return `We could not verify that ${what}. Please try a different photo.`;
 }
 
 function fileToDataUrl(file: File): Promise<string> {

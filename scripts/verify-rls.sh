@@ -49,9 +49,9 @@ TABLES=(
   "profiles"
   "messages"
   "follows"
-  # M24 authenticity verification. `profile_verifications` holds the verdict for
-  # a member's face/voice check and `profile_photo_checks` the per-photo verdicts;
-  # both are owner-readable only, so an anonymous caller must see zero rows.
+  # M24 audit tables retained after face/voice verification was removed in M31.
+  # They still hold member-scoped historical rows, so an anonymous caller must
+  # see zero rows.
   "profile_verifications"
   "profile_photo_checks"
   "matches"

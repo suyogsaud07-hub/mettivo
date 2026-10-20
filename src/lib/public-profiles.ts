@@ -47,7 +47,6 @@ export interface PublicProfile {
   drinking: string | null;
   smoking: string | null;
   is_online: boolean | null;
-  is_verified: boolean | null;
   followers_count: number | null;
   following_count: number | null;
   matches_count: number | null;
@@ -64,7 +63,7 @@ export interface PublicProfile {
  * core projection and reports the counters as zero.
  */
 const PUBLIC_PROFILE_CORE_COLUMNS =
-  'id, display_name, age, gender, city, country, avatar_url, bio, intention, looking_for, hobbies, pets, personality, religion, politics, drinking, smoking, is_online, is_verified' as const;
+  'id, display_name, age, gender, city, country, avatar_url, bio, intention, looking_for, hobbies, pets, personality, religion, politics, drinking, smoking, is_online' as const;
 
 const PUBLIC_PROFILE_COUNT_COLUMNS =
   'followers_count, following_count, matches_count, profile_likes_count' as const;

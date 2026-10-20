@@ -33,8 +33,16 @@ export default function IntroSplash({ onDone }: IntroSplashProps) {
   const prefersReducedMotion = useReducedMotion();
   const [leaving, setLeaving] = useState(false);
   const holdRef = useRef<number | null>(null);
+  // Guards the exit sequence so a repeated `onComplete` (Strict Mode,
+  // reduced-motion re-render, Fast Refresh) cannot schedule a second hold or a
+  // second `onDone`. The animation must play exactly once per mount.
+  const completedRef = useRef(false);
+  const doneRef = useRef(false);
 
   const handleComplete = useCallback(() => {
+    if (completedRef.current) return;
+    completedRef.current = true;
+    if (holdRef.current !== null) window.clearTimeout(holdRef.current);
     holdRef.current = window.setTimeout(() => setLeaving(true), HOLD_MS);
   }, []);
 
@@ -49,7 +57,11 @@ export default function IntroSplash({ onDone }: IntroSplashProps) {
   // Unmount a hair after the fade finishes so it never cuts off.
   useEffect(() => {
     if (!leaving) return;
-    const timer = window.setTimeout(onDone, FADE_MS + 60);
+    const timer = window.setTimeout(() => {
+      if (doneRef.current) return;
+      doneRef.current = true;
+      onDone();
+    }, FADE_MS + 60);
     return () => window.clearTimeout(timer);
   }, [leaving, onDone]);
 

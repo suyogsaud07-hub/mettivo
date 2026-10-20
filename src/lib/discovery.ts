@@ -45,7 +45,6 @@ export interface DiscoveryCandidate extends MatchProfile {
   interests: string[];
   promptAnswers: Record<string, string>;
   online: boolean;
-  isVerified: boolean;
 }
 
 export interface DiscoveryFilters {
@@ -119,7 +118,6 @@ function parseCandidate(row: unknown): DiscoveryCandidate | null {
     interests: strArray(row.interests),
     promptAnswers: stringRecord(row.prompts),
     online: bool(row.is_online),
-    isVerified: bool(row.is_verified),
   };
 }
 

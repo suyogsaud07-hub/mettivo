@@ -42,8 +42,9 @@ const PERSONAL_TABLES = [
   // M17: member-scoped settings. RLS must be on and enforced like any other row
   // that belongs to exactly one member.
   'user_preferences',
-  // M24: authenticity verification. These hold a member's face/voice/photo
-  // verdicts and must be as dark to an anonymous caller as any other row.
+  // M24 audit tables retained after face/voice verification was removed in M31.
+  // They still hold member-scoped historical rows and must stay dark to an
+  // anonymous caller.
   'profile_verifications',
   'profile_photo_checks',
 ];
