@@ -32,7 +32,10 @@ const NOW = new Date('2026-10-15T12:00:00Z');
 
 const draft = (overrides: Partial<ProfileDraft> = {}): ProfileDraft => ({
   id: 'user-1',
-  displayName: 'Sujata',
+  firstName: 'Sujata',
+  lastName: 'Saud',
+  hasLastName: true,
+  username: 'sujata',
   birthDate: '1998-05-04',
   intention: 'dating',
   ...overrides,
@@ -71,7 +74,7 @@ describe('M7 — draft validation', () => {
     const result = validateProfileDraft(draft(), NOW);
     expect(result.ok).toBe(true);
     expect(result.payload.age).toBe(28);
-    expect(result.payload.display_name).toBe('Sujata');
+    expect(result.payload.display_name).toBe('Sujata Saud');
     expect(result.payload.onboarding_completed).toBe(true);
   });
 
@@ -90,10 +93,24 @@ describe('M7 — draft validation', () => {
     expect(result.problems.map((p) => p.field)).toContain('birthDate');
   });
 
-  it('requires a display name and bounds its length', () => {
-    expect(validateProfileDraft(draft({ displayName: '   ' }), NOW).ok).toBe(false);
-    expect(validateProfileDraft(draft({ displayName: 'x'.repeat(61) }), NOW).ok).toBe(false);
-    expect(validateProfileDraft(draft({ displayName: 'x'.repeat(60) }), NOW).ok).toBe(true);
+  it('requires a first name and bounds its length', () => {
+    expect(validateProfileDraft(draft({ firstName: '   ' }), NOW).ok).toBe(false);
+    expect(validateProfileDraft(draft({ firstName: 'x'.repeat(41) }), NOW).ok).toBe(false);
+    expect(validateProfileDraft(draft({ firstName: 'x'.repeat(40) }), NOW).ok).toBe(true);
+  });
+
+  it('allows a missing last name only when the member opts out', () => {
+    expect(validateProfileDraft(draft({ lastName: '', hasLastName: false }), NOW).ok).toBe(true);
+    expect(
+      validateProfileDraft(draft({ lastName: '   ', hasLastName: true }), NOW).ok
+    ).toBe(false);
+  });
+
+  it('normalizes and requires a valid username', () => {
+    expect(validateProfileDraft(draft({ username: '@Sujata_1' }), NOW).payload.username).toBe(
+      'sujata_1'
+    );
+    expect(validateProfileDraft(draft({ username: 'bad name' }), NOW).ok).toBe(false);
   });
 
   it('rejects an intention outside the closed set', () => {
@@ -153,7 +170,10 @@ describe('M7 — draft validation', () => {
  */
 
 const blankState = (): OnboardingState => ({
-  displayName: '',
+  firstName: '',
+  lastName: '',
+  hasLastName: true,
+  username: '',
   photos: [],
   gender: '',
   birthDate: '',
@@ -180,7 +200,10 @@ const blankState = (): OnboardingState => ({
 });
 
 const completeState = (overrides: Partial<OnboardingState> = {}): OnboardingState => ({
-  displayName: 'Sujata',
+  firstName: 'Sujata',
+  lastName: 'Saud',
+  hasLastName: true,
+  username: 'sujata',
   photos: ['a', 'b', 'c', 'd'],
   gender: 'Woman',
   birthDate: '1998-05-04',
@@ -213,8 +236,8 @@ const BLOCKING_STEPS = ONBOARDING_STEPS.filter(
 );
 
 describe('onboarding — the step registry', () => {
-  it('registers all sixteen steps, once each, in order', () => {
-    expect(ONBOARDING_TOTAL_STEPS).toBe(16);
+  it('registers all seventeen steps, once each, in order', () => {
+    expect(ONBOARDING_TOTAL_STEPS).toBe(17);
     expect(ONBOARDING_STEPS).toHaveLength(ONBOARDING_TOTAL_STEPS);
     expect(ONBOARDING_STEPS.map((spec) => spec.step)).toEqual(
       Array.from({ length: ONBOARDING_TOTAL_STEPS }, (_, index) => index + 1)
@@ -222,7 +245,7 @@ describe('onboarding — the step registry', () => {
     expect(new Set(ONBOARDING_STEPS.map((spec) => spec.id)).size).toBe(
       ONBOARDING_TOTAL_STEPS
     );
-    expect(ONBOARDING_STEPS.find((spec) => spec.step === 15)?.id).toBe('religion');
+    expect(ONBOARDING_STEPS.find((spec) => spec.step === 16)?.id).toBe('religion');
     expect(ONBOARDING_STEPS[ONBOARDING_TOTAL_STEPS - 1]?.id).toBe('photos');
   });
 
@@ -240,7 +263,9 @@ describe('onboarding — the step registry', () => {
     // `handleSubmit` uses this map to send the member back to the offending
     // step rather than failing on the review screen.
     const fields = [
-      'displayName',
+      'firstName',
+      'lastName',
+      'username',
       'photos',
       'gender',
       'birthDate',
@@ -353,10 +378,13 @@ describe('onboarding — the final step, the photo requirement', () => {
     ).toBe(false);
   });
 
-  it('step 1 owns only the display name and never blocks on photos', () => {
+  it('step 1 owns the identity fields and never blocks on photos', () => {
     const problems = validateOnboardingStep(1, blankState()).problems;
-    expect(problems.map((problem) => problem.field)).toEqual(['displayName']);
-    expect(problems[0].message).toBe('Please provide a display name to continue.');
+    expect(problems.map((problem) => problem.field)).toEqual([
+      'firstName',
+      'lastName',
+      'username',
+    ]);
     expect(validateOnboardingStep(1, completeState({ photos: [] })).ok).toBe(true);
   });
 
@@ -408,62 +436,62 @@ describe('onboarding — step-specific guards', () => {
     expect(validateOnboardingStep(4, completeState()).ok).toBe(true);
   });
 
-  it('step 8 requires both halves of every prompt', () => {
+  it('step 9 requires both halves of every prompt', () => {
     const halfAnswered = validateOnboardingStep(
-      8,
+      9,
       completeState({ prompts: { 'simple-pleasures': '   ' } })
     );
     expect(halfAnswered.ok).toBe(false);
     expect(halfAnswered.problems.map((problem) => problem.field)).toContain('prompts');
 
     const noQuestion = validateOnboardingStep(
-      8,
+      9,
       completeState({ prompts: { '': 'An answer' } })
     );
     expect(noQuestion.ok).toBe(false);
     expect(noQuestion.problems.map((problem) => problem.field)).toContain('prompts');
 
-    expect(validateOnboardingStep(8, completeState({ prompts: {} })).ok).toBe(true);
+    expect(validateOnboardingStep(9, completeState({ prompts: {} })).ok).toBe(false);
   });
 
-  it('step 9 is satisfied by interests or hobbies, not necessarily both', () => {
+  it('step 10 is satisfied by interests or hobbies, not necessarily both', () => {
     expect(
-      validateOnboardingStep(9, completeState({ interests: ['hiking'], hobbies: [] })).ok
+      validateOnboardingStep(10, completeState({ interests: ['hiking'], hobbies: [] })).ok
     ).toBe(true);
     expect(
-      validateOnboardingStep(9, completeState({ interests: [], hobbies: ['Music'] })).ok
+      validateOnboardingStep(10, completeState({ interests: [], hobbies: ['Music'] })).ok
     ).toBe(true);
     expect(
-      validateOnboardingStep(9, completeState({ interests: [], hobbies: [] })).ok
+      validateOnboardingStep(10, completeState({ interests: [], hobbies: [] })).ok
     ).toBe(false);
   });
 
-  it('step 11 blocks on smoking, drinking and exercise independently', () => {
+  it('step 12 blocks on smoking, drinking and exercise independently', () => {
     const cases = [
       { field: 'smoking', state: completeState({ smoking: '' }) },
       { field: 'drinking', state: completeState({ drinking: '' }) },
       { field: 'exercise', state: completeState({ exercise: '' }) },
     ];
     for (const { field, state } of cases) {
-      const result = validateOnboardingStep(11, state);
+      const result = validateOnboardingStep(12, state);
       expect(result.ok, `${field} must block`).toBe(false);
       expect(result.problems.map((problem) => problem.field)).toContain(field);
     }
-    expect(validateOnboardingStep(11, completeState()).ok).toBe(true);
+    expect(validateOnboardingStep(12, completeState()).ok).toBe(true);
   });
 
-  it('step 12 needs both education and profession', () => {
+  it('step 13 needs both education and profession', () => {
     expect(
-      validateOnboardingStep(12, completeState({ education: '' })).problems.map(
+      validateOnboardingStep(13, completeState({ education: '' })).problems.map(
         (problem) => problem.field
       )
     ).toContain('education');
     expect(
-      validateOnboardingStep(12, completeState({ profession: '  ' })).problems.map(
+      validateOnboardingStep(13, completeState({ profession: '  ' })).problems.map(
         (problem) => problem.field
       )
     ).toContain('profession');
-    expect(validateOnboardingStep(12, completeState()).ok).toBe(true);
+    expect(validateOnboardingStep(13, completeState()).ok).toBe(true);
   });
 });
 
@@ -483,13 +511,13 @@ describe('onboarding — recommended fields never block', () => {
     expect(validateOnboardingStep(7, completeState()).missingRecommended).toEqual([]);
   });
 
-  it('lets step 15 be skipped and only hints religion when blank', () => {
-    const skipped = validateOnboardingStep(15, blankState());
+  it('lets step 16 be skipped and only hints religion when blank', () => {
+    const skipped = validateOnboardingStep(16, blankState());
     expect(skipped.ok).toBe(true);
     expect(skipped.problems).toEqual([]);
     expect(skipped.missingRecommended).toEqual(['Religion']);
 
-    const answered = validateOnboardingStep(15, completeState());
+    const answered = validateOnboardingStep(16, completeState());
     expect(answered.ok).toBe(true);
     expect(answered.missingRecommended).toEqual([]);
   });
@@ -510,7 +538,7 @@ describe('onboarding — the final step delegates to the full-draft guard', () =
     const result = validateOnboardingStep(ONBOARDING_TOTAL_STEPS, blankState());
     expect(result.ok).toBe(false);
     const fields = result.problems.map((problem) => problem.field);
-    expect(fields).toContain('displayName');
+    expect(fields).toContain('firstName');
     expect(fields).toContain('birthDate');
   });
 

@@ -29,6 +29,10 @@ export class DiscoveryError extends Error {
 /** A candidate as returned by `discover_profiles()`, in camelCase. */
 export interface DiscoveryCandidate extends MatchProfile {
   id: string;
+  firstName: string | null;
+  lastName: string | null;
+  hasLastName: boolean;
+  username: string | null;
   displayName: string;
   age: number | null;
   gender: string | null;
@@ -41,7 +45,7 @@ export interface DiscoveryCandidate extends MatchProfile {
   lookingFor: string[];
   hobbies: string[];
   pets: string[];
-  personality: string[];
+  mbti: string | null;
   interests: string[];
   promptAnswers: Record<string, string>;
   online: boolean;
@@ -102,6 +106,10 @@ function parseCandidate(row: unknown): DiscoveryCandidate | null {
 
   return {
     id,
+    firstName: str(row.first_name),
+    lastName: str(row.last_name),
+    hasLastName: row.has_last_name === true,
+    username: str(row.username),
     displayName: str(row.display_name) ?? 'Member',
     age: num(row.age),
     gender: str(row.gender),
@@ -114,7 +122,7 @@ function parseCandidate(row: unknown): DiscoveryCandidate | null {
     lookingFor: strArray(row.looking_for),
     hobbies: strArray(row.hobbies),
     pets: strArray(row.pets),
-    personality: strArray(row.personality),
+    mbti: str(row.mbti),
     interests: strArray(row.interests),
     promptAnswers: stringRecord(row.prompts),
     online: bool(row.is_online),

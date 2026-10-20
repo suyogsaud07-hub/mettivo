@@ -285,7 +285,11 @@ describe('§3.2 — discovery', () => {
           looking_for: ['Men'],
           hobbies: null,
           pets: [],
-          personality: null,
+          first_name: 'Sujata',
+          last_name: 'Saud',
+          has_last_name: true,
+          username: 'sujata',
+          mbti: 'INFJ',
           interests: ['coffee'],
           prompts: { 'simple-pleasures': 'coffee', bad: 3 },
           is_online: true,
@@ -301,7 +305,10 @@ describe('§3.2 — discovery', () => {
     expect(candidates).toHaveLength(1);
     expect(candidates[0]).toMatchObject({
       id: 'p1',
-      displayName: 'Sujata',
+      firstName: 'Sujata',
+      lastName: 'Saud',
+      hasLastName: true,
+      username: 'sujata',
       photos: ['a', 'b'],
       hobbies: [],
       promptAnswers: { 'simple-pleasures': 'coffee' },
@@ -337,7 +344,10 @@ describe('§3.2 — catalogue', () => {
 describe('§3.2 — profile', () => {
   it('refuses to save an underage draft without touching the database', async () => {
     await expect(
-      saveProfile({ id: 'user-1', displayName: 'Sujata', birthDate: '2015-01-01' })
+      saveProfile({ id: 'user-1', firstName: 'Sujata',
+      lastName: 'Saud',
+      hasLastName: true,
+      username: 'sujata', birthDate: '2015-01-01' })
     ).rejects.toThrow(/adults only/i);
     expect(h.state.operations).toEqual([]);
   });
@@ -345,7 +355,10 @@ describe('§3.2 — profile', () => {
   it('refuses to write without an authenticated user', async () => {
     h.state.user = null;
     await expect(
-      saveProfile({ id: 'user-1', displayName: 'Sujata', birthDate: '1998-05-04' })
+      saveProfile({ id: 'user-1', firstName: 'Sujata',
+      lastName: 'Saud',
+      hasLastName: true,
+      username: 'sujata', birthDate: '1998-05-04' })
     ).rejects.toThrow(/session has expired/i);
     expect(h.state.operations).toEqual([]);
   });
@@ -353,7 +366,10 @@ describe('§3.2 — profile', () => {
   it('surfaces a save failure', async () => {
     h.state.table = { data: null, error: { message: 'column does not exist', code: '42703' } };
     await expect(
-      saveProfile({ id: 'user-1', displayName: 'Sujata', birthDate: '1998-05-04' })
+      saveProfile({ id: 'user-1', firstName: 'Sujata',
+      lastName: 'Saud',
+      hasLastName: true,
+      username: 'sujata', birthDate: '1998-05-04' })
     ).rejects.toThrow(/could not save your profile/i);
   });
 
@@ -364,7 +380,10 @@ describe('§3.2 — profile', () => {
     };
 
     try {
-      await saveProfile({ id: 'user-1', displayName: 'Sujata', birthDate: '1998-05-04' });
+      await saveProfile({ id: 'user-1', firstName: 'Sujata',
+      lastName: 'Saud',
+      hasLastName: true,
+      username: 'sujata', birthDate: '1998-05-04' });
       expect.unreachable('save should have failed');
     } catch (error) {
       const message = error instanceof Error ? error.message : '';
@@ -377,7 +396,10 @@ describe('§3.2 — profile', () => {
     h.state.table = { data: { id: 'user-1' }, error: null };
     await saveProfile({
       id: 'attacker-controlled-id',
-      displayName: 'Sujata',
+      firstName: 'Sujata',
+      lastName: 'Saud',
+      hasLastName: true,
+      username: 'sujata',
       birthDate: '1998-05-04',
     });
 
@@ -392,7 +414,10 @@ describe('§3.2 — profile', () => {
     ];
     await saveProfile({
       id: 'attacker-controlled-id',
-      displayName: 'Sujata',
+      firstName: 'Sujata',
+      lastName: 'Saud',
+      hasLastName: true,
+      username: 'sujata',
       birthDate: '1998-05-04',
     });
 
@@ -404,7 +429,10 @@ describe('§3.2 — profile', () => {
   it('updates an existing profile without using an upsert', async () => {
     h.state.table = { data: { id: 'user-1' }, error: null };
     await expect(
-      saveProfile({ id: 'user-1', displayName: 'Sujata', birthDate: '1998-05-04' })
+      saveProfile({ id: 'user-1', firstName: 'Sujata',
+      lastName: 'Saud',
+      hasLastName: true,
+      username: 'sujata', birthDate: '1998-05-04' })
     ).resolves.toBeUndefined();
 
     expect(h.state.operations).toContain('update');
@@ -418,7 +446,10 @@ describe('§3.2 — profile', () => {
       { data: { id: 'user-1' }, error: null },
     ];
     await expect(
-      saveProfile({ id: 'user-1', displayName: 'Sujata', birthDate: '1998-05-04' })
+      saveProfile({ id: 'user-1', firstName: 'Sujata',
+      lastName: 'Saud',
+      hasLastName: true,
+      username: 'sujata', birthDate: '1998-05-04' })
     ).resolves.toBeUndefined();
 
     expect(h.state.operations).toContain('update');
@@ -433,7 +464,10 @@ describe('§3.2 — profile', () => {
       { data: { id: 'user-1' }, error: null },
     ];
     await expect(
-      saveProfile({ id: 'user-1', displayName: 'Sujata', birthDate: '1998-05-04' })
+      saveProfile({ id: 'user-1', firstName: 'Sujata',
+      lastName: 'Saud',
+      hasLastName: true,
+      username: 'sujata', birthDate: '1998-05-04' })
     ).resolves.toBeUndefined();
   });
 
@@ -443,7 +477,10 @@ describe('§3.2 — profile', () => {
       { data: null, error: null },
     ];
     await expect(
-      saveProfile({ id: 'user-1', displayName: 'Sujata', birthDate: '1998-05-04' })
+      saveProfile({ id: 'user-1', firstName: 'Sujata',
+      lastName: 'Saud',
+      hasLastName: true,
+      username: 'sujata', birthDate: '1998-05-04' })
     ).rejects.toThrow(/could not save your profile/i);
   });
 });

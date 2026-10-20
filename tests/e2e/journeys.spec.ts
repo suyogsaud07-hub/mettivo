@@ -149,7 +149,7 @@ const PNG_PIXEL = Buffer.from(
 const GALLERY_PNGS = [1, 2, 3, 4].map((n) => Buffer.concat([PNG_PIXEL, Buffer.from([n])]));
 
 /** The wizard starts on step 1 and reports its position in this exact format. */
-const STEP_LABEL = /Step (\d+) of 16/;
+const STEP_LABEL = /Step (\d+) of 17/;
 
 /**
  * Satisfies whichever requirement the current step enforces.
@@ -164,8 +164,10 @@ async function completeStep(page: Page, step: number): Promise<void> {
   const next = page.getByRole('button', { name: 'Next →' });
 
   if (step === 1) {
-    // Step 1 is the display name ONLY. Photos live on the final step.
-    await page.getByPlaceholder('Your name or nickname').fill('Sujata');
+    // Step 1 owns the split identity. Photos live on the final step.
+    await page.getByPlaceholder('First name').fill('Sujata');
+    await page.getByPlaceholder('Last name').fill('Saud');
+    await page.getByPlaceholder('your_username').fill('sujata');
   }
 
   if (step === 2) {
@@ -197,6 +199,9 @@ async function completeStep(page: Page, step: number): Promise<void> {
 
   if (step === 8) {
     await page.getByRole('button', { name: 'Advocate (INFJ)', exact: true }).click();
+  }
+
+  if (step === 9) {
     await page.getByRole('button', { name: '+ Add a prompt' }).click();
     await page.locator('select').last().selectOption('simple-pleasures');
     await page
@@ -204,40 +209,40 @@ async function completeStep(page: Page, step: number): Promise<void> {
       .fill('Coffee at sunrise and a good playlist');
   }
 
-  if (step === 9) {
+  if (step === 10) {
     // Curated interests come from the M8 catalogue; `exact` matters because the
     // legacy hobby list also contains "Outdoors & Hiking".
     await page.getByRole('button', { name: 'Hiking', exact: true }).click();
   }
 
-  if (step === 10) {
+  if (step === 11) {
     await page.getByRole('button', { name: 'Dog lover', exact: true }).click();
   }
 
-  if (step === 11) {
+  if (step === 12) {
     await page.locator('select').nth(0).selectOption('Non-smoker');
     await page.locator('select').nth(1).selectOption('Social drinker');
     await page.locator('select').nth(2).selectOption('A few times a week');
   }
 
-  if (step === 12) {
+  if (step === 13) {
     await page
       .getByPlaceholder("e.g. Bachelor's Degree, Master's, High School")
       .fill("Bachelor's Degree");
     await page.getByPlaceholder('e.g. Software Engineer, Designer, Student').fill('Engineer');
   }
 
-  if (step === 13) {
+  if (step === 14) {
     await page.getByRole('button', { name: 'English', exact: true }).click();
   }
 
-  if (step === 14) {
+  if (step === 15) {
     await page
       .getByPlaceholder(/Tell others what makes you unique/)
       .fill('Coffee, mountains and long conversations.');
   }
 
-  if (step === 15) {
+  if (step === 16) {
     // Religion is optional, but choosing one must round-trip to the payload.
     await page.getByRole('button', { name: 'Hindu', exact: true }).click();
   }
@@ -276,13 +281,15 @@ test.describe('§3.3 — the onboarding wizard', () => {
     const next = page.getByRole('button', { name: 'Next →' });
     const stepLabel = page.getByText(STEP_LABEL);
 
-    // --- step 1: the display name is the only requirement now -----------------
+    // --- step 1: first name, last name and username are required ---------------
     await expect(next).toBeDisabled();
 
-    await page.getByPlaceholder('Your name or nickname').fill('Sujata');
+    await page.getByPlaceholder('First name').fill('Sujata');
+    await page.getByPlaceholder('Last name').fill('Saud');
+    await page.getByPlaceholder('your_username').fill('sujata');
     await expect(next).toBeEnabled();
     await next.click();
-    await expect(stepLabel).toHaveText('Step 2 of 16');
+    await expect(stepLabel).toHaveText('Step 2 of 17');
 
     // --- step 2: identity is mandatory, with no face/voice check --------------
     await expect(next).toBeDisabled();
@@ -292,7 +299,7 @@ test.describe('§3.3 — the onboarding wizard', () => {
     await page.getByRole('button', { name: 'Woman', exact: true }).click();
     await expect(next).toBeEnabled();
     await next.click();
-    await expect(stepLabel).toHaveText('Step 3 of 16');
+    await expect(stepLabel).toHaveText('Step 3 of 17');
 
     // --- step 3: the age gate ---
     await expect(page.getByText('When is your birthday?')).toBeVisible();
@@ -315,14 +322,14 @@ test.describe('§3.3 — the onboarding wizard', () => {
     await expect(next).toBeDisabled(); // city still missing
     await page.getByPlaceholder('e.g. Kathmandu, San Francisco').fill('Kathmandu');
     await next.click();
-    await expect(stepLabel).toHaveText('Step 5 of 16');
+    await expect(stepLabel).toHaveText('Step 5 of 17');
 
-    // --- steps 5..15: required steps block, religion is optional ------------
-    for (let step = 5; step <= 15; step += 1) {
-      await expect(stepLabel).toHaveText(`Step ${step} of 16`);
+    // --- steps 5..16: required steps block, religion is optional ------------
+    for (let step = 5; step <= 16; step += 1) {
+      await expect(stepLabel).toHaveText(`Step ${step} of 17`);
       // Religion is the optional step; every other step refuses to advance
       // while it is blank.
-      if (step === 15) {
+      if (step === 16) {
         await expect(next).toBeEnabled();
       } else {
         await expect(next).toBeDisabled();
@@ -330,10 +337,10 @@ test.describe('§3.3 — the onboarding wizard', () => {
 
       await completeStep(page, step);
       await next.click();
-      await expect(stepLabel).toHaveText(`Step ${step + 1} of 16`);
+      await expect(stepLabel).toHaveText(`Step ${step + 1} of 17`);
     }
 
-    // --- step 16: photos must be uploaded before submit ---------------------
+    // --- step 17: photos must be uploaded before submit ---------------------
     await expect(page.getByText('Add your photos & finish')).toBeVisible();
     const submit = page.getByRole('button', { name: /Complete & Launch/ });
     await expect(submit).toBeDisabled();
@@ -377,7 +384,14 @@ test.describe('§3.3 — the onboarding wizard', () => {
     expect(payload.age).toBeGreaterThanOrEqual(18);
     expect(payload.birth_date).toBe('1998-05-04');
     expect(payload.onboarding_completed).toBe(true);
-    expect(payload.display_name).toBe('Sujata');
+    expect(payload.first_name).toBe('Sujata');
+    expect(payload.last_name).toBe('Saud');
+    expect(payload.has_last_name).toBe(true);
+    expect(payload.username).toBe('sujata');
+    expect(payload.display_name).toBe('Sujata Saud');
+    expect(payload.mbti).toBe('INFJ');
+    expect(payload).not.toHaveProperty('personality');
+    expect(payload).not.toHaveProperty('politics');
 
     // The mandatory four photos travelled with the payload — the step guard
     // blocked on them, so they cannot be missing here.

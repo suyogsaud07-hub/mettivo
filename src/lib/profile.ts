@@ -1,4 +1,12 @@
 import { supabase } from '@/lib/supabase';
+import {
+  MAX_DISPLAY_NAME_LENGTH,
+  composeDisplayName,
+  normalizeName,
+  normalizeUsername,
+  validateIdentity,
+} from '@/lib/identity';
+import { personalityOption } from '@/lib/personality';
 
 /**
  * M7 — full profile management.
@@ -18,7 +26,7 @@ import { supabase } from '@/lib/supabase';
 
 /** Members must be adults. Mirrored by the `profiles_age_adult` constraint. */
 export const MIN_AGE = 18;
-export const MAX_DISPLAY_NAME_LENGTH = 60;
+export { MAX_DISPLAY_NAME_LENGTH };
 export const MAX_BIO_LENGTH = 1000;
 export const MAX_PHOTOS = 6;
 export const MAX_RELIGION_LENGTH = 80;
@@ -50,7 +58,10 @@ export class ProfileError extends Error {
  */
 export interface ProfileDraft {
   id: string;
-  displayName: string;
+  firstName: string;
+  lastName: string;
+  hasLastName: boolean;
+  username: string;
   avatarUrl?: string;
   photos?: string[];
   gender?: string;
@@ -68,7 +79,6 @@ export interface ProfileDraft {
   mbti?: string;
   /** Optional and nullable; never used for matching. */
   religion?: string;
-  personality?: string[];
   hobbies?: string[];
   pets?: string[];
   interests?: string[];
@@ -142,13 +152,25 @@ export interface ValidationResult {
 export function validateProfileDraft(draft: ProfileDraft, now = new Date()): ValidationResult {
   const problems: ValidationProblem[] = [];
 
-  const displayName = trimmed(draft.displayName);
-  if (!displayName) {
-    problems.push({ field: 'displayName', message: 'Please add a display name.' });
-  } else if (displayName.length > MAX_DISPLAY_NAME_LENGTH) {
+  problems.push(
+    ...validateIdentity({
+      firstName: draft.firstName,
+      lastName: draft.lastName,
+      hasLastName: draft.hasLastName,
+      username: draft.username,
+    })
+  );
+
+  const firstName = normalizeName(draft.firstName);
+  const lastName = normalizeName(draft.lastName);
+  const hasLastName = draft.hasLastName;
+  const username = normalizeUsername(draft.username);
+  const displayName = composeDisplayName({ firstName, lastName, hasLastName });
+
+  if (displayName.length > MAX_DISPLAY_NAME_LENGTH) {
     problems.push({
-      field: 'displayName',
-      message: `Display name must be ${MAX_DISPLAY_NAME_LENGTH} characters or fewer.`,
+      field: 'firstName',
+      message: `Your name must be ${MAX_DISPLAY_NAME_LENGTH} characters or fewer in total.`,
     });
   }
 
@@ -179,6 +201,11 @@ export function validateProfileDraft(draft: ProfileDraft, now = new Date()): Val
     });
   }
 
+  const mbti = trimmed(draft.mbti).toUpperCase();
+  if (mbti && !personalityOption(mbti)) {
+    problems.push({ field: 'mbti', message: 'Please choose a valid personality type.' });
+  }
+
   const religion = trimmed(draft.religion);
   if (religion.length > MAX_RELIGION_LENGTH) {
     problems.push({
@@ -199,6 +226,10 @@ export function validateProfileDraft(draft: ProfileDraft, now = new Date()): Val
 
   const payload: Record<string, unknown> = {
     id: draft.id,
+    first_name: firstName,
+    last_name: hasLastName ? lastName : null,
+    has_last_name: hasLastName,
+    username,
     display_name: displayName,
     avatar_url: trimmed(draft.avatarUrl),
     photos: photos.slice(0, MAX_PHOTOS),
@@ -213,9 +244,8 @@ export function validateProfileDraft(draft: ProfileDraft, now = new Date()): Val
     intention,
     looking_for: bounded(draft.lookingFor, 3),
     sexual_orientation: trimmed(draft.sexualOrientation),
-    mbti: trimmed(draft.mbti),
+    mbti,
     religion,
-    personality: bounded(draft.personality, 10),
     hobbies: bounded(draft.hobbies, 18),
     pets: bounded(draft.pets, 6),
     interests: bounded(draft.interests, 12),
@@ -237,6 +267,9 @@ const SAVE_FAILED_MESSAGE = 'We could not save your profile. Please try again.';
 
 /** Maps a database failure to an actionable message without exposing SQL details. */
 function saveFailureMessage(code: string | undefined): string {
+  if (code === '23505') {
+    return 'That username is already taken. Please choose another one.';
+  }
   if (code === '42501') {
     return 'We could not save your profile because this account is not permitted to write it. Please sign in again, then try once more.';
   }

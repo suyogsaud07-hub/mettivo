@@ -6,9 +6,11 @@ import {
   type ProfileDraft,
   type ValidationProblem,
 } from '@/lib/profile';
+import { validateIdentity } from '@/lib/identity';
+import { personalityOption } from '@/lib/personality';
 
 /**
- * The onboarding wizard's per-step contract — steps 1–16.
+ * The onboarding wizard's per-step contract — steps 1–17.
  *
  * WHY THIS MODULE EXISTS
  *   The wizard used to validate on `handleNext` only, so a member could reach
@@ -55,7 +57,10 @@ export const ONBOARDING_GENDERS = ['Woman', 'Man', 'Nonbinary'] as const;
  * `readonly` because the guards never mutate what they are given.
  */
 export interface OnboardingState {
-  displayName: string;
+  firstName: string;
+  lastName: string;
+  hasLastName: boolean;
+  username: string;
   photos: readonly string[];
   gender: string;
   birthDate: string;
@@ -127,8 +132,12 @@ const optional = (key: keyof OnboardingState, label: string): StepFieldSpec => (
 export const ONBOARDING_STEPS: OnboardingStepSpec[] = [
   {
     step: 1,
-    id: 'basics',
-    required: [required('displayName', 'Display name')],
+    id: 'name',
+    required: [
+      required('firstName', 'First name'),
+      required('lastName', 'Last name'),
+      required('username', 'Username'),
+    ],
     recommended: [],
   },
   { step: 2, id: 'identity', required: [required('gender', 'Gender')], recommended: [] },
@@ -155,18 +164,24 @@ export const ONBOARDING_STEPS: OnboardingStepSpec[] = [
   {
     step: 8,
     id: 'personality',
-    required: [required('mbti', 'MBTI type'), required('prompts', 'Prompt answers')],
+    required: [required('mbti', 'MBTI type')],
     recommended: [],
   },
   {
     step: 9,
+    id: 'prompts',
+    required: [required('prompts', 'Prompt answers')],
+    recommended: [],
+  },
+  {
+    step: 10,
     id: 'interests',
     required: [required('interests', 'Interests'), required('hobbies', 'Hobbies')],
     recommended: [],
   },
-  { step: 10, id: 'pets', required: [required('pets', 'Pets')], recommended: [] },
+  { step: 11, id: 'pets', required: [required('pets', 'Pets')], recommended: [] },
   {
-    step: 11,
+    step: 12,
     id: 'lifestyle',
     required: [
       required('smoking', 'Smoking'),
@@ -176,25 +191,25 @@ export const ONBOARDING_STEPS: OnboardingStepSpec[] = [
     recommended: [],
   },
   {
-    step: 12,
+    step: 13,
     id: 'career',
     required: [required('education', 'Education'), required('profession', 'Profession')],
     recommended: [],
   },
   {
-    step: 13,
+    step: 14,
     id: 'languages',
     required: [required('languagesSpoken', 'Languages')],
     recommended: [],
   },
-  { step: 14, id: 'bio', required: [required('bio', 'Bio')], recommended: [] },
+  { step: 15, id: 'bio', required: [required('bio', 'Bio')], recommended: [] },
   {
-    step: 15,
+    step: 16,
     id: 'religion',
     required: [],
     recommended: [optional('religion', 'Religion')],
   },
-  { step: 16, id: 'photos', required: [], recommended: [] },
+  { step: 17, id: 'photos', required: [], recommended: [] },
 ];
 
 /**
@@ -212,9 +227,12 @@ export const ONBOARDING_TOTAL_STEPS = ONBOARDING_STEPS.length;
  * blocks on directly.
  */
 export const FIELD_TO_STEP: Record<string, number> = {
-  displayName: 1,
-  photos: 16,
-  avatarUrl: 16,
+  firstName: 1,
+  lastName: 1,
+  hasLastName: 1,
+  username: 1,
+  photos: 17,
+  avatarUrl: 17,
   gender: 2,
   pronouns: 2,
   birthDate: 3,
@@ -227,18 +245,18 @@ export const FIELD_TO_STEP: Record<string, number> = {
   lookingFor: 7,
   sexualOrientation: 7,
   mbti: 8,
-  prompts: 8,
-  religion: 15,
-  interests: 9,
-  hobbies: 9,
-  pets: 10,
-  smoking: 11,
-  drinking: 11,
-  exercise: 11,
-  education: 12,
-  profession: 12,
-  languagesSpoken: 13,
-  bio: 14,
+  prompts: 9,
+  religion: 16,
+  interests: 10,
+  hobbies: 10,
+  pets: 11,
+  smoking: 12,
+  drinking: 12,
+  exercise: 12,
+  education: 13,
+  profession: 13,
+  languagesSpoken: 14,
+  bio: 15,
 };
 
 function isBlank(value: string | undefined | null): boolean {
@@ -256,7 +274,10 @@ function countFilled(values: readonly string[] | undefined): number {
 
 /** Whether a field currently holds something a member typed or picked. */
 const PRESENCE: { readonly [K in keyof OnboardingState]: (state: OnboardingState) => boolean } = {
-  displayName: (state) => !isBlank(state.displayName),
+  firstName: (state) => !isBlank(state.firstName),
+  lastName: (state) => state.hasLastName ? !isBlank(state.lastName) : true,
+  hasLastName: () => true,
+  username: (state) => !isBlank(state.username),
   photos: (state) => countFilled(state.photos) > 0,
   gender: (state) => !isBlank(state.gender),
   birthDate: (state) => !isBlank(state.birthDate),
@@ -291,7 +312,10 @@ const PRESENCE: { readonly [K in keyof OnboardingState]: (state: OnboardingState
 function toProfileDraft(state: OnboardingState): ProfileDraft {
   return {
     id: '',
-    displayName: state.displayName,
+    firstName: state.firstName,
+    lastName: state.lastName,
+    hasLastName: state.hasLastName,
+    username: state.username,
     photos: [...state.photos],
     gender: state.gender,
     birthDate: state.birthDate,
@@ -324,12 +348,14 @@ function blockingProblems(step: number, state: OnboardingState): ValidationProbl
 
   switch (step) {
     case 1: {
-      if (isBlank(state.displayName)) {
-        problems.push({
-          field: 'displayName',
-          message: 'Please provide a display name to continue.',
-        });
-      }
+      problems.push(
+        ...validateIdentity({
+          firstName: state.firstName,
+          lastName: state.lastName,
+          hasLastName: state.hasLastName,
+          username: state.username,
+        })
+      );
       break;
     }
 
@@ -398,8 +424,20 @@ function blockingProblems(step: number, state: OnboardingState): ValidationProbl
     case 8: {
       if (isBlank(state.mbti)) {
         problems.push({ field: 'mbti', message: 'Please pick your MBTI type to continue.' });
+      } else if (!personalityOption(state.mbti)) {
+        problems.push({ field: 'mbti', message: 'Please pick a valid MBTI type to continue.' });
       }
+      break;
+    }
 
+    case 9: {
+      if (countFilled(Object.keys(state.prompts ?? {})) < 1) {
+        problems.push({
+          field: 'prompts',
+          message: 'Please answer at least one prompt to continue.',
+        });
+        break;
+      }
       // A half-answered prompt (a question with no answer, or an answer filed
       // under no question) is not a prompt: both halves are required.
       for (const [id, answer] of Object.entries(state.prompts ?? {})) {
@@ -414,7 +452,7 @@ function blockingProblems(step: number, state: OnboardingState): ValidationProbl
       break;
     }
 
-    case 9: {
+    case 10: {
       if (countFilled(state.interests) + countFilled(state.hobbies) < 1) {
         problems.push({
           field: 'interests',
@@ -424,7 +462,7 @@ function blockingProblems(step: number, state: OnboardingState): ValidationProbl
       break;
     }
 
-    case 10: {
+    case 11: {
       if (countFilled(state.pets) < 1) {
         problems.push({
           field: 'pets',
@@ -434,7 +472,7 @@ function blockingProblems(step: number, state: OnboardingState): ValidationProbl
       break;
     }
 
-    case 11: {
+    case 12: {
       if (isBlank(state.smoking)) {
         problems.push({ field: 'smoking', message: 'Please select your smoking preference to continue.' });
       }
@@ -447,7 +485,7 @@ function blockingProblems(step: number, state: OnboardingState): ValidationProbl
       break;
     }
 
-    case 12: {
+    case 13: {
       if (isBlank(state.education)) {
         problems.push({ field: 'education', message: 'Please add your education level to continue.' });
       }
@@ -457,7 +495,7 @@ function blockingProblems(step: number, state: OnboardingState): ValidationProbl
       break;
     }
 
-    case 13: {
+    case 14: {
       if (countFilled(state.languagesSpoken) < 1) {
         problems.push({
           field: 'languagesSpoken',
@@ -467,7 +505,7 @@ function blockingProblems(step: number, state: OnboardingState): ValidationProbl
       break;
     }
 
-    case 14: {
+    case 15: {
       if (isBlank(state.bio)) {
         problems.push({ field: 'bio', message: 'Please add a short bio to continue.' });
       }

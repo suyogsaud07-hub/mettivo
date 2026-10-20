@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { MAX_BIO_LENGTH } from '@/lib/profile';
+import { composeDisplayName, validateIdentity } from '@/lib/identity';
+import IdentityFields from '@/app/components/profile/IdentityFields';
 import { PROFILE_HOBBIES_OPTIONS, PROFILE_INTENTION_OPTIONS } from '@/lib/profile-options';
 import { isMissingColumnError } from '@/lib/postgrest-errors';
 import type { ToastMessage } from './Toast';
@@ -21,7 +23,11 @@ import type { ToastMessage } from './Toast';
  */
 
 export interface EditableProfileValues {
-  displayName: string;
+  firstName: string;
+  lastName: string;
+  hasLastName: boolean;
+  username: string;
+  currentUsername: string;
   bio: string;
   intention: string;
   city: string;
@@ -30,7 +36,11 @@ export interface EditableProfileValues {
 }
 
 const EMPTY: EditableProfileValues = {
-  displayName: '',
+  firstName: '',
+  lastName: '',
+  hasLastName: true,
+  username: '',
+  currentUsername: '',
   bio: '',
   intention: '',
   city: '',
@@ -86,7 +96,7 @@ export default function EditProfileSheet({ onClose, onSaved, onToast }: EditProf
 
         const { data, error: loadError } = await supabase
           .from('profiles')
-          .select('display_name, bio, intention, city, country, hobbies')
+          .select('first_name, last_name, has_last_name, username, display_name, bio, intention, city, country, hobbies')
           .eq('id', user.id)
           .maybeSingle();
 
@@ -98,7 +108,11 @@ export default function EditProfileSheet({ onClose, onSaved, onToast }: EditProf
         }
 
         setValues({
-          displayName: data?.display_name ?? '',
+          firstName: data?.first_name ?? '',
+          lastName: data?.last_name ?? '',
+          hasLastName: data?.has_last_name === true,
+          username: data?.username ?? '',
+          currentUsername: data?.username ?? '',
           bio: data?.bio ?? '',
           intention: data?.intention ?? '',
           city: data?.city ?? '',
@@ -130,11 +144,20 @@ export default function EditProfileSheet({ onClose, onSaved, onToast }: EditProf
   const handleSave = async () => {
     if (saving) return;
 
-    const displayName = values.displayName.trim();
-    if (!displayName) {
-      setError('Please add a display name.');
+    const identityProblems = validateIdentity(values);
+    if (identityProblems.length > 0) {
+      setError(identityProblems[0].message);
       return;
     }
+
+    const firstName = values.firstName.trim();
+    const lastName = values.lastName.trim();
+    const username = values.username.trim().replace(/^@/, '').toLowerCase();
+    const displayName = composeDisplayName({
+      firstName,
+      lastName,
+      hasLastName: values.hasLastName,
+    });
     if (values.bio.trim().length > MAX_BIO_LENGTH) {
       setError(`Your bio must be ${MAX_BIO_LENGTH} characters or fewer.`);
       return;
@@ -153,6 +176,10 @@ export default function EditProfileSheet({ onClose, onSaved, onToast }: EditProf
 
       const payload = {
         id: user.id,
+        first_name: firstName,
+        last_name: values.hasLastName ? lastName : null,
+        has_last_name: values.hasLastName,
+        username,
         display_name: displayName,
         bio: values.bio.trim(),
         intention: values.intention.trim(),
@@ -166,11 +193,22 @@ export default function EditProfileSheet({ onClose, onSaved, onToast }: EditProf
         .upsert(payload, { onConflict: 'id' });
 
       if (saveError) {
-        setError(`We could not save your profile: ${saveError.message}`);
+        setError(
+          saveError.code === '23505'
+            ? 'That username is already taken. Please choose another one.'
+            : `We could not save your profile: ${saveError.message}`
+        );
         return;
       }
 
-      onSaved({ ...values, displayName, bio: values.bio.trim() });
+      onSaved({
+        ...values,
+        firstName,
+        lastName: values.hasLastName ? lastName : '',
+        username,
+        currentUsername: username,
+        bio: values.bio.trim(),
+      });
       onToast('Profile updated');
       onClose();
     } finally {
@@ -194,18 +232,17 @@ export default function EditProfileSheet({ onClose, onSaved, onToast }: EditProf
         </p>
       )}
 
-      <label style={labelStyle} htmlFor="edit-display-name">
-        Name
-      </label>
-      <input
-        id="edit-display-name"
-        data-testid="edit-profile-name"
-        style={inputStyle}
-        value={values.displayName}
-        maxLength={60}
-        onChange={(event) => setValues((prev) => ({ ...prev, displayName: event.target.value }))}
-        placeholder="Your display name"
-      />
+      <div style={{ marginTop: '16px' }}>
+        <IdentityFields
+          firstName={values.firstName}
+          lastName={values.lastName}
+          hasLastName={values.hasLastName}
+          username={values.username}
+          currentUsername={values.currentUsername}
+          onChange={(patch) => setValues((prev) => ({ ...prev, ...patch }))}
+          disabled={saving}
+        />
+      </div>
 
       <label style={labelStyle} htmlFor="edit-bio">
         Bio

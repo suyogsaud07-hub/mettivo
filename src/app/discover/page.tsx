@@ -14,6 +14,7 @@ import { fetchDiscoveryCandidates, rankDiscovery } from '@/lib/discovery';
 interface Profile {
   id: string;
   display_name: string;
+  username: string | null;
   age: number;
   gender: string;
   city: string;
@@ -109,6 +110,7 @@ export default function DiscoverPage() {
         ranked.map(({ profile }) => ({
           id: profile.id,
           display_name: profile.displayName,
+          username: profile.username,
           age: profile.age ?? 18,
           gender: profile.gender ?? '',
           city: profile.city ?? '',
@@ -276,6 +278,7 @@ export default function DiscoverPage() {
     nameRow: { display: 'flex', alignItems: 'center', gap: '6px' },
     flag: { fontSize: '16px' },
     name: { fontSize: '16px', fontWeight: '700', color: '#F2E9E4' },
+    username: { fontSize: '12px', color: '#D4B18A', marginTop: '2px' },
     genderIcon: { fontSize: '14px', color: '#D4B18A' },
     bioText: { fontSize: '13px', color: '#B58A83', whiteSpace: 'nowrap' as const, overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '200px' },
     emptyState: { flex: 1, display: 'flex', flexDirection: 'column' as const, justifyContent: 'center', alignItems: 'center', padding: '40px', textAlign: 'center' as const },
@@ -348,6 +351,7 @@ export default function DiscoverPage() {
               </div>
               <div style={styles.infoWrapper} onClick={() => router.push(`/profile/${profile.id}`)}>
                 <div style={styles.nameRow}><span style={styles.flag}>{getCountryFlag(profile.country)}</span><span style={styles.name}>{profile.display_name}</span><span style={styles.genderIcon}>{getGenderIcon(profile.gender)}</span></div>
+                {profile.username ? <div style={styles.username}>@{profile.username}</div> : null}
                 <IntentionBadge intention={profile.intention} />
               </div>
 

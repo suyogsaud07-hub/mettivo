@@ -8,6 +8,7 @@ import MobileNav from '../../components/layout/MobileNav';
 interface UserProfile {
   id: string;
   display_name: string | null;
+  username?: string | null;
   age: number | null;
   city: string | null;
   country: string | null;
@@ -118,7 +119,7 @@ export default function UserList({ type }: UserListProps) {
 
         const { data: profilesData } = await supabase
           .from('profiles')
-          .select('id, display_name, age, city, country, avatar_url')
+          .select('id, display_name, username, age, city, country, avatar_url')
           .in('id', targetIds);
 
         if (cancelled) return;
@@ -173,7 +174,7 @@ export default function UserList({ type }: UserListProps) {
   };
 
   const filteredUsers = users.filter((u) =>
-    (u.display_name ?? '').toLowerCase().includes(searchQuery.toLowerCase())
+    `${u.display_name ?? ''} ${u.username ?? ''}`.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   const isSelf = targetId === currentUserId;
@@ -265,6 +266,7 @@ export default function UserList({ type }: UserListProps) {
                     <div style={styles.userName}>
                       {user.display_name ?? 'Member'}{user.age ? `, ${user.age}` : ''}
                     </div>
+                    {user.username ? <div style={styles.userStatus}>@{user.username}</div> : null}
                     <div style={styles.userStatus}>📍 {user.city || 'Global'}{user.country ? `, ${user.country}` : ''}</div>
                   </div>
                   {user.id !== currentUserId && (

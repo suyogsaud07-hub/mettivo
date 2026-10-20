@@ -365,6 +365,8 @@ create policy "follows_select_involved"
 -- Both functions return an ALLOW-LISTED column set (never birth_date, never a
 -- moderation field) and derive the acting member from auth.uid(), not from an
 -- argument, so a caller cannot read on another member's behalf.
+drop function if exists public.list_followers(uuid);
+
 create or replace function public.list_followers(p_user uuid)
 returns table (
   id                uuid,
@@ -409,6 +411,8 @@ comment on function public.list_followers(uuid) is
 
 -- `list_following` mirrors it but is OWNER-ONLY: a non-owner call raises 42501
 -- rather than returning an empty list, so the privacy rule is explicit.
+drop function if exists public.list_following(uuid);
+
 create or replace function public.list_following(p_user uuid)
 returns table (
   id                uuid,

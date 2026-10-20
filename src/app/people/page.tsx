@@ -28,6 +28,7 @@ interface Connection {
   matchId: string;
   userId: string;
   displayName: string;
+  username: string | null;
   avatarUrl: string | null;
   age: number | null;
   city: string | null;
@@ -43,7 +44,7 @@ interface MatchRow {
 }
 
 /** The only columns we may read about another member. */
-const PROFILE_COLUMNS = 'id, display_name, age, city, country, avatar_url, intention, is_online';
+const PROFILE_COLUMNS = 'id, display_name, username, age, city, country, avatar_url, intention, is_online';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -144,6 +145,7 @@ export default function PeoplePage() {
             matchId: row.id,
             userId: otherId,
             displayName: str(profile?.display_name) ?? 'Member',
+            username: str(profile?.username),
             avatarUrl: str(profile?.avatar_url),
             age: num(profile?.age),
             city: str(profile?.city),
@@ -216,6 +218,7 @@ export default function PeoplePage() {
       flexShrink: 0,
     },
     name: { fontSize: '15px', fontWeight: 600, margin: 0 },
+    username: { fontSize: '12px', color: '#D4B18A', margin: '3px 0 0 0' },
     meta: { fontSize: '12px', color: '#B58A83', margin: '4px 0 0 0' },
     online: { fontSize: '11px', color: '#34D399', margin: '4px 0 0 0' },
     profileLink: {
@@ -302,6 +305,9 @@ export default function PeoplePage() {
 
                 <div style={{ minWidth: 0 }}>
                   <p style={styles.name}>{connection.displayName}</p>
+                  {connection.username ? (
+                    <p style={styles.username}>@{connection.username}</p>
+                  ) : null}
                   <p style={styles.meta}>
                     {[
                       connection.age !== null ? `${connection.age}` : null,

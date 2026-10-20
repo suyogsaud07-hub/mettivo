@@ -315,6 +315,8 @@ create trigger reject_blocked_message_trg
 --   * blocked and blocking members (symmetric),
 --   * anyone the caller has already liked or passed,
 --   * anyone already matched with the caller.
+drop function if exists public.discover_profiles(integer, integer, text[], integer, boolean);
+
 create or replace function public.discover_profiles(
   p_min_age     integer default 18,
   p_max_age     integer default 99,

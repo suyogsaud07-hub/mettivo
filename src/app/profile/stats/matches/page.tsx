@@ -8,6 +8,7 @@ import MobileNav from '../../../components/layout/MobileNav';
 interface MatchedProfile {
   id: string;
   display_name: string | null;
+  username: string | null;
   age: number | null;
   city: string | null;
   country: string | null;
@@ -66,7 +67,7 @@ export default function MatchesPage() {
         // Public, allow-listed view — never a private `profiles` read.
         const { data: profiles, error: profileError } = await supabase
           .from('public_profiles')
-          .select('id, display_name, age, city, country, avatar_url')
+          .select('id, display_name, username, age, city, country, avatar_url')
           .in('id', pairs.map((pair) => pair.otherId));
 
         if (profileError) throw new Error(profileError.message);
@@ -138,6 +139,11 @@ export default function MatchesPage() {
               <div style={{ flex: 1 }}>
                 <div style={styles.userName}>
                   {profile?.display_name ?? 'Member'}{profile?.age ? `, ${profile.age}` : ''}
+                  {profile?.username ? (
+                    <span style={{ display: 'block', marginTop: '2px', fontSize: '12px', color: '#D4B18A' }}>
+                      @{profile.username}
+                    </span>
+                  ) : null}
                 </div>
                 <div style={styles.userStatus}>
                   📍 {profile?.city || 'Global'}{profile?.country ? `, ${profile.country}` : ''}

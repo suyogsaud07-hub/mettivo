@@ -13,6 +13,7 @@ import ProfileStatCards, { type ProfileStatKey } from './ProfileStatCards';
  */
 export interface ProfileHeaderProps {
   displayName: string;
+  username?: string | null;
   age: number | null;
   gender: string | null;
   city: string | null;
@@ -40,6 +41,7 @@ function initials(name: string): string {
 
 export default function ProfileHeader({
   displayName,
+  username,
   age,
   gender,
   city,
@@ -83,6 +85,8 @@ export default function ProfileHeader({
             <h1 className="pf-name">{safeName}</h1>
             {age !== null && <span className="pf-age">{age}</span>}
           </div>
+
+          {username ? <p className="pf-username">@{username.replace(/^@/, '')}</p> : null}
 
           <p className="pf-meta">{meta}</p>
 

@@ -22,6 +22,7 @@ import {
   validateOnboardingStep,
 } from '@/lib/onboarding-steps';
 import PhotoUploadStep from '@/app/components/profile/PhotoUploadStep';
+import IdentityFields from '@/app/components/profile/IdentityFields';
 import {
   PROFILE_DRINKING_OPTIONS,
   PROFILE_HOBBIES_OPTIONS as HOBBIES_LIST,
@@ -55,12 +56,15 @@ const PHYSICAL_ATTRS = [
 ];
 
 const WIZARD_PROFILE_COLUMNS =
-  'id, display_name, avatar_url, photos, gender, pronouns, age, country, city, height, physical_attributes, intention, looking_for, sexual_orientation, mbti, personality, religion, hobbies, pets, interests, prompts, smoking, drinking, exercise, education, profession, languages_spoken, bio, onboarding_completed' as const;
+  'id, first_name, last_name, has_last_name, username, display_name, avatar_url, photos, gender, pronouns, age, country, city, height, physical_attributes, intention, looking_for, sexual_orientation, mbti, religion, hobbies, pets, interests, prompts, smoking, drinking, exercise, education, profession, languages_spoken, bio, onboarding_completed' as const;
 
 const MAX_PROMPT_SLOTS = 3;
 
 interface FormState {
-  displayName: string;
+  firstName: string;
+  lastName: string;
+  hasLastName: boolean;
+  username: string;
   avatarUrl: string;
   photos: string[];
   gender: string;
@@ -76,7 +80,6 @@ interface FormState {
   sexualOrientation: string;
   mbti: string;
   religion: string;
-  personalityTraits: string[];
   interests: string[];
   hobbies: string[];
   pets: string[];
@@ -101,9 +104,13 @@ export default function EditProfileWizardPage() {
 
   const [alreadyOnboarded, setAlreadyOnboarded] = useState(false);
   const [photosReady, setPhotosReady] = useState(false);
+  const [savedUsername, setSavedUsername] = useState('');
 
   const [formData, setFormData] = useState<FormState>({
-    displayName: '',
+    firstName: '',
+    lastName: '',
+    hasLastName: true,
+    username: '',
     avatarUrl: '',
     photos: [],
     gender: '',
@@ -119,7 +126,6 @@ export default function EditProfileWizardPage() {
     sexualOrientation: '',
     mbti: '',
     religion: '',
-    personalityTraits: [],
     interests: [],
     hobbies: [],
     pets: [],
@@ -182,9 +188,13 @@ export default function EditProfileWizardPage() {
           console.error('Failed to load profile:', loadError.message);
           setError('We could not load your saved profile. Please try again.');
         } else if (data) {
+          setSavedUsername(typeof data.username === 'string' ? data.username : '');
           setFormData((prev) => ({
             ...prev,
-            displayName: data.display_name ?? '',
+            firstName: data.first_name ?? '',
+            lastName: data.last_name ?? '',
+            hasLastName: data.has_last_name === true,
+            username: data.username ?? '',
             avatarUrl: data.avatar_url ?? '',
             photos: Array.isArray(data.photos) ? data.photos : [],
             gender: data.gender ?? '',
@@ -200,7 +210,6 @@ export default function EditProfileWizardPage() {
             sexualOrientation: data.sexual_orientation ?? '',
             mbti: data.mbti ?? '',
             religion: data.religion ?? '',
-            personalityTraits: Array.isArray(data.personality) ? data.personality : [],
             hobbies: Array.isArray(data.hobbies) ? data.hobbies : [],
             pets: Array.isArray(data.pets) ? data.pets : [],
             smoking: data.smoking ?? '',
@@ -304,7 +313,10 @@ export default function EditProfileWizardPage() {
 
     const draft: ProfileDraft = {
       id: userId,
-      displayName: formData.displayName,
+      firstName: formData.firstName,
+      lastName: formData.lastName,
+      hasLastName: formData.hasLastName,
+      username: formData.username,
       avatarUrl: formData.avatarUrl,
       photos: formData.photos,
       gender: formData.gender,
@@ -319,7 +331,6 @@ export default function EditProfileWizardPage() {
       sexualOrientation: formData.sexualOrientation,
       mbti: formData.mbti,
       religion: formData.religion,
-      personality: formData.personalityTraits,
       interests: formData.interests,
       hobbies: formData.hobbies,
       pets: formData.pets,
@@ -469,17 +480,19 @@ export default function EditProfileWizardPage() {
         {currentStep === 1 && (
           <div>
             <div style={styles.title}>Let&apos;s start with the basics</div>
-            <div style={styles.subtitle}>Start with your display name. You can add your photos at the end.</div>
-
-            <div style={{ marginBottom: '16px' }}>
-              <label style={styles.label}>Display Name *</label>
-              <input
-                style={styles.input}
-                placeholder="Your name or nickname"
-                value={formData.displayName}
-                onChange={(e) => setFormData({ ...formData, displayName: e.target.value })}
-              />
+            <div style={styles.subtitle}>
+              Add your first and last name, then choose the username people will see.
             </div>
+
+            <IdentityFields
+              firstName={formData.firstName}
+              lastName={formData.lastName}
+              hasLastName={formData.hasLastName}
+              username={formData.username}
+              currentUsername={savedUsername}
+              onChange={(patch) => setFormData((prev) => ({ ...prev, ...patch }))}
+              disabled={saving}
+            />
           </div>
         )}
 
@@ -642,36 +655,43 @@ export default function EditProfileWizardPage() {
 
         {currentStep === 8 && (
           <div>
-            <div style={styles.title}>Personality & Vibe</div>
+            <div style={styles.title}>Your personality</div>
             <div style={styles.subtitle}>
-              Pick your MBTI, then answer up to {MAX_PROMPT_SLOTS} prompts — these are what
-              people actually start conversations about.
+              Choose the MBTI type that feels most like you. This is the personality
+              people see on your profile.
             </div>
 
-            <div style={{ marginBottom: '20px' }}>
-              <label style={styles.label}>MBTI Personality Type</label>
-              <div style={styles.personalityGrid}>
-                {PERSONALITY_OPTIONS.map((option) => {
-                  const selected = formData.mbti === option.code;
-                  return (
-                    <button
-                      key={option.code}
-                      type="button"
-                      aria-pressed={selected}
-                      aria-label={`${option.name} (${option.code})`}
-                      style={{
-                        ...styles.personalityCard,
-                        ...(selected ? styles.personalityCardActive : {}),
-                      }}
-                      onClick={() => setFormData({ ...formData, mbti: option.code })}
-                    >
-                      <span style={styles.personalityName}>{option.name}</span>
-                      <span style={styles.personalityCode}>{option.code}</span>
-                      <span style={styles.personalityDescription}>{option.description}</span>
-                    </button>
-                  );
-                })}
-              </div>
+            <div style={styles.personalityGrid}>
+              {PERSONALITY_OPTIONS.map((option) => {
+                const selected = formData.mbti === option.code;
+                return (
+                  <button
+                    key={option.code}
+                    type="button"
+                    aria-pressed={selected}
+                    aria-label={`${option.name} (${option.code})`}
+                    style={{
+                      ...styles.personalityCard,
+                      ...(selected ? styles.personalityCardActive : {}),
+                    }}
+                    onClick={() => setFormData({ ...formData, mbti: option.code })}
+                  >
+                    <span style={styles.personalityName}>{option.name}</span>
+                    <span style={styles.personalityCode}>{option.code}</span>
+                    <span style={styles.personalityDescription}>{option.description}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {currentStep === 9 && (
+          <div>
+            <div style={styles.title}>Prompts</div>
+            <div style={styles.subtitle}>
+              Answer up to {MAX_PROMPT_SLOTS} prompts — these are what people actually
+              start conversations about.
             </div>
 
             {catalogue && catalogue.prompts.length > 0 && (
@@ -741,10 +761,11 @@ export default function EditProfileWizardPage() {
                 )}
               </div>
             )}
+
           </div>
         )}
 
-        {currentStep === 9 && (
+        {currentStep === 10 && (
           <div>
             <div style={styles.title}>Hobbies & Interests</div>
             <div style={styles.subtitle}>Pick the things you enjoy doing in your free time.</div>
@@ -778,7 +799,7 @@ export default function EditProfileWizardPage() {
           </div>
         )}
 
-        {currentStep === 10 && (
+        {currentStep === 11 && (
           <div>
             <div style={styles.title}>Pets & Animals</div>
             <div style={styles.subtitle}>How do you feel about furry friends?</div>
@@ -793,7 +814,7 @@ export default function EditProfileWizardPage() {
           </div>
         )}
 
-        {currentStep === 11 && (
+        {currentStep === 12 && (
           <div>
             <div style={styles.title}>Lifestyle Habits</div>
             <div style={styles.subtitle}>Your daily choices and wellness routine.</div>
@@ -831,7 +852,7 @@ export default function EditProfileWizardPage() {
           </div>
         )}
 
-        {currentStep === 12 && (
+        {currentStep === 13 && (
           <div>
             <div style={styles.title}>Education & Career</div>
             <div style={styles.subtitle}>What do you do for work and study?</div>
@@ -858,7 +879,7 @@ export default function EditProfileWizardPage() {
           </div>
         )}
 
-        {currentStep === 13 && (
+        {currentStep === 14 && (
           <div>
             <div style={styles.title}>Languages Spoken</div>
             <div style={styles.subtitle}>Select languages you can comfortably communicate in.</div>
@@ -873,7 +894,7 @@ export default function EditProfileWizardPage() {
           </div>
         )}
 
-        {currentStep === 14 && (
+        {currentStep === 15 && (
           <div>
             <div style={styles.title}>Personal Bio</div>
             <div style={styles.subtitle}>Write a short intro to highlight your vibe.</div>
@@ -891,7 +912,7 @@ export default function EditProfileWizardPage() {
           </div>
         )}
 
-        {currentStep === 15 && (
+        {currentStep === 16 && (
           <div>
             <div style={styles.title}>Religion &amp; Beliefs</div>
             <div style={styles.subtitle}>
@@ -946,7 +967,7 @@ export default function EditProfileWizardPage() {
           </div>
         )}
 
-        {currentStep === 16 && (
+        {currentStep === 17 && (
           <div>
             <div style={styles.title}>Add your photos &amp; finish</div>
             <div style={styles.subtitle}>
@@ -969,7 +990,8 @@ export default function EditProfileWizardPage() {
             <div style={styles.subtitle}>Double check your details before saving your profile.</div>
 
             <div style={{ maxHeight: '220px', overflowY: 'auto', paddingRight: '6px' }}>
-              <div style={styles.summaryRow}><span>Name</span><span style={{ color: '#D4B18A' }}>{formData.displayName || 'Not set'}</span></div>
+              <div style={styles.summaryRow}><span>Name</span><span style={{ color: '#D4B18A' }}>{[formData.firstName, formData.hasLastName ? formData.lastName : ''].filter(Boolean).join(' ') || 'Not set'}</span></div>
+              <div style={styles.summaryRow}><span>Username</span><span style={{ color: '#D4B18A' }}>{formData.username ? `@${formData.username.replace(/^@/, '')}` : 'Not set'}</span></div>
               <div style={styles.summaryRow}><span>Gender</span><span style={{ color: '#D4B18A' }}>{formData.gender || 'Not set'}</span></div>
               <div style={styles.summaryRow}><span>Age</span><span style={{ color: '#D4B18A' }}>{formData.age} years old</span></div>
               <div style={styles.summaryRow}><span>Location</span><span style={{ color: '#D4B18A' }}>{formData.city}, {formData.country}</span></div>

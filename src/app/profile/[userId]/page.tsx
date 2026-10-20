@@ -253,6 +253,7 @@ export default function PublicProfilePage({ params }: { params: Promise<{ userId
 
       <ProfileHeader
         displayName={displayName}
+        username={profile.username}
         age={profile.age}
         gender={profile.gender}
         city={profile.city}
@@ -348,9 +349,8 @@ export default function PublicProfilePage({ params }: { params: Promise<{ userId
               drinking: profile.drinking,
               smoking: profile.smoking,
               religion: profile.religion,
-              politics: profile.politics,
               pets: profile.pets,
-              personality: profile.personality,
+              mbti: profile.mbti,
               hobbies: profile.hobbies,
             }}
           />

@@ -811,19 +811,20 @@ describe('onboarding wizard — profile columns', () => {
   /**
    * The exact column set `handleSubmit` sends in the single upsert at
    * src/app/profile/edit/page.tsx. If the wizard gains a field, this list and
-   * the migration must gain it together -- otherwise step 15 fails at runtime
+   * the migration must gain it together -- otherwise the final step fails at runtime
    * with a PostgREST 400 while every other test stays green.
    */
   const WIZARD_PAYLOAD_COLUMNS = [
-    'id', 'display_name', 'avatar_url', 'photos', 'gender', 'pronouns',
+    'id', 'first_name', 'last_name', 'has_last_name', 'username', 'display_name',
+    'avatar_url', 'photos', 'gender', 'pronouns',
     'birth_date', 'age', 'country', 'city', 'height', 'physical_attributes',
-    'intention', 'looking_for', 'sexual_orientation', 'mbti', 'personality',
+    'intention', 'looking_for', 'sexual_orientation', 'mbti',
     'hobbies', 'pets', 'smoking', 'drinking', 'exercise', 'education',
     'profession', 'languages_spoken', 'bio', 'onboarding_completed',
   ];
 
   const WIZARD_ONLY_COLUMNS = [
-    'pronouns', 'physical_attributes', 'sexual_orientation', 'mbti',
+    'pronouns', 'physical_attributes', 'sexual_orientation',
     'height', 'exercise', 'education', 'profession', 'languages_spoken',
   ];
 

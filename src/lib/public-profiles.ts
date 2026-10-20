@@ -30,6 +30,10 @@ export class PublicProfileError extends Error {
 /** The allow-listed shape of another member's profile. */
 export interface PublicProfile {
   id: string;
+  first_name: string | null;
+  last_name: string | null;
+  has_last_name: boolean | null;
+  username: string | null;
   display_name: string | null;
   age: number | null;
   gender: string | null;
@@ -41,9 +45,8 @@ export interface PublicProfile {
   looking_for: string[] | null;
   hobbies: string[] | null;
   pets: string[] | null;
-  personality: string[] | null;
+  mbti: string | null;
   religion: string | null;
-  politics: string | null;
   drinking: string | null;
   smoking: string | null;
   is_online: boolean | null;
@@ -63,7 +66,7 @@ export interface PublicProfile {
  * core projection and reports the counters as zero.
  */
 const PUBLIC_PROFILE_CORE_COLUMNS =
-  'id, display_name, age, gender, city, country, avatar_url, bio, intention, looking_for, hobbies, pets, personality, religion, politics, drinking, smoking, is_online' as const;
+  'id, first_name, last_name, has_last_name, username, display_name, age, gender, city, country, avatar_url, bio, intention, looking_for, hobbies, pets, mbti, religion, drinking, smoking, is_online' as const;
 
 const PUBLIC_PROFILE_COUNT_COLUMNS =
   'followers_count, following_count, matches_count, profile_likes_count' as const;

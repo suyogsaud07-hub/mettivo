@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { MAX_BIO_LENGTH, MIN_AGE } from '@/lib/profile';
+import { PERSONALITY_OPTIONS } from '@/lib/personality';
 import { ONBOARDING_GENDERS } from '@/lib/onboarding-steps';
 import {
   PROFILE_DRINKING_OPTIONS,
@@ -41,6 +42,10 @@ const MAX_AGE = 120;
 
 interface Profile {
   id: string;
+  first_name: string | null;
+  last_name: string | null;
+  has_last_name: boolean;
+  username: string | null;
   display_name: string;
   age: number;
   gender: string;
@@ -53,9 +58,8 @@ interface Profile {
   looking_for: string[];
   hobbies: string[];
   pets: string[];
-  personality: string[];
+  mbti: string;
   religion: string;
-  politics: string;
   drinking: string;
   smoking: string;
   /** M22 short headline, shown under the name. Optional. */
@@ -81,9 +85,8 @@ type EditableKey =
   | 'drinking'
   | 'smoking'
   | 'religion'
-  | 'politics'
   | 'pets'
-  | 'personality'
+  | 'mbti'
   | 'hobbies'
   | 'email'
   | 'phone';
@@ -100,9 +103,8 @@ type ProfilePatch = Partial<
     | 'drinking'
     | 'smoking'
     | 'religion'
-    | 'politics'
     | 'pets'
-    | 'personality'
+    | 'mbti'
     | 'hobbies'
   >
 >;
@@ -125,9 +127,8 @@ const EDITOR_FIELDS: Record<EditableKey, FieldConfig> = {
   drinking: { title: 'Drinking', hint: 'Your drinking habit.', kind: 'select' },
   smoking: { title: 'Smoking', hint: 'Your smoking habit.', kind: 'select' },
   religion: { title: 'Religion', hint: 'Optional — leave blank to hide.', kind: 'select' },
-  politics: { title: 'Politics', hint: 'Optional — leave blank to hide.', kind: 'text' },
   pets: { title: 'Pets', hint: 'How you feel about animals.', kind: 'multi' },
-  personality: { title: 'Personality', hint: 'Separate traits with commas.', kind: 'tags' },
+  mbti: { title: 'Personality', hint: 'Your MBTI type.', kind: 'select' },
   hobbies: { title: 'Interests/Hobbies', hint: 'Pick everything you enjoy.', kind: 'multi' },
   email: { title: 'Email', hint: 'We will email you a link to confirm.', kind: 'email' },
   phone: { title: 'Phone', hint: 'We will text you a code to verify.', kind: 'phone' },
@@ -154,7 +155,7 @@ const EDITOR_FIELDS: Record<EditableKey, FieldConfig> = {
  *   readable on a partially migrated database.
  */
 const PROFILE_CORE_COLUMNS =
-  'id, display_name, age, gender, city, country, avatar_url, photos, bio, intention, looking_for, hobbies, pets, personality, religion, politics, drinking, smoking' as const;
+  'id, first_name, last_name, has_last_name, username, display_name, age, gender, city, country, avatar_url, photos, bio, intention, looking_for, hobbies, pets, mbti, religion, drinking, smoking' as const;
 
 /**
  * The M18 counters and the M22 status headline. Both are opt-in for the same
@@ -211,11 +212,10 @@ export default function ProfileDashboardPage() {
 
   // Inline editor state. `editor` is the field being edited, or null when the
   // sheet is closed. `textDraft` backs the single-value inputs, `listDraft` the
-  // multi-select pills, and `tagDraft` the comma-separated text field.
+  // and multi-select pills.
   const [editor, setEditor] = useState<EditableKey | null>(null);
   const [textDraft, setTextDraft] = useState('');
   const [listDraft, setListDraft] = useState<string[]>([]);
-  const [tagDraft, setTagDraft] = useState('');
   const [saving, setSaving] = useState(false);
   const [editorError, setEditorError] = useState<string | null>(null);
 
@@ -398,11 +398,10 @@ export default function ProfileDashboardPage() {
       case 'drinking': setTextDraft(profile.drinking ?? ''); break;
       case 'smoking': setTextDraft(profile.smoking ?? ''); break;
       case 'religion': setTextDraft(profile.religion ?? ''); break;
-      case 'politics': setTextDraft(profile.politics ?? ''); break;
+      case 'mbti': setTextDraft(profile.mbti ?? ''); break;
       case 'looking_for': setListDraft([...(profile.looking_for ?? [])]); break;
       case 'pets': setListDraft([...(profile.pets ?? [])]); break;
       case 'hobbies': setListDraft([...(profile.hobbies ?? [])]); break;
-      case 'personality': setTagDraft((profile.personality ?? []).join(', ')); break;
       case 'email': setTextDraft(userEmail); break;
       case 'phone': setTextDraft(''); setPhoneStage('enter'); break;
     }
@@ -522,14 +521,6 @@ export default function ProfileDashboardPage() {
           break;
         }
 
-        case 'politics': {
-          const failure = await persistProfile({ politics: textDraft.trim() });
-          if (failure) { setEditorError(failure); return; }
-          showToast('Politics updated');
-          closeEditor();
-          break;
-        }
-
         case 'looking_for': {
           const failure = await persistProfile({ looking_for: [...listDraft] });
           if (failure) { setEditorError(failure); return; }
@@ -554,12 +545,13 @@ export default function ProfileDashboardPage() {
           break;
         }
 
-        case 'personality': {
-          const value = tagDraft
-            .split(',')
-            .map((entry) => entry.trim())
-            .filter((entry) => entry.length > 0);
-          const failure = await persistProfile({ personality: value });
+        case 'mbti': {
+          const value = textDraft.trim().toUpperCase();
+          if (!PERSONALITY_OPTIONS.some((option) => option.code === value)) {
+            setEditorError('Please choose a valid personality type.');
+            return;
+          }
+          const failure = await persistProfile({ mbti: value });
           if (failure) { setEditorError(failure); return; }
           showToast('Personality updated');
           closeEditor();
@@ -740,7 +732,9 @@ export default function ProfileDashboardPage() {
     // arrays and whitespace-only text are not progress; the optional fields
     // still count because they are part of profile strength, not onboarding.
     const checks = [
-      profile.display_name?.trim(),
+      profile.first_name?.trim(),
+      profile.last_name?.trim(),
+      profile.username?.trim(),
       profile.age,
       profile.gender?.trim(),
       profile.city?.trim(),
@@ -751,9 +745,8 @@ export default function ProfileDashboardPage() {
       profile.looking_for?.length,
       profile.hobbies?.length,
       profile.pets?.length,
-      profile.personality?.length,
+      profile.mbti?.trim(),
       profile.religion?.trim(),
-      profile.politics?.trim(),
       profile.drinking?.trim(),
       profile.smoking?.trim(),
     ];
@@ -841,14 +834,21 @@ export default function ProfileDashboardPage() {
           </>
         );
 
-      case 'personality':
+      case 'mbti':
         return (
-          <input
-            className="pf-input"
-            value={tagDraft}
-            onChange={(e) => setTagDraft(e.target.value)}
-            placeholder="e.g. Adventurous, Kind, Funny"
-          />
+          <div className="pf-options">
+            {PERSONALITY_OPTIONS.map((option) => (
+              <button
+                key={option.code}
+                type="button"
+                className="pf-option"
+                aria-pressed={textDraft === option.code}
+                onClick={() => setTextDraft(option.code)}
+              >
+                {option.name} ({option.code})
+              </button>
+            ))}
+          </div>
         );
 
       case 'email':
@@ -1034,16 +1034,6 @@ export default function ProfileDashboardPage() {
           </div>
         );
 
-      case 'politics':
-        return (
-          <input
-            className="pf-input"
-            value={textDraft}
-            onChange={(e) => setTextDraft(e.target.value)}
-            placeholder="e.g. Moderate, Liberal, Prefer not to say"
-          />
-        );
-
       default:
         return null;
     }
@@ -1103,6 +1093,7 @@ export default function ProfileDashboardPage() {
       <main className="pf-content">
         <ProfileHeader
           displayName={profile.display_name}
+          username={profile.username}
           age={profile.age ?? null}
           gender={profile.gender}
           city={profile.city}
@@ -1326,9 +1317,8 @@ export default function ProfileDashboardPage() {
                 drinking: profile.drinking,
                 smoking: profile.smoking,
                 religion: profile.religion,
-                politics: profile.politics,
                 pets: profile.pets,
-                personality: profile.personality,
+                mbti: profile.mbti,
                 hobbies: profile.hobbies,
               }}
               onEdit={viewAs ? undefined : openEditor}

@@ -1,6 +1,7 @@
 'use client';
 
 import { intentionLabel } from '@/lib/profile-options';
+import { personalityLabel } from '@/lib/personality';
 
 /**
  * The "User Details" tab body, shared by the own dashboard and the public
@@ -21,9 +22,8 @@ export type ProfileDetailKey =
   | 'drinking'
   | 'smoking'
   | 'religion'
-  | 'politics'
   | 'pets'
-  | 'personality'
+  | 'mbti'
   | 'hobbies'
   | 'email'
   | 'phone';
@@ -37,9 +37,8 @@ export interface ProfileDetailsData {
   drinking: string | null;
   smoking: string | null;
   religion: string | null;
-  politics: string | null;
   pets: string[] | null;
-  personality: string[] | null;
+  mbti: string | null;
   hobbies: string[] | null;
 }
 
@@ -101,12 +100,11 @@ export default function ProfileDetails({ data, onEdit, contact }: ProfileDetails
     { label: 'Drinking', value: data.drinking || 'Not set', key: 'drinking' },
     { label: 'Smoking', value: data.smoking || 'Not set', key: 'smoking' },
     { label: 'Religion', value: data.religion || 'Not set', key: 'religion' },
-    { label: 'Politics', value: data.politics || 'Not set', key: 'politics' },
     { label: 'Pets', value: data.pets?.join(', ') || 'Not set', key: 'pets' },
     {
       label: 'Personality',
-      value: data.personality?.join(', ') || 'Not set',
-      key: 'personality',
+      value: data.mbti ? personalityLabel(data.mbti) : 'Not set',
+      key: 'mbti',
     },
   ];
 

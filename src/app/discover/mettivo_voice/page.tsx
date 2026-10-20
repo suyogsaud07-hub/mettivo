@@ -17,6 +17,7 @@ import { useRouter } from 'next/navigation';
 interface Profile {
   id: string;
   display_name: string;
+  username: string | null;
   gender: string;
   avatar_url: string;
   intention: string;
@@ -117,6 +118,7 @@ export default function MettivoVoicePage() {
           ranked.map(({ profile }) => ({
             id: profile.id,
             display_name: profile.displayName,
+            username: profile.username,
             gender: profile.gender ?? '',
             avatar_url: profile.avatarUrl ?? '',
             intention: profile.intention ?? '',
@@ -201,6 +203,7 @@ export default function MettivoVoicePage() {
     tagChatting: { backgroundColor: 'transparent', border: '1px solid #B58A83', color: '#B58A83', fontSize: '10px', fontWeight: '700', padding: '2px 8px', borderRadius: '10px' },
     nameRow: { display: 'flex', alignItems: 'center', gap: '6px' },
     name: { fontSize: '18px', fontWeight: '700', color: '#F2E9E4' },
+    username: { fontSize: '12px', color: '#D4B18A', marginTop: '2px' },
     statusText: { fontSize: '12px', color: '#B58A83' },
     voiceCardBtn: { display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#A855F7', color: '#FFFFFF', border: 'none', padding: '6px 12px', borderRadius: '16px', fontSize: '12px', fontWeight: '600', cursor: 'pointer', alignSelf: 'flex-start', marginTop: '4px' },
     callBtn: { width: '48px', height: '48px', borderRadius: '50%', backgroundColor: '#A855F7', border: 'none', display: 'flex', justifyContent: 'center', alignItems: 'center', cursor: 'pointer', boxShadow: '0 4px 15px rgba(168, 85, 247, 0.4)' },
@@ -288,6 +291,9 @@ export default function MettivoVoicePage() {
                   <span style={styles.name}>{profile.display_name}</span>
                   <span style={{ color: '#D4B18A', fontSize: '14px' }}>{getGenderIcon(profile.gender)}</span>
                 </div>
+                {profile.username ? (
+                  <div style={styles.username}>@{profile.username}</div>
+                ) : null}
                 <div style={styles.statusText}>Active now</div>
                 
                 <button style={styles.voiceCardBtn} onClick={() => alert('Playing voice card...')}>

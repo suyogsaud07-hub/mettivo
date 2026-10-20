@@ -1475,3 +1475,83 @@ body:has(.pf-sheet-overlay) .pf-nav {
     width: 20px;
   }
 }
+
+/* Split identity fields -------------------------------------------- */
+.pf-identity-fields {
+  display: grid;
+  gap: 16px;
+}
+
+.pf-field {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.pf-field-label {
+  color: var(--pf-gold, #d8b38a);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.pf-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--pf-muted, #b9a9c6);
+  font-size: 13px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.pf-checkbox-row input {
+  width: 17px;
+  height: 17px;
+  accent-color: var(--pf-gold, #d8b38a);
+  flex-shrink: 0;
+}
+
+.pf-username-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.pf-username-prefix {
+  position: absolute;
+  left: 14px;
+  color: var(--pf-gold, #d8b38a);
+  font-weight: 700;
+  pointer-events: none;
+}
+
+.pf-username-input {
+  padding-left: 30px;
+}
+
+.pf-username-status {
+  min-height: 17px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--pf-muted, #b9a9c6);
+}
+
+.pf-username-available {
+  color: #7ee2b8;
+}
+
+.pf-username-taken,
+.pf-username-error {
+  color: #fca5b5;
+}
+
+.pf-username {
+  margin: 6px 0 0;
+  color: var(--pf-gold, #d8b38a);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
