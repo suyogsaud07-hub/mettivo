@@ -5,12 +5,11 @@ import IntentionBadge from './IntentionBadge';
 import ProfileStatCards, { type ProfileStatKey } from './ProfileStatCards';
 
 /**
- * The profile header: avatar, name + age badge, "gender • location", the
- * intention pill and the four primary counters.
+ * The profile hero: avatar, identity, intention and the four primary counters.
  *
- * One component for both the member's own dashboard and another member's public
- * profile, so the two views are structurally identical. The public profile adds
- * a Follow button through `actions`; everything else is the same.
+ * Shared by the member's own dashboard and another member's public profile, so
+ * the two surfaces stay structurally identical. `actions` is how the owner gets
+ * Edit Profile and a visitor gets Follow / Send Text without forking the markup.
  */
 export interface ProfileHeaderProps {
   displayName: string;
@@ -28,8 +27,15 @@ export interface ProfileHeaderProps {
   onStatNavigate?: (key: ProfileStatKey) => void;
   /** Counters that open a list. On another member's profile, Followers only. */
   navigableStats?: ProfileStatKey[];
-  /** Extra controls rendered under the intention pill (e.g. Follow). */
+  /** Extra controls rendered under the intention pill (Edit Profile / Follow). */
   actions?: ReactNode;
+}
+
+function initials(name: string): string {
+  const parts = String(name ?? '').trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
 }
 
 export default function ProfileHeader({
@@ -49,90 +55,51 @@ export default function ProfileHeader({
   navigableStats,
   actions,
 }: ProfileHeaderProps) {
+  const safeName = String(displayName ?? '').trim() || 'Member';
   const displayLocation =
     city && country ? `${city}, ${country}` : city || country || 'Location not set';
+  const meta = [gender, displayLocation].filter(Boolean).join(' · ');
 
   return (
     <>
-      <div style={styles.heroSection}>
-        <div style={styles.avatarContainer}>
-          {avatarUrl ? (
-            <img src={avatarUrl} alt={displayName} style={styles.avatar} />
-          ) : (
-            <div style={{ ...styles.avatar, ...styles.avatarFallback }}>👤</div>
-          )}
-          {isOnline && <div style={styles.onlineBadge} />}
+      <section className="pf-hero" aria-label="Profile overview">
+        <div className="pf-identity">
+          <div className="pf-avatar-wrap">
+            {avatarUrl ? (
+              <img
+                src={avatarUrl}
+                alt={`${safeName}'s profile photo`}
+                className="pf-avatar"
+              />
+            ) : (
+              <div className="pf-avatar-fallback" aria-hidden="true">
+                {initials(safeName)}
+              </div>
+            )}
+            {isOnline && <span className="pf-online" aria-label="Online" />}
+          </div>
+
+          <div className="pf-name-row">
+            <h1 className="pf-name">{safeName}</h1>
+            {age !== null && <span className="pf-age">{age}</span>}
+          </div>
+
+          <p className="pf-meta">{meta}</p>
+
+          <IntentionBadge intention={intention} className="pf-intention" />
+
+          {actions && <div className="pf-actions">{actions}</div>}
         </div>
 
-        <div style={styles.nameRow}>
-          <span style={styles.name}>{displayName}</span>
-          {age !== null && <span style={styles.ageBadge}>{age}</span>}
-        </div>
-
-        <div style={styles.location}>
-          {gender ? `${gender} • ` : ''}
-          {displayLocation}
-        </div>
-
-        <IntentionBadge intention={intention} />
-
-        {actions && <div style={styles.actions}>{actions}</div>}
-      </div>
-
-      <ProfileStatCards
-        matches={matches}
-        following={following}
-        followers={followers}
-        likes={likes}
-        onNavigate={onStatNavigate}
-        navigableStats={navigableStats}
-      />
+        <ProfileStatCards
+          matches={matches}
+          following={following}
+          followers={followers}
+          likes={likes}
+          onNavigate={onStatNavigate}
+          navigableStats={navigableStats}
+        />
+      </section>
     </>
   );
 }
-
-const styles = {
-  heroSection: {
-    display: 'flex',
-    flexDirection: 'column' as const,
-    alignItems: 'center',
-    padding: '30px 20px 20px 20px',
-  },
-  avatarContainer: { position: 'relative' as const, marginBottom: '16px' },
-  avatar: {
-    width: '120px',
-    height: '120px',
-    borderRadius: '50%',
-    objectFit: 'cover' as const,
-    border: '3px solid #D8B38A',
-    backgroundColor: '#34283F',
-  },
-  avatarFallback: {
-    display: 'flex',
-    justifyContent: 'center',
-    alignItems: 'center',
-    fontSize: '40px',
-  },
-  onlineBadge: {
-    position: 'absolute' as const,
-    bottom: '5px',
-    right: '10px',
-    width: '20px',
-    height: '20px',
-    borderRadius: '50%',
-    backgroundColor: '#34D399',
-    border: '3px solid #131017',
-  },
-  nameRow: { display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '4px' },
-  name: { fontSize: '26px', fontWeight: 800, color: '#EAE2F0' },
-  ageBadge: {
-    backgroundColor: '#4A1828',
-    color: '#D8B38A',
-    padding: '4px 12px',
-    borderRadius: '20px',
-    fontSize: '14px',
-    fontWeight: 700,
-  },
-  location: { fontSize: '14px', color: '#B58A83', marginBottom: '16px', textAlign: 'center' as const },
-  actions: { display: 'flex', gap: '10px', marginTop: '16px' },
-};

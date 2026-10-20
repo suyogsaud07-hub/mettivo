@@ -38,7 +38,7 @@
 | `R-12` | Protected owner-built UI (Notifications/Moments/Games) removed by a refactor | 1 | 5 | 🟡 5 | Mitigated by test **and by browser journey** |
 | `R-13` | Rate limiting bypassed by writing through a definer function that forgot the guard | 3 | 3 | 🟡 9 | Open |
 | `R-14` | Single-region database, no verified restore procedure | 1 | 5 | 🟡 5 | Partly rehearsed — schema rebuild proven; **data restore still unverified** |
-| `R-15` | Onboarding drop-off at 15 steps | 4 | 3 | 🟠 12 | Open — product |
+| `R-15` | Onboarding drop-off at 16 steps | 4 | 3 | 🟠 12 | Open — product |
 | `R-16` | Passwordless/OAuth account takeover via callback handling | 2 | 5 | 🟠 10 | Mitigated by review |
 | `R-17` | Unbounded storage growth (moments media, game ledger) | 3 | 2 | 🟡 6 | Open |
 
@@ -414,9 +414,9 @@ matrix whenever a write RPC is added.
 
 ---
 
-### `R-15` — Onboarding drop-off at 15 steps 🟠
+### `R-15` — Onboarding drop-off at 16 steps 🟠
 
-**Description.** Fifteen screens before the first profile is a long funnel; the
+**Description.** Sixteen screens before the first profile is a long funnel; the
 product's value is not visible until discovery.
 
 **Mitigation.** Progress bar and per-step back navigation are in place. Product

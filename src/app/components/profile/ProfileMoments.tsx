@@ -6,11 +6,8 @@ import MomentCard from '../moments/MomentCard';
 
 /**
  * The "User Feed" tab body: a member's Moments rendered with the shared
- * `MomentCard`.
- *
- * Presentational — the parent owns the data and the like handler, so the
- * own-profile feed and the public-profile feed cannot behave differently.
- * Comments, shares and views are owned by `MomentCard` itself.
+ * `MomentCard`. Presentational — the parent owns the data and the like handler,
+ * so the own-profile and public-profile feeds cannot behave differently.
  */
 export interface ProfileMomentsProps {
   posts: MomentFeedRow[];
@@ -35,6 +32,27 @@ export interface ProfileMomentsProps {
   headerAction?: (post: MomentFeedRow) => ReactNode;
 }
 
+function EmptyFeedIcon() {
+  return (
+    <span className="pf-empty-icon" aria-hidden="true">
+      <svg
+        width="22"
+        height="22"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <rect x="3" y="4" width="18" height="16" rx="4" />
+        <circle cx="8.5" cy="9.5" r="1.5" />
+        <path d="m21 15-4.2-4.2a2 2 0 0 0-2.8 0L5 20" />
+      </svg>
+    </span>
+  );
+}
+
 export default function ProfileMoments({
   posts,
   author,
@@ -51,23 +69,29 @@ export default function ProfileMoments({
 }: ProfileMomentsProps) {
   return (
     <div>
-      <div style={styles.header}>
-        <div style={styles.headerTitle}>{title}</div>
+      <div className="pf-feed-head">
+        <h2 className="pf-feed-title">{title}</h2>
         {action}
       </div>
 
       {error && (
-        <div role="alert" style={styles.error}>
+        <div role="alert" className="pf-alert">
           {error}
         </div>
       )}
 
       {loading ? (
-        <div style={styles.empty}>Loading posts...</div>
+        <div className="pf-empty" role="status">
+          <span className="pf-spinner" aria-hidden="true" />
+          <p className="pf-muted" style={{ marginTop: 14 }}>
+            Loading posts…
+          </p>
+        </div>
       ) : posts.length === 0 ? (
-        <div style={styles.empty}>
-          <div style={styles.emptyTitle}>{emptyTitle}</div>
-          {emptyBody}
+        <div className="pf-empty">
+          <EmptyFeedIcon />
+          <h3 className="pf-empty-title">{emptyTitle}</h3>
+          <p className="pf-empty-body">{emptyBody}</p>
         </div>
       ) : (
         posts.map((post) => (
@@ -85,33 +109,3 @@ export default function ProfileMoments({
     </div>
   );
 }
-
-const styles = {
-  header: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    margin: '0 20px 16px 20px',
-  },
-  headerTitle: { fontSize: '15px', fontWeight: 700, color: '#EAE2F0' },
-  error: {
-    margin: '0 20px 16px 20px',
-    backgroundColor: '#3B1220',
-    border: '1px solid #7F1D2E',
-    color: '#FCA5B5',
-    borderRadius: '14px',
-    padding: '12px 16px',
-    fontSize: '13px',
-  },
-  empty: {
-    margin: '0 20px',
-    backgroundColor: '#211A28',
-    border: '1px dashed #4A1828',
-    borderRadius: '20px',
-    padding: '40px 24px',
-    textAlign: 'center' as const,
-    color: '#B58A83',
-    fontSize: '14px',
-  },
-  emptyTitle: { fontSize: '16px', fontWeight: 700, color: '#EAE2F0', marginBottom: '8px' },
-};

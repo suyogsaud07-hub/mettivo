@@ -310,39 +310,51 @@ export default function PublicProfilePage({ params }: { params: Promise<{ userId
       <ProfileTabs active={activeTab} onChange={setActiveTab} />
 
       {activeTab === 'feed' ? (
-        <ProfileMoments
-          posts={posts}
-          author={author}
-          isOwn={isOwn}
-          currentUserId={currentUserId}
-          loading={postsLoading}
-          error={postsError}
-          title={isOwn ? 'Your Posts' : `${displayName}'s Posts`}
-          emptyTitle="No posts yet"
-          emptyBody={
-            isOwn
-              ? 'Share photos, videos and updates in Moments and they will appear here.'
-              : `${displayName} has not shared any Moments yet.`
-          }
-          onLike={(item) => void handleLike(item)}
-        />
+        <div
+          role="tabpanel"
+          id="profile-panel-feed"
+          aria-labelledby="profile-tab-feed"
+        >
+          <ProfileMoments
+            posts={posts}
+            author={author}
+            isOwn={isOwn}
+            currentUserId={currentUserId}
+            loading={postsLoading}
+            error={postsError}
+            title={isOwn ? 'Your Posts' : `${displayName}'s Posts`}
+            emptyTitle="No posts yet"
+            emptyBody={
+              isOwn
+                ? 'Share photos, videos and updates in Moments and they will appear here.'
+                : `${displayName} has not shared any Moments yet.`
+            }
+            onLike={(item) => void handleLike(item)}
+          />
+        </div>
       ) : (
-        <ProfileDetails
-          data={{
-            bio: profile.bio,
-            age: profile.age,
-            gender: profile.gender,
-            looking_for: profile.looking_for,
-            intention: profile.intention,
-            drinking: profile.drinking,
-            smoking: profile.smoking,
-            religion: profile.religion,
-            politics: profile.politics,
-            pets: profile.pets,
-            personality: profile.personality,
-            hobbies: profile.hobbies,
-          }}
-        />
+        <div
+          role="tabpanel"
+          id="profile-panel-details"
+          aria-labelledby="profile-tab-details"
+        >
+          <ProfileDetails
+            data={{
+              bio: profile.bio,
+              age: profile.age,
+              gender: profile.gender,
+              looking_for: profile.looking_for,
+              intention: profile.intention,
+              drinking: profile.drinking,
+              smoking: profile.smoking,
+              religion: profile.religion,
+              politics: profile.politics,
+              pets: profile.pets,
+              personality: profile.personality,
+              hobbies: profile.hobbies,
+            }}
+          />
+        </div>
       )}
 
       <MobileNav />
@@ -353,6 +365,8 @@ export default function PublicProfilePage({ params }: { params: Promise<{ userId
 const styles = {
   container: {
     minHeight: '100vh',
+    maxWidth: '900px',
+    margin: '0 auto',
     backgroundColor: '#131017',
     color: '#EAE2F0',
     fontFamily: 'system-ui',

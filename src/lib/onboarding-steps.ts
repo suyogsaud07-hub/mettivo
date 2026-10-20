@@ -8,24 +8,29 @@ import {
 } from '@/lib/profile';
 
 /**
- * The onboarding wizard's per-step contract — steps 1–15.
+ * The onboarding wizard's per-step contract — steps 1–16.
  *
  * WHY THIS MODULE EXISTS
  *   The wizard used to validate on `handleNext` only, so a member could reach
- *   step 15 with steps 4–14 empty and only find out at submit time. This module
- *   makes each step's requirement data: the UI derives `disabled` from it, the
- *   inline error is its `problems[0]`, and `handleNext` re-checks it so a
- *   programmatic click cannot skip a blocking step either.
+ *   the final step with earlier steps empty and only find out at submit time.
+ *   This module makes each step's requirement data: the UI derives `disabled`
+ *   from it, the inline error is its `problems[0]`, and `handleNext` re-checks
+ *   it so a programmatic click cannot skip a blocking step either.
  *
  * It is deliberately pure — no React, no Supabase, no I/O — so every rule is
  * unit-testable and the page stays a renderer.
  *
+ * RELIGION IS OPTIONAL
+ *   Step 15 offers a religion or belief, but it is a recommended field only: it
+ *   never blocks `Next` and skipping it persists nothing. The database column is
+ *   nullable and no matching rule reads it.
+ *
  * THE PHOTO REQUIREMENT IS STEP-LOCAL
  *   Exactly four gallery photos (plus one separate avatar) is an onboarding-flow
- *   rule, not a database invariant: the count lives here (step 15) ONLY.
+ *   rule, not a database invariant: the count lives here (the final step) ONLY.
  *   `validateProfileDraft`/`saveProfile` are unchanged and the database caps the
- *   array without demanding a minimum. Step 15 delegates to the full-draft guard
- *   AND adds the gallery-count rule.
+ *   array without demanding a minimum. The final step delegates to the
+ *   full-draft guard AND adds the gallery-count rule.
  */
 
 /** Re-exported so wizard callers read the photo cap from one place. */
@@ -38,9 +43,6 @@ export { MAX_PHOTOS };
  * is applied when the member first completes the wizard.
  */
 export const MIN_PHOTOS = 4;
-
-/** The onboarding has fifteen steps; step 15 is photo upload + launch. */
-export const ONBOARDING_TOTAL_STEPS = 15;
 
 /** The closed set of gender identities the wizard offers on step 2. */
 export const ONBOARDING_GENDERS = ['Woman', 'Man', 'Nonbinary'] as const;
@@ -65,6 +67,7 @@ export interface OnboardingState {
   lookingFor: readonly string[];
   sexualOrientation: string;
   mbti: string;
+  religion: string;
   prompts: Readonly<Record<string, string>>;
   interests: readonly string[];
   hobbies: readonly string[];
@@ -114,7 +117,8 @@ const optional = (key: keyof OnboardingState, label: string): StepFieldSpec => (
 });
 
 /**
- * The registry. Step 15 lists no field: it is owned by `validateProfileDraft`.
+ * The registry. The final step lists no field: it is owned by
+ * `validateProfileDraft`.
  *
  * Every field named here must also be mapped in `FIELD_TO_STEP`; a test pins
  * that, so adding a field to a step without wiring the jump-to-step map fails
@@ -184,21 +188,33 @@ export const ONBOARDING_STEPS: OnboardingStepSpec[] = [
     recommended: [],
   },
   { step: 14, id: 'bio', required: [required('bio', 'Bio')], recommended: [] },
-  { step: 15, id: 'photos', required: [], recommended: [] },
+  {
+    step: 15,
+    id: 'religion',
+    required: [],
+    recommended: [optional('religion', 'Religion')],
+  },
+  { step: 16, id: 'photos', required: [], recommended: [] },
 ];
+
+/**
+ * The number of wizard steps, derived from the registry so the counter, the
+ * final-step guard and the E2E journey can never drift from the list itself.
+ */
+export const ONBOARDING_TOTAL_STEPS = ONBOARDING_STEPS.length;
 
 /**
  * Field key -> owning step.
  *
  * Used by the review screen's submit guard to jump back to the offending step
- * instead of failing on step 15 with a red banner. It is a superset of the
+ * instead of failing on the final step with a red banner. It is a superset of the
  * registry: it also carries fields the full-draft guard can report but no step
  * blocks on directly.
  */
 export const FIELD_TO_STEP: Record<string, number> = {
   displayName: 1,
-  photos: 15,
-  avatarUrl: 15,
+  photos: 16,
+  avatarUrl: 16,
   gender: 2,
   pronouns: 2,
   birthDate: 3,
@@ -212,6 +228,7 @@ export const FIELD_TO_STEP: Record<string, number> = {
   sexualOrientation: 7,
   mbti: 8,
   prompts: 8,
+  religion: 15,
   interests: 9,
   hobbies: 9,
   pets: 10,
@@ -251,6 +268,7 @@ const PRESENCE: { readonly [K in keyof OnboardingState]: (state: OnboardingState
   lookingFor: (state) => countFilled(state.lookingFor) > 0,
   sexualOrientation: (state) => !isBlank(state.sexualOrientation),
   mbti: (state) => !isBlank(state.mbti),
+  religion: (state) => !isBlank(state.religion),
   prompts: (state) => Object.keys(state.prompts ?? {}).length > 0,
   interests: (state) => countFilled(state.interests) > 0,
   hobbies: (state) => countFilled(state.hobbies) > 0,
@@ -285,6 +303,7 @@ function toProfileDraft(state: OnboardingState): ProfileDraft {
     lookingFor: [...state.lookingFor],
     sexualOrientation: state.sexualOrientation,
     mbti: state.mbti,
+    religion: state.religion,
     interests: [...state.interests],
     hobbies: [...state.hobbies],
     pets: [...state.pets],
@@ -456,7 +475,7 @@ function blockingProblems(step: number, state: OnboardingState): ValidationProbl
     }
 
     case ONBOARDING_TOTAL_STEPS: {
-      // Step 15 is the final photo screen. The full-draft guard is still the
+      // The final step is the photo screen. The full-draft guard is still the
       // single authority for the profile fields, and the gallery requirement is
       // added on top because the draft guard has no photo count (the database
       // caps the array but does not demand a minimum).
@@ -483,7 +502,7 @@ function blockingProblems(step: number, state: OnboardingState): ValidationProbl
  * The per-step decision.
  *
  * A step not present in the registry imposes no local requirement (the registry
- * covers 1–15, so this only absorbs an out-of-range call defensively).
+ * covers every real step, so this only absorbs an out-of-range call defensively).
  */
 export function validateOnboardingStep(
   step: number,

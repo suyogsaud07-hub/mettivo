@@ -16,6 +16,8 @@ interface NavItem {
   icon: string;
   /** Owner-added entries that carry a pulsing live dot. */
   live?: boolean;
+  /** The unread-notification badge attaches to this destination. */
+  badge?: 'notifications';
 }
 
 export default function MobileNav() {
@@ -65,65 +67,53 @@ export default function MobileNav() {
     // brand label is shown as-is; the camera icon carries the pulsing "on air" dot.
     { name: 'Mettivo Live', path: '/live', live: true, icon: 'M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z' },
     { name: t('games'), path: '/game-zone', icon: 'M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z M21 12a9 9 0 11-18 0 9 9 0 0118 0z' },
-    { name: t('notifications'), path: '/notifications', icon: 'M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z' },
+    { name: t('notifications'), path: '/notifications', badge: 'notifications', icon: 'M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z' },
     { name: t('messages'), path: '/chat', icon: 'M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z' },
     { name: t('profile'), path: '/profile/dashboard', icon: 'M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z' },
   ];
 
   return (
-    <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, backgroundColor: '#17121C', borderTop: '1px solid #29202D', display: 'flex', justifyContent: 'space-around', alignItems: 'center', padding: '12px 0 24px 0', zIndex: 100, paddingBottom: '30px' }}>
-      {navItems.map((item) => {
-        const isActive = pathname.startsWith(item.path);
-        return (
-          <Link key={item.path} href={item.path} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textDecoration: 'none', color: isActive ? '#D4B18A' : '#B58A83', transition: 'color 0.2s', width: '12.5%' }}>
-            <span style={{ position: 'relative', display: 'inline-flex' }}>
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={isActive ? "2.5" : "2"} strokeLinecap="round" strokeLinejoin="round">
-                <path d={item.icon} />
-              </svg>
-              {item.live && (
-                <span
-                  aria-hidden
-                  style={{
-                    position: 'absolute',
-                    top: '-1px',
-                    right: '-3px',
-                    width: '7px',
-                    height: '7px',
-                    borderRadius: '50%',
-                    backgroundColor: '#e05a6d',
-                    animation: 'mr-live-pulse 1.4s ease-in-out infinite',
-                  }}
-                />
-              )}
-              {item.path === '/notifications' && unread > 0 && (
-                <span
-                  aria-label={`${unread} unread notifications`}
-                  style={{
-                    position: 'absolute',
-                    top: '-5px',
-                    right: '-9px',
-                    minWidth: '14px',
-                    height: '14px',
-                    padding: '0 3px',
-                    borderRadius: '7px',
-                    backgroundColor: '#e05a6d',
-                    color: '#ffffff',
-                    fontSize: '9px',
-                    fontWeight: 700,
-                    lineHeight: '14px',
-                    textAlign: 'center',
-                  }}
+    <nav className="pf-nav" aria-label="Primary">
+      <div className="pf-nav-inner">
+        {navItems.map((item) => {
+          const isActive = pathname.startsWith(item.path);
+          return (
+            <Link
+              key={item.path}
+              href={item.path}
+              className={`pf-nav-link${isActive ? ' is-active' : ''}`}
+              aria-current={isActive ? 'page' : undefined}
+              aria-label={item.name}
+            >
+              <span className="pf-nav-icon">
+                <svg
+                  width="21"
+                  height="21"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={isActive ? '2.4' : '1.9'}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
                 >
-                  {unread > 99 ? '99+' : unread}
-                </span>
-              )}
-            </span>
-            <span style={{ fontSize: '9px', marginTop: '4px', fontWeight: isActive ? '700' : '500', textAlign: 'center', lineHeight: '1.1' }}>
-              {item.name}
-            </span>
-          </Link>
-        );
-      })}
-    </div>
+                  <path d={item.icon} />
+                </svg>
+                {item.live && <span className="pf-nav-live-dot" aria-hidden="true" />}
+                {item.badge === 'notifications' && unread > 0 && (
+                  <span
+                    className="pf-nav-badge"
+                    aria-label={`${unread} unread notifications`}
+                  >
+                    {unread > 99 ? '99+' : unread}
+                  </span>
+                )}
+              </span>
+              <span className="pf-nav-label">{item.name}</span>
+            </Link>
+          );
+        })}
+      </div>
+    </nav>
   );
 }

@@ -13,15 +13,22 @@ export interface IntentionBadgeProps {
   intention: string | null | undefined;
   /** Shown when no intention has been chosen yet. */
   fallback?: string;
+  /** Optional surface-specific class (e.g. the profile hero pill). */
+  className?: string;
 }
 
 export default function IntentionBadge({
   intention,
   fallback = 'Looking for connections',
+  className,
 }: IntentionBadgeProps) {
   const label = intention ? intentionLabel(intention) : '';
 
-  return <span style={styles.badge}>{label || fallback}</span>;
+  return (
+    <span className={className} style={className ? undefined : styles.badge}>
+      {label || fallback}
+    </span>
+  );
 }
 
 const styles = {

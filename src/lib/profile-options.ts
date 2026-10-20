@@ -58,6 +58,21 @@ export const PROFILE_PETS_OPTIONS = [
   'Want pets',
 ] as const;
 
+/** Religion or belief. Stored in `profiles.religion`; always optional. */
+export const PROFILE_RELIGION_OPTIONS = [
+  'Hindu',
+  'Buddhist',
+  'Muslim',
+  'Christian',
+  'Sikh',
+  'Jewish',
+  'Other religion',
+  'Spiritual, but not religious',
+  'Agnostic',
+  'Atheist',
+  'Prefer not to say',
+] as const;
+
 /** Free-text hobby labels. Stored in `profiles.hobbies`. */
 export const PROFILE_HOBBIES_OPTIONS = [
   'Music',

@@ -12,15 +12,29 @@ export interface ProfileViewAsBannerProps {
 
 export default function ProfileViewAsBanner({ onExit }: ProfileViewAsBannerProps) {
   return (
-    <div style={styles.banner} role="status" data-testid="view-as-banner">
-      <span style={styles.icon} aria-hidden>👁️</span>
-      <div style={styles.text}>
-        <div style={styles.title}>Viewing as a visitor</div>
-        <div style={styles.subtitle}>Only your public posts and details are shown.</div>
+    <div className="pf-view-as" role="status" data-testid="view-as-banner">
+      <svg
+        width="18"
+        height="18"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+        style={{ flexShrink: 0, color: 'var(--pf-gold)' }}
+      >
+        <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z" />
+        <circle cx="12" cy="12" r="2.6" />
+      </svg>
+      <div className="pf-view-as-copy">
+        <div className="pf-view-as-title">Viewing as a visitor</div>
+        <div className="pf-view-as-text">Only your public posts and details are shown.</div>
       </div>
       <button
         type="button"
-        style={styles.exit}
+        className="pf-btn pf-btn-small pf-btn-quiet"
         onClick={onExit}
         data-testid="view-as-exit"
       >
@@ -29,31 +43,3 @@ export default function ProfileViewAsBanner({ onExit }: ProfileViewAsBannerProps
     </div>
   );
 }
-
-const styles = {
-  banner: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '12px',
-    margin: '0 20px 16px 20px',
-    padding: '14px 16px',
-    borderRadius: '16px',
-    backgroundColor: '#241C2C',
-    border: '1px solid #4A1828',
-  },
-  icon: { fontSize: '20px' },
-  text: { flex: 1, minWidth: 0 },
-  title: { fontSize: '14px', fontWeight: 700, color: '#D8B38A' },
-  subtitle: { fontSize: '12px', color: '#B58A83' },
-  exit: {
-    padding: '8px 16px',
-    borderRadius: '999px',
-    border: 'none',
-    background: 'linear-gradient(135deg, #D8B38A, #C78C8D)',
-    color: '#131017',
-    fontSize: '13px',
-    fontWeight: 700,
-    cursor: 'pointer',
-    flexShrink: 0,
-  },
-};

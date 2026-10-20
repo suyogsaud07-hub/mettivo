@@ -195,10 +195,20 @@ export async function stubSupabase(page: Page, options: StubOptions = {}): Promi
         body = request.postData();
       }
       writes.push({ table: path, method, body });
+
+      // PostgREST returns the affected row(s) only when the client asks for a
+      // representation (`.select()` after a write). The profile save path needs
+      // that returned id to distinguish "updated" from "no such row", so model
+      // the representation as one row rather than always returning `[]`.
+      const prefer = request.headers()['prefer'] ?? '';
+      const representation = prefer.includes('return=representation')
+        ? [{ id: e2eUser.id }]
+        : [];
+
       return route.fulfill({
         status: 201,
         contentType: 'application/json',
-        body: JSON.stringify([]),
+        body: JSON.stringify(representation),
       });
     }
 

@@ -1,14 +1,15 @@
 'use client';
 
+import { useRef, type KeyboardEvent } from 'react';
+
 /**
  * The dual-tab switch shared by every profile surface.
  *
  *   * "User Feed"    — the member's posts / timeline,
  *   * "User Details" — the structured profile fields.
  *
- * The sliding gold indicator is the Midnight Romance treatment; keeping the
- * component in one place means the own-profile and public-profile tabs cannot
- * drift apart visually.
+ * Implements the standard tab keyboard contract (arrows, Home, End) so the
+ * visual switch is also a semantic one.
  */
 
 export type ProfileTab = 'feed' | 'details';
@@ -18,68 +19,66 @@ export interface ProfileTabsProps {
   onChange: (tab: ProfileTab) => void;
 }
 
+const TABS: { id: ProfileTab; label: string }[] = [
+  { id: 'feed', label: 'User Feed' },
+  { id: 'details', label: 'User Details' },
+];
+
 export default function ProfileTabs({ active, onChange }: ProfileTabsProps) {
+  const refs = useRef<Array<HTMLButtonElement | null>>([]);
+
+  const select = (index: number) => {
+    const next = TABS[index];
+    if (!next) return;
+    onChange(next.id);
+    refs.current[index]?.focus();
+  };
+
+  const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+      event.preventDefault();
+      select((index + 1) % TABS.length);
+    } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      select((index - 1 + TABS.length) % TABS.length);
+    } else if (event.key === 'Home') {
+      event.preventDefault();
+      select(0);
+    } else if (event.key === 'End') {
+      event.preventDefault();
+      select(TABS.length - 1);
+    }
+  };
+
   return (
-    <div style={styles.segment} role="tablist" aria-label="Profile sections">
+    <div className="pf-tabs" role="tablist" aria-label="Profile sections">
       <div
-        style={{
-          ...styles.indicator,
-          transform: active === 'details' ? 'translateX(100%)' : 'translateX(0)',
-        }}
+        className="pf-tab-indicator"
+        style={{ transform: active === 'details' ? 'translateX(100%)' : 'translateX(0)' }}
+        aria-hidden="true"
       />
-      <button
-        type="button"
-        role="tab"
-        aria-selected={active === 'feed'}
-        style={{ ...styles.button, color: active === 'feed' ? '#131017' : '#EAE2F0' }}
-        onClick={() => onChange('feed')}
-      >
-        User Feed
-      </button>
-      <button
-        type="button"
-        role="tab"
-        aria-selected={active === 'details'}
-        style={{ ...styles.button, color: active === 'details' ? '#131017' : '#EAE2F0' }}
-        onClick={() => onChange('details')}
-      >
-        User Details
-      </button>
+      {TABS.map((tab, index) => {
+        const selected = active === tab.id;
+        return (
+          <button
+            key={tab.id}
+            ref={(node) => {
+              refs.current[index] = node;
+            }}
+            type="button"
+            role="tab"
+            id={`profile-tab-${tab.id}`}
+            aria-selected={selected}
+            aria-controls={`profile-panel-${tab.id}`}
+            tabIndex={selected ? 0 : -1}
+            className="pf-tab"
+            onClick={() => onChange(tab.id)}
+            onKeyDown={(event) => onKeyDown(event, index)}
+          >
+            {tab.label}
+          </button>
+        );
+      })}
     </div>
   );
 }
-
-const styles = {
-  segment: {
-    position: 'relative' as const,
-    display: 'flex',
-    margin: '0 20px 24px 20px',
-    backgroundColor: '#211A28',
-    borderRadius: '999px',
-    padding: '4px',
-    border: '1px solid #34283F',
-  },
-  indicator: {
-    position: 'absolute' as const,
-    top: '4px',
-    bottom: '4px',
-    left: '4px',
-    width: 'calc(50% - 4px)',
-    backgroundColor: '#D8B38A',
-    borderRadius: '999px',
-    transition: 'transform 0.25s ease',
-  },
-  button: {
-    position: 'relative' as const,
-    flex: 1,
-    zIndex: 1,
-    padding: '12px',
-    borderRadius: '999px',
-    border: 'none',
-    background: 'none',
-    fontSize: '14px',
-    fontWeight: 700,
-    cursor: 'pointer',
-    transition: 'color 0.25s ease',
-  },
-};

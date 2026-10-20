@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   MAX_BIO_LENGTH,
+  MAX_RELIGION_LENGTH,
   MIN_AGE,
   calculateAge,
   isAdult,
@@ -117,6 +118,16 @@ describe('M7 — draft validation', () => {
     expect(result.payload.hobbies).toEqual(['Music']);
   });
 
+  it('keeps religion optional, trims it, and bounds its length', () => {
+    expect(validateProfileDraft(draft(), NOW).payload.religion).toBe('');
+    expect(validateProfileDraft(draft({ religion: '  Hindu  ' }), NOW).payload.religion).toBe(
+      'Hindu'
+    );
+    expect(
+      validateProfileDraft(draft({ religion: 'x'.repeat(MAX_RELIGION_LENGTH + 1) }), NOW).ok
+    ).toBe(false);
+  });
+
   it('never validates a draft into a payload without an adult age', () => {
     // Property: if `ok` is true, the persisted age is an adult age.
     const ages = ['1990-01-01', '2008-10-15', '2008-10-16', '2015-06-01'];
@@ -154,6 +165,7 @@ const blankState = (): OnboardingState => ({
   lookingFor: [],
   sexualOrientation: '',
   mbti: '',
+  religion: '',
   prompts: {},
   interests: [],
   hobbies: [],
@@ -180,6 +192,7 @@ const completeState = (overrides: Partial<OnboardingState> = {}): OnboardingStat
   lookingFor: ['Women'],
   sexualOrientation: 'Straight',
   mbti: 'INFJ',
+  religion: 'Hindu',
   prompts: { 'simple-pleasures': 'Coffee at sunrise' },
   interests: ['hiking'],
   hobbies: [],
@@ -194,14 +207,14 @@ const completeState = (overrides: Partial<OnboardingState> = {}): OnboardingStat
   ...overrides,
 });
 
-/** Steps that block locally: 1..14. Step 15 is photo upload + submit. */
+/** Every step with a required field. Religion and the photo screen are optional locally. */
 const BLOCKING_STEPS = ONBOARDING_STEPS.filter(
-  (spec) => spec.step < ONBOARDING_TOTAL_STEPS
+  (spec) => spec.step < ONBOARDING_TOTAL_STEPS && spec.required.length > 0
 );
 
 describe('onboarding — the step registry', () => {
-  it('registers all fifteen steps, once each, in order', () => {
-    expect(ONBOARDING_TOTAL_STEPS).toBe(15);
+  it('registers all sixteen steps, once each, in order', () => {
+    expect(ONBOARDING_TOTAL_STEPS).toBe(16);
     expect(ONBOARDING_STEPS).toHaveLength(ONBOARDING_TOTAL_STEPS);
     expect(ONBOARDING_STEPS.map((spec) => spec.step)).toEqual(
       Array.from({ length: ONBOARDING_TOTAL_STEPS }, (_, index) => index + 1)
@@ -209,6 +222,8 @@ describe('onboarding — the step registry', () => {
     expect(new Set(ONBOARDING_STEPS.map((spec) => spec.id)).size).toBe(
       ONBOARDING_TOTAL_STEPS
     );
+    expect(ONBOARDING_STEPS.find((spec) => spec.step === 15)?.id).toBe('religion');
+    expect(ONBOARDING_STEPS[ONBOARDING_TOTAL_STEPS - 1]?.id).toBe('photos');
   });
 
   it('maps every registered field to the step that owns it', () => {
@@ -235,6 +250,7 @@ describe('onboarding — the step registry', () => {
       'intention',
       'lookingFor',
       'mbti',
+      'religion',
       'interests',
       'hobbies',
       'bio',
@@ -254,7 +270,7 @@ describe('onboarding — the step registry', () => {
 });
 
 describe('onboarding — every step blocks when blank, passes when filled', () => {
-  it('blocks all of steps 1..14 for a blank state', () => {
+  it('blocks every required step for a blank state', () => {
     for (const spec of BLOCKING_STEPS) {
       const result = validateOnboardingStep(spec.step, blankState());
       expect(result.ok, `step ${spec.step} (${spec.id}) must block`).toBe(false);
@@ -266,7 +282,7 @@ describe('onboarding — every step blocks when blank, passes when filled', () =
     }
   });
 
-  it('passes all of steps 1..14 for a complete state', () => {
+  it('passes every required step for a complete state', () => {
     for (const spec of BLOCKING_STEPS) {
       const result = validateOnboardingStep(spec.step, completeState());
       expect(
@@ -302,7 +318,7 @@ describe('onboarding — every step blocks when blank, passes when filled', () =
   });
 });
 
-describe('onboarding — step 15, the photo requirement', () => {
+describe('onboarding — the final step, the photo requirement', () => {
   it('blocks with the character-exact message unless exactly four gallery photos', () => {
     for (const photos of [[], ['a'], ['a', 'b', 'c'], ['a', 'b', 'c', 'd', 'e']]) {
       const result = validateOnboardingStep(ONBOARDING_TOTAL_STEPS, completeState({ photos }));
@@ -467,6 +483,17 @@ describe('onboarding — recommended fields never block', () => {
     expect(validateOnboardingStep(7, completeState()).missingRecommended).toEqual([]);
   });
 
+  it('lets step 15 be skipped and only hints religion when blank', () => {
+    const skipped = validateOnboardingStep(15, blankState());
+    expect(skipped.ok).toBe(true);
+    expect(skipped.problems).toEqual([]);
+    expect(skipped.missingRecommended).toEqual(['Religion']);
+
+    const answered = validateOnboardingStep(15, completeState());
+    expect(answered.ok).toBe(true);
+    expect(answered.missingRecommended).toEqual([]);
+  });
+
   it('hints nothing for steps with no recommended field', () => {
     for (const spec of BLOCKING_STEPS) {
       if (spec.recommended.length === 0) {
@@ -478,7 +505,7 @@ describe('onboarding — recommended fields never block', () => {
   });
 });
 
-describe('onboarding — step 15 delegates to the full-draft guard', () => {
+describe('onboarding — the final step delegates to the full-draft guard', () => {
   it('blocks an incomplete review state with the draft guard problems', () => {
     const result = validateOnboardingStep(ONBOARDING_TOTAL_STEPS, blankState());
     expect(result.ok).toBe(false);

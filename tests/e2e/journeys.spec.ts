@@ -149,7 +149,7 @@ const PNG_PIXEL = Buffer.from(
 const GALLERY_PNGS = [1, 2, 3, 4].map((n) => Buffer.concat([PNG_PIXEL, Buffer.from([n])]));
 
 /** The wizard starts on step 1 and reports its position in this exact format. */
-const STEP_LABEL = /Step (\d+) of 15/;
+const STEP_LABEL = /Step (\d+) of 16/;
 
 /**
  * Satisfies whichever requirement the current step enforces.
@@ -196,7 +196,7 @@ async function completeStep(page: Page, step: number): Promise<void> {
   }
 
   if (step === 8) {
-    await page.getByRole('button', { name: 'INFJ', exact: true }).click();
+    await page.getByRole('button', { name: 'Advocate (INFJ)', exact: true }).click();
     await page.getByRole('button', { name: '+ Add a prompt' }).click();
     await page.locator('select').last().selectOption('simple-pleasures');
     await page
@@ -236,10 +236,15 @@ async function completeStep(page: Page, step: number): Promise<void> {
       .getByPlaceholder(/Tell others what makes you unique/)
       .fill('Coffee, mountains and long conversations.');
   }
+
+  if (step === 15) {
+    // Religion is optional, but choosing one must round-trip to the payload.
+    await page.getByRole('button', { name: 'Hindu', exact: true }).click();
+  }
 }
 
 test.describe('§3.3 — the onboarding wizard', () => {
-  test('blocks every incomplete step, then submits a complete adult profile', async ({ page }) => {
+  test('blocks every required step, allows an optional religion, then submits', async ({ page }) => {
     await signedIn(page);
 
     const stub = await stubSupabase(page, {
@@ -277,7 +282,7 @@ test.describe('§3.3 — the onboarding wizard', () => {
     await page.getByPlaceholder('Your name or nickname').fill('Sujata');
     await expect(next).toBeEnabled();
     await next.click();
-    await expect(stepLabel).toHaveText('Step 2 of 15');
+    await expect(stepLabel).toHaveText('Step 2 of 16');
 
     // --- step 2: identity is mandatory, with no face/voice check --------------
     await expect(next).toBeDisabled();
@@ -287,7 +292,7 @@ test.describe('§3.3 — the onboarding wizard', () => {
     await page.getByRole('button', { name: 'Woman', exact: true }).click();
     await expect(next).toBeEnabled();
     await next.click();
-    await expect(stepLabel).toHaveText('Step 3 of 15');
+    await expect(stepLabel).toHaveText('Step 3 of 16');
 
     // --- step 3: the age gate ---
     await expect(page.getByText('When is your birthday?')).toBeVisible();
@@ -310,21 +315,25 @@ test.describe('§3.3 — the onboarding wizard', () => {
     await expect(next).toBeDisabled(); // city still missing
     await page.getByPlaceholder('e.g. Kathmandu, San Francisco').fill('Kathmandu');
     await next.click();
-    await expect(stepLabel).toHaveText('Step 5 of 15');
+    await expect(stepLabel).toHaveText('Step 5 of 16');
 
-    // --- steps 5..14: each one blocks until it has valid input ---
-    for (let step = 5; step <= 14; step += 1) {
-      await expect(stepLabel).toHaveText(`Step ${step} of 15`);
-      // Every step must refuse to advance while it is blank. Step 5 is the one
-      // exception in the contract: it has no blocking field beyond height.
-      await expect(next).toBeDisabled();
+    // --- steps 5..15: required steps block, religion is optional ------------
+    for (let step = 5; step <= 15; step += 1) {
+      await expect(stepLabel).toHaveText(`Step ${step} of 16`);
+      // Religion is the optional step; every other step refuses to advance
+      // while it is blank.
+      if (step === 15) {
+        await expect(next).toBeEnabled();
+      } else {
+        await expect(next).toBeDisabled();
+      }
 
       await completeStep(page, step);
       await next.click();
-      await expect(stepLabel).toHaveText(`Step ${step + 1} of 15`);
+      await expect(stepLabel).toHaveText(`Step ${step + 1} of 16`);
     }
 
-    // --- step 15: photos must be uploaded before submit ---------------------
+    // --- step 16: photos must be uploaded before submit ---------------------
     await expect(page.getByText('Add your photos & finish')).toBeVisible();
     const submit = page.getByRole('button', { name: /Complete & Launch/ });
     await expect(submit).toBeDisabled();
@@ -358,12 +367,13 @@ test.describe('§3.3 — the onboarding wizard', () => {
     await expect
       .poll(() => stub.writes.filter((write) => write.table === 'profiles').length)
       .toBeGreaterThan(0);
+    await expect.poll(() => new URL(page.url()).pathname).toBe('/discover');
 
     const write = stub.writes.find((entry) => entry.table === 'profiles');
     const payload = write?.body as Record<string, unknown>;
 
     // The persisted age is an ADULT age derived from the date of birth, never a
-    // clamped value, and onboarding is marked complete in the same upsert.
+    // clamped value, and onboarding is marked complete in the same write.
     expect(payload.age).toBeGreaterThanOrEqual(18);
     expect(payload.birth_date).toBe('1998-05-04');
     expect(payload.onboarding_completed).toBe(true);
@@ -378,6 +388,7 @@ test.describe('§3.3 — the onboarding wizard', () => {
     expect(payload.gender).toBe('Woman');
     expect(payload.country).toBe('Nepal');
     expect(payload.city).toBe('Kathmandu');
+    expect(payload.religion).toBe('Hindu');
 
     // M8: the curated prompt answer travelled with the payload.
     expect(payload.prompts).toMatchObject({

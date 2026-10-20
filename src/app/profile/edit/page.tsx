@@ -13,6 +13,7 @@ import {
   type ProfileDraft,
 } from '@/lib/profile';
 import { MAX_PROMPT_ANSWER_LENGTH, loadCatalogue, type Catalogue } from '@/lib/catalogue';
+import { PERSONALITY_OPTIONS, personalityLabel } from '@/lib/personality';
 import { LOCALE_OPTIONS } from '@/lib/locales';
 import {
   FIELD_TO_STEP,
@@ -27,6 +28,7 @@ import {
   PROFILE_INTENTION_OPTIONS as INTENTIONS,
   PROFILE_LOOKING_FOR_OPTIONS,
   PROFILE_PETS_OPTIONS as PETS_OPTIONS,
+  PROFILE_RELIGION_OPTIONS,
   PROFILE_SMOKING_OPTIONS,
 } from '@/lib/profile-options';
 
@@ -46,13 +48,6 @@ const COUNTRIES = [
   "Uruguay", "Uzbekistan", "Venezuela", "Vietnam", "Yemen", "Zambia", "Zimbabwe"
 ];
 
-const MBTI_TYPES = [
-  "INTJ", "INTP", "ENTJ", "ENTP",
-  "INFJ", "INFP", "ENFJ", "ENFP",
-  "ISTJ", "ISFJ", "ESTJ", "ESFJ",
-  "ISTP", "ISFP", "ESTP", "ESFP"
-];
-
 const LANGUAGES_LIST = LOCALE_OPTIONS.map((option) => option.englishName);
 
 const PHYSICAL_ATTRS = [
@@ -60,7 +55,7 @@ const PHYSICAL_ATTRS = [
 ];
 
 const WIZARD_PROFILE_COLUMNS =
-  'id, display_name, avatar_url, photos, gender, pronouns, age, country, city, height, physical_attributes, intention, looking_for, sexual_orientation, mbti, personality, hobbies, pets, interests, prompts, smoking, drinking, exercise, education, profession, languages_spoken, bio, onboarding_completed' as const;
+  'id, display_name, avatar_url, photos, gender, pronouns, age, country, city, height, physical_attributes, intention, looking_for, sexual_orientation, mbti, personality, religion, hobbies, pets, interests, prompts, smoking, drinking, exercise, education, profession, languages_spoken, bio, onboarding_completed' as const;
 
 const MAX_PROMPT_SLOTS = 3;
 
@@ -80,6 +75,7 @@ interface FormState {
   lookingFor: string[];
   sexualOrientation: string;
   mbti: string;
+  religion: string;
   personalityTraits: string[];
   interests: string[];
   hobbies: string[];
@@ -122,6 +118,7 @@ export default function EditProfileWizardPage() {
     lookingFor: [],
     sexualOrientation: '',
     mbti: '',
+    religion: '',
     personalityTraits: [],
     interests: [],
     hobbies: [],
@@ -202,6 +199,7 @@ export default function EditProfileWizardPage() {
             lookingFor: Array.isArray(data.looking_for) ? data.looking_for : [],
             sexualOrientation: data.sexual_orientation ?? '',
             mbti: data.mbti ?? '',
+            religion: data.religion ?? '',
             personalityTraits: Array.isArray(data.personality) ? data.personality : [],
             hobbies: Array.isArray(data.hobbies) ? data.hobbies : [],
             pets: Array.isArray(data.pets) ? data.pets : [],
@@ -320,6 +318,7 @@ export default function EditProfileWizardPage() {
       lookingFor: formData.lookingFor,
       sexualOrientation: formData.sexualOrientation,
       mbti: formData.mbti,
+      religion: formData.religion,
       personality: formData.personalityTraits,
       interests: formData.interests,
       hobbies: formData.hobbies,
@@ -417,6 +416,12 @@ export default function EditProfileWizardPage() {
     pillContainer: { display: 'flex', flexWrap: 'wrap' as const, gap: '10px' },
     pill: { padding: '10px 18px', borderRadius: '20px', border: '1px solid #4A1828', backgroundColor: '#0D0A10', color: '#B58A83', cursor: 'pointer', fontSize: '13px', fontWeight: '600' },
     pillActive: { backgroundColor: '#D4B18A', color: '#17121C', border: '1px solid #D4B18A' },
+    personalityGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '10px' },
+    personalityCard: { display: 'flex', flexDirection: 'column' as const, alignItems: 'flex-start', gap: '4px', textAlign: 'left' as const, padding: '12px 14px', borderRadius: '16px', border: '1px solid #4A1828', backgroundColor: '#0D0A10', color: '#F2E9E4', cursor: 'pointer' },
+    personalityCardActive: { border: '1px solid #D4B18A', backgroundColor: 'rgba(212,177,138,0.14)' },
+    personalityName: { fontSize: '14px', fontWeight: '700', color: '#F2E9E4' },
+    personalityCode: { fontSize: '11px', fontWeight: '700', letterSpacing: '0.5px', color: '#D4B18A' },
+    personalityDescription: { fontSize: '12px', lineHeight: '1.35', color: '#B58A83' },
     footerNav: { display: 'flex', gap: '12px' },
     backBtn: { flex: 1, padding: '16px', borderRadius: '30px', backgroundColor: '#29202D', color: '#B58A83', border: 'none', fontWeight: '700', cursor: 'pointer' },
     nextBtn: { flex: 2, padding: '16px', borderRadius: '30px', backgroundColor: '#D4B18A', color: '#17121C', border: 'none', fontWeight: '700', cursor: 'pointer' },
@@ -645,12 +650,27 @@ export default function EditProfileWizardPage() {
 
             <div style={{ marginBottom: '20px' }}>
               <label style={styles.label}>MBTI Personality Type</label>
-              <div style={styles.pillContainer}>
-                {MBTI_TYPES.map((type) => (
-                  <button key={type} type="button" style={{ ...styles.pill, ...(formData.mbti === type ? styles.pillActive : {}) }} onClick={() => setFormData({ ...formData, mbti: type })}>
-                    {type}
-                  </button>
-                ))}
+              <div style={styles.personalityGrid}>
+                {PERSONALITY_OPTIONS.map((option) => {
+                  const selected = formData.mbti === option.code;
+                  return (
+                    <button
+                      key={option.code}
+                      type="button"
+                      aria-pressed={selected}
+                      aria-label={`${option.name} (${option.code})`}
+                      style={{
+                        ...styles.personalityCard,
+                        ...(selected ? styles.personalityCardActive : {}),
+                      }}
+                      onClick={() => setFormData({ ...formData, mbti: option.code })}
+                    >
+                      <span style={styles.personalityName}>{option.name}</span>
+                      <span style={styles.personalityCode}>{option.code}</span>
+                      <span style={styles.personalityDescription}>{option.description}</span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
@@ -873,6 +893,61 @@ export default function EditProfileWizardPage() {
 
         {currentStep === 15 && (
           <div>
+            <div style={styles.title}>Religion &amp; Beliefs</div>
+            <div style={styles.subtitle}>
+              This step is optional. Pick what feels right, or skip it — it never affects who
+              you can match with.
+            </div>
+
+            <div style={styles.pillContainer}>
+              {PROFILE_RELIGION_OPTIONS.map((option) => {
+                const selected = formData.religion === option;
+                return (
+                  <button
+                    key={option}
+                    type="button"
+                    aria-pressed={selected}
+                    style={{ ...styles.pill, ...(selected ? styles.pillActive : {}) }}
+                    onClick={() =>
+                      setFormData((prev) => ({
+                        ...prev,
+                        religion: prev.religion === option ? '' : option,
+                      }))
+                    }
+                  >
+                    {option}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div style={{ display: 'flex', gap: '12px', marginTop: '16px', flexWrap: 'wrap' as const }}>
+              {formData.religion && (
+                <button
+                  type="button"
+                  style={styles.escapeButton}
+                  onClick={() => setFormData((prev) => ({ ...prev, religion: '' }))}
+                >
+                  Clear selection
+                </button>
+              )}
+              <button
+                type="button"
+                style={styles.escapeButton}
+                data-testid="religion-skip"
+                onClick={() => {
+                  setFormData((prev) => ({ ...prev, religion: '' }));
+                  handleNext();
+                }}
+              >
+                Skip for now
+              </button>
+            </div>
+          </div>
+        )}
+
+        {currentStep === 16 && (
+          <div>
             <div style={styles.title}>Add your photos &amp; finish</div>
             <div style={styles.subtitle}>
               Choose one profile picture and four gallery photos for your profile.
@@ -899,7 +974,8 @@ export default function EditProfileWizardPage() {
               <div style={styles.summaryRow}><span>Age</span><span style={{ color: '#D4B18A' }}>{formData.age} years old</span></div>
               <div style={styles.summaryRow}><span>Location</span><span style={{ color: '#D4B18A' }}>{formData.city}, {formData.country}</span></div>
               <div style={styles.summaryRow}><span>Intention</span><span style={{ color: '#D4B18A' }}>{formData.intention || 'Not set'}</span></div>
-              <div style={styles.summaryRow}><span>MBTI</span><span style={{ color: '#D4B18A' }}>{formData.mbti || 'Not set'}</span></div>
+              <div style={styles.summaryRow}><span>MBTI</span><span style={{ color: '#D4B18A' }}>{personalityLabel(formData.mbti)}</span></div>
+              <div style={styles.summaryRow}><span>Religion</span><span style={{ color: '#D4B18A' }}>{formData.religion || 'Not specified'}</span></div>
               <div style={styles.summaryRow}><span>Hobbies</span><span style={{ color: '#D4B18A' }}>{formData.hobbies.join(', ') || 'None selected'}</span></div>
               <div style={styles.summaryRow}><span>Languages</span><span style={{ color: '#D4B18A' }}>{formData.languagesSpoken.join(', ') || 'None selected'}</span></div>
               <div style={styles.summaryRow}><span>Photos</span><span style={{ color: '#D4B18A' }}>{formData.photos.length} added</span></div>

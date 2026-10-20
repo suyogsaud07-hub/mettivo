@@ -23,22 +23,29 @@ const h = vi.hoisted(() => {
     tableQueue: [] as Result[],
     rpc: { data: null, error: null } as Result,
     user: { id: 'user-1' } as unknown,
+    operations: [] as string[],
+    calls: [] as { method: string; args: unknown[] }[],
     reset() {
       state.table = { data: null, error: null };
       state.tableQueue = [];
       state.rpc = { data: null, error: null };
       state.user = { id: 'user-1' };
+      state.operations = [];
+      state.calls = [];
     },
   };
 
   const makeChain = (result: Result) => {
     const chain: Record<string, unknown> = {};
-    const passthrough = () => chain;
     for (const method of [
       'select', 'insert', 'update', 'upsert', 'eq', 'neq', 'in',
       'order', 'limit', 'gte', 'lte', 'or', 'delete',
     ]) {
-      chain[method] = passthrough;
+      chain[method] = (...args: unknown[]) => {
+        state.operations.push(method);
+        state.calls.push({ method, args });
+        return chain;
+      };
     }
     chain.single = async () => result;
     chain.maybeSingle = async () => result;
@@ -332,6 +339,15 @@ describe('§3.2 — profile', () => {
     await expect(
       saveProfile({ id: 'user-1', displayName: 'Sujata', birthDate: '2015-01-01' })
     ).rejects.toThrow(/adults only/i);
+    expect(h.state.operations).toEqual([]);
+  });
+
+  it('refuses to write without an authenticated user', async () => {
+    h.state.user = null;
+    await expect(
+      saveProfile({ id: 'user-1', displayName: 'Sujata', birthDate: '1998-05-04' })
+    ).rejects.toThrow(/session has expired/i);
+    expect(h.state.operations).toEqual([]);
   });
 
   it('surfaces a save failure', async () => {
@@ -341,11 +357,94 @@ describe('§3.2 — profile', () => {
     ).rejects.toThrow(/could not save your profile/i);
   });
 
-  it('resolves on a successful save', async () => {
-    h.state.table = { data: null, error: null };
+  it('does not expose raw PostgreSQL text when permission is denied', async () => {
+    h.state.table = {
+      data: null,
+      error: { message: 'permission denied for table profiles', code: '42501' },
+    };
+
+    try {
+      await saveProfile({ id: 'user-1', displayName: 'Sujata', birthDate: '1998-05-04' });
+      expect.unreachable('save should have failed');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '';
+      expect(message).toMatch(/not permitted to write it/i);
+      expect(message).not.toMatch(/permission denied for table/i);
+    }
+  });
+
+  it('writes as the authenticated user, never a caller-supplied id', async () => {
+    h.state.table = { data: { id: 'user-1' }, error: null };
+    await saveProfile({
+      id: 'attacker-controlled-id',
+      displayName: 'Sujata',
+      birthDate: '1998-05-04',
+    });
+
+    const filter = h.state.calls.find((call) => call.method === 'eq');
+    expect(filter?.args).toEqual(['id', 'user-1']);
+  });
+
+  it('uses the authenticated id on insert too', async () => {
+    h.state.tableQueue = [
+      { data: null, error: null },
+      { data: { id: 'user-1' }, error: null },
+    ];
+    await saveProfile({
+      id: 'attacker-controlled-id',
+      displayName: 'Sujata',
+      birthDate: '1998-05-04',
+    });
+
+    const insert = h.state.calls.find((call) => call.method === 'insert');
+    const insertedRow = insert?.args[0] as Record<string, unknown> | undefined;
+    expect(insertedRow?.id).toBe('user-1');
+  });
+
+  it('updates an existing profile without using an upsert', async () => {
+    h.state.table = { data: { id: 'user-1' }, error: null };
     await expect(
       saveProfile({ id: 'user-1', displayName: 'Sujata', birthDate: '1998-05-04' })
     ).resolves.toBeUndefined();
+
+    expect(h.state.operations).toContain('update');
+    expect(h.state.operations).not.toContain('upsert');
+    expect(h.state.operations).not.toContain('insert');
+  });
+
+  it('creates the profile when no row exists and the id comes back', async () => {
+    h.state.tableQueue = [
+      { data: null, error: null },
+      { data: { id: 'user-1' }, error: null },
+    ];
+    await expect(
+      saveProfile({ id: 'user-1', displayName: 'Sujata', birthDate: '1998-05-04' })
+    ).resolves.toBeUndefined();
+
+    expect(h.state.operations).toContain('update');
+    expect(h.state.operations).toContain('insert');
+    expect(h.state.operations).not.toContain('upsert');
+  });
+
+  it('retries the update when a concurrent insert wins the race', async () => {
+    h.state.tableQueue = [
+      { data: null, error: null },
+      { data: null, error: { message: 'duplicate key', code: '23505' } },
+      { data: { id: 'user-1' }, error: null },
+    ];
+    await expect(
+      saveProfile({ id: 'user-1', displayName: 'Sujata', birthDate: '1998-05-04' })
+    ).resolves.toBeUndefined();
+  });
+
+  it('never treats a silently filtered write as success', async () => {
+    h.state.tableQueue = [
+      { data: null, error: null },
+      { data: null, error: null },
+    ];
+    await expect(
+      saveProfile({ id: 'user-1', displayName: 'Sujata', birthDate: '1998-05-04' })
+    ).rejects.toThrow(/could not save your profile/i);
   });
 });
 

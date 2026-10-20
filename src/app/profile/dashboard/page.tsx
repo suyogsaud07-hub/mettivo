@@ -11,6 +11,7 @@ import {
   PROFILE_INTENTION_OPTIONS,
   PROFILE_LOOKING_FOR_OPTIONS,
   PROFILE_PETS_OPTIONS,
+  PROFILE_RELIGION_OPTIONS,
   PROFILE_SMOKING_OPTIONS,
 } from '@/lib/profile-options';
 import {
@@ -123,7 +124,7 @@ const EDITOR_FIELDS: Record<EditableKey, FieldConfig> = {
   intention: { title: 'Intention', hint: 'What you are here for.', kind: 'select' },
   drinking: { title: 'Drinking', hint: 'Your drinking habit.', kind: 'select' },
   smoking: { title: 'Smoking', hint: 'Your smoking habit.', kind: 'select' },
-  religion: { title: 'Religion', hint: 'Optional — leave blank to hide.', kind: 'text' },
+  religion: { title: 'Religion', hint: 'Optional — leave blank to hide.', kind: 'select' },
   politics: { title: 'Politics', hint: 'Optional — leave blank to hide.', kind: 'text' },
   pets: { title: 'Pets', hint: 'How you feel about animals.', kind: 'multi' },
   personality: { title: 'Personality', hint: 'Separate traits with commas.', kind: 'tags' },
@@ -734,31 +735,56 @@ export default function ProfileDashboardPage() {
 
   const calculateCompletion = () => {
     if (!profile) return 0;
-    const fields = [
-      profile.display_name, profile.age, profile.gender, profile.city,
-      profile.country, profile.avatar_url, profile.bio, profile.intention,
-      profile.looking_for?.length, profile.hobbies?.length,
-      profile.pets?.length, profile.personality?.length,
-      profile.religion, profile.politics, profile.drinking, profile.smoking
+
+    // Count the actual profile fields, not an assumed "verified" state. Empty
+    // arrays and whitespace-only text are not progress; the optional fields
+    // still count because they are part of profile strength, not onboarding.
+    const checks = [
+      profile.display_name?.trim(),
+      profile.age,
+      profile.gender?.trim(),
+      profile.city?.trim(),
+      profile.country?.trim(),
+      profile.avatar_url?.trim(),
+      profile.bio?.trim(),
+      profile.intention?.trim(),
+      profile.looking_for?.length,
+      profile.hobbies?.length,
+      profile.pets?.length,
+      profile.personality?.length,
+      profile.religion?.trim(),
+      profile.politics?.trim(),
+      profile.drinking?.trim(),
+      profile.smoking?.trim(),
     ];
-    const filledFields = fields.filter(field => field !== null && field !== undefined && field !== '' && field !== 0).length;
-    return Math.round((filledFields / fields.length) * 100);
+    const filled = checks.filter((value) =>
+      typeof value === 'number' ? value > 0 : Boolean(value)
+    ).length;
+
+    return Math.round((filled / checks.length) * 100);
   };
 
   const completionPercentage = calculateCompletion();
 
-  if (loading) return <div style={{ minHeight: '100vh', display: 'flex', justifyContent: 'center', alignItems: 'center', backgroundColor: '#131017', color: '#D8B38A' }}>Loading Profile...</div>;
+  if (loading) {
+    return (
+      <div className="pf-page pf-skeleton" role="status" aria-live="polite">
+        <span className="pf-spinner" aria-hidden="true" />
+        <span>Loading your profile…</span>
+      </div>
+    );
+  }
 
   // A failed load gets a retry affordance instead of an endless "Redirecting"
   // message, since we deliberately do not bounce to onboarding on error.
   if (loadError) {
     return (
-      <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', gap: '16px', justifyContent: 'center', alignItems: 'center', backgroundColor: '#131017', color: '#D8B38A', padding: '24px', textAlign: 'center' }}>
-        <p style={{ margin: 0, fontSize: '14px' }}>{loadError}</p>
+      <div className="pf-page pf-load-error">
+        <p style={{ margin: 0 }}>{loadError}</p>
         <button
           type="button"
+          className="pf-btn pf-btn-primary"
           onClick={() => window.location.reload()}
-          style={{ backgroundColor: '#D8B38A', color: '#131017', padding: '12px 28px', borderRadius: '30px', fontSize: '14px', fontWeight: 700, border: 'none', cursor: 'pointer' }}
         >
           Try again
         </button>
@@ -766,88 +792,20 @@ export default function ProfileDashboardPage() {
     );
   }
 
-  // If profile is null, we are already redirecting, just show a loading state
+  // If profile is null, we are already redirecting, just show a loading state.
   if (!profile) {
-    return <div style={{ minHeight: '100vh', display: 'flex', justifyContent: 'center', alignItems: 'center', backgroundColor: '#131017', color: '#D8B38A' }}>Redirecting to onboarding...</div>;
+    return (
+      <div className="pf-page pf-skeleton" role="status" aria-live="polite">
+        <span className="pf-spinner" aria-hidden="true" />
+        <span>Redirecting to onboarding…</span>
+      </div>
+    );
   }
-
-  const styles = {
-    container: { minHeight: '100vh', backgroundColor: '#131017', color: '#EAE2F0', fontFamily: 'system-ui', paddingBottom: '100px' },
-    topBar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '20px', borderBottom: '1px solid #34283F' },
-    iconButton: { width: '40px', height: '40px', borderRadius: '50%', backgroundColor: '#211A28', border: '1px solid #34283F', display: 'flex', justifyContent: 'center', alignItems: 'center', cursor: 'pointer', color: '#EAE2F0' },
-    title: { fontSize: '18px', fontWeight: 700, color: '#EAE2F0', letterSpacing: '0.5px' },
-    heroSection: { display: 'flex', flexDirection: 'column' as const, alignItems: 'center', padding: '30px 20px' },
-    avatarContainer: { position: 'relative' as const, marginBottom: '16px' },
-    avatar: { width: '120px', height: '120px', borderRadius: '50%', objectFit: 'cover' as const, border: '3px solid #D8B38A', backgroundColor: '#34283F' },
-    onlineBadge: { position: 'absolute' as const, bottom: '5px', right: '10px', width: '20px', height: '20px', borderRadius: '50%', backgroundColor: '#34D399', border: '3px solid #131017' },
-    nameRow: { display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '4px' },
-    name: { fontSize: '26px', fontWeight: 800, color: '#EAE2F0' },
-    ageBadge: { backgroundColor: '#4A1828', color: '#D8B38A', padding: '4px 12px', borderRadius: '20px', fontSize: '14px', fontWeight: 700 },
-    location: { fontSize: '14px', color: '#B58A83', marginBottom: '16px' },
-    intentionTag: { backgroundColor: '#241C2C', color: '#D8B38A', border: '1px solid #4A1828', padding: '6px 16px', borderRadius: '20px', fontSize: '12px', fontWeight: 600 },
-    statsGrid: { display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px', padding: '0 20px', marginBottom: '24px' },
-    statCard: { backgroundColor: '#211A28', borderRadius: '16px', padding: '20px 10px', display: 'flex', flexDirection: 'column' as const, alignItems: 'center', border: '1px solid #34283F', cursor: 'pointer', transition: 'transform 0.1s' },
-    statIcon: { fontSize: '24px', marginBottom: '8px' },
-    statValue: { fontSize: '20px', fontWeight: 800, color: '#EAE2F0', marginBottom: '4px' },
-    statLabel: { fontSize: '10px', color: '#B58A83', fontWeight: 600, textTransform: 'uppercase' as const, letterSpacing: '0.5px', textAlign: 'center' as const },
-    progressCard: { margin: '0 20px 24px 20px', backgroundColor: '#211A28', borderRadius: '16px', padding: '20px', display: 'flex', alignItems: 'center', gap: '16px', border: '1px solid #34283F' },
-    progressCircle: { width: '50px', height: '50px' },
-    progressText: { flex: 1 },
-    progressTitle: { fontSize: '15px', fontWeight: 700, color: '#EAE2F0', marginBottom: '4px' },
-    progressSubtitle: { fontSize: '12px', color: '#B58A83' },
-    completeBtn: { backgroundColor: '#D8B38A', color: '#131017', padding: '10px 16px', borderRadius: '20px', fontSize: '12px', fontWeight: 700, border: 'none', cursor: 'pointer' },
-    segment: { position: 'relative' as const, display: 'flex', margin: '0 20px 24px 20px', backgroundColor: '#211A28', borderRadius: '999px', padding: '4px', border: '1px solid #34283F' },
-    segmentIndicator: { position: 'absolute' as const, top: '4px', bottom: '4px', left: '4px', width: 'calc(50% - 4px)', backgroundColor: '#D8B38A', borderRadius: '999px', transition: 'transform 0.25s ease' },
-    segmentBtn: { position: 'relative' as const, flex: 1, zIndex: 1, padding: '12px', borderRadius: '999px', border: 'none', background: 'none', fontSize: '14px', fontWeight: 700, cursor: 'pointer', transition: 'color 0.25s ease' },
-    section: { margin: '0 20px 24px 20px', backgroundColor: '#211A28', borderRadius: '20px', padding: '20px', border: '1px solid #34283F' },
-    sectionHeader: { display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' },
-    sectionIcon: { width: '32px', height: '32px', borderRadius: '10px', background: 'linear-gradient(135deg, #4A1828, #D8B38A)', display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '16px' },
-    sectionTitle: { fontSize: '16px', fontWeight: 700, color: '#EAE2F0' },
-    sectionEditBtn: { marginLeft: 'auto', background: 'none', border: '1px solid #D8B38A', color: '#D8B38A', borderRadius: '20px', padding: '6px 16px', fontSize: '12px', fontWeight: 700, cursor: 'pointer' },
-    infoRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', borderBottom: '1px solid #34283F' },
-    infoLabel: { display: 'flex', alignItems: 'center', gap: '10px', fontSize: '14px', color: '#B58A83', fontWeight: 500 },
-    infoValueButton: { display: 'flex', alignItems: 'center', gap: '8px', background: 'none', border: 'none', padding: '4px', margin: 0, cursor: 'pointer', font: 'inherit', textAlign: 'right' as const, maxWidth: '64%' },
-    infoValue: { fontSize: '14px', color: '#EAE2F0', fontWeight: 600, textAlign: 'right' as const, wordBreak: 'break-word' as const },
-    editIcon: { fontSize: '12px', opacity: 0.6, flexShrink: 0 },
-    editHint: { fontSize: '12px', color: '#B58A83', marginTop: '-8px', marginBottom: '16px' },
-    chipWrap: { display: 'flex', flexWrap: 'wrap' as const, gap: '8px' },
-    chip: { backgroundColor: '#241C2C', color: '#D8B38A', border: '1px solid #4A1828', borderRadius: '20px', padding: '8px 14px', fontSize: '13px', fontWeight: 600 },
-    emptyText: { fontSize: '13px', color: '#B58A83' },
-    bioText: { fontSize: '14px', color: '#EAE2F0', lineHeight: 1.6, margin: 0, textAlign: 'center' as const },
-    bioWrap: { display: 'flex', flexDirection: 'column' as const, alignItems: 'center', gap: '14px' },
-    bioEditBtn: { display: 'flex', alignItems: 'center', gap: '6px', background: 'none', border: '1px solid #D8B38A', color: '#D8B38A', borderRadius: '20px', padding: '6px 16px', fontSize: '12px', fontWeight: 700, cursor: 'pointer' },
-    postsHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '0 20px 16px 20px' },
-    postsHeaderTitle: { fontSize: '15px', fontWeight: 700, color: '#EAE2F0' },
-    newPostBtn: { background: 'linear-gradient(135deg, #D8B38A, #C78C8D)', color: '#131017', border: 'none', borderRadius: '20px', padding: '10px 18px', fontSize: '13px', fontWeight: 700, cursor: 'pointer' },
-    postsEmpty: { margin: '0 20px', backgroundColor: '#211A28', border: '1px dashed #4A1828', borderRadius: '20px', padding: '40px 24px', textAlign: 'center' as const, color: '#B58A83', fontSize: '14px' },
-    postsEmptyTitle: { fontSize: '16px', fontWeight: 700, color: '#EAE2F0', marginBottom: '8px' },
-    postsError: { margin: '0 20px 16px 20px', backgroundColor: '#3B1220', border: '1px solid #7F1D2E', color: '#FCA5B5', borderRadius: '14px', padding: '12px 16px', fontSize: '13px' },
-    statusPill: { display: 'flex', alignItems: 'center', gap: '8px', alignSelf: 'center', margin: '0 20px 20px 20px', padding: '8px 16px', borderRadius: '999px', backgroundColor: '#241C2C', border: '1px solid #4A1828', color: '#D8B38A', fontSize: '13px', fontWeight: 600, maxWidth: 'calc(100% - 40px)' },
-    searchWrap: { display: 'flex', alignItems: 'center', gap: '10px', margin: '0 20px 16px 20px', padding: '4px 8px 4px 14px', borderRadius: '16px', backgroundColor: '#211A28', border: '1px solid #34283F' },
-    searchIcon: { fontSize: '15px', flexShrink: 0 },
-    searchInput: { flex: 1, minWidth: 0, backgroundColor: 'transparent', border: 'none', outline: 'none', color: '#EAE2F0', fontSize: '14px', padding: '12px 0' },
-    searchClear: { width: '32px', height: '32px', borderRadius: '50%', border: 'none', backgroundColor: 'rgba(255,255,255,0.08)', color: '#EAE2F0', fontSize: '18px', cursor: 'pointer', flexShrink: 0 },
-    overlay: { position: 'fixed' as const, inset: 0, backgroundColor: 'rgba(8, 6, 10, 0.72)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 100, padding: '16px' },
-    modal: { width: '100%', maxWidth: '440px', backgroundColor: '#211A28', borderRadius: '24px', padding: '24px', border: '1px solid #34283F', marginBottom: '16px', maxHeight: '80vh', overflowY: 'auto' as const },
-    modalTitle: { fontSize: '18px', fontWeight: 700, color: '#EAE2F0', marginBottom: '4px' },
-    modalSubtitle: { fontSize: '13px', color: '#B58A83', marginBottom: '18px' },
-    modalInput: { width: '100%', backgroundColor: '#131017', border: '1px solid #34283F', borderRadius: '14px', padding: '14px', color: '#EAE2F0', fontSize: '15px', outline: 'none', boxSizing: 'border-box' as const },
-    modalTextarea: { width: '100%', backgroundColor: '#131017', border: '1px solid #34283F', borderRadius: '14px', padding: '14px', color: '#EAE2F0', fontSize: '15px', outline: 'none', boxSizing: 'border-box' as const, minHeight: '120px', resize: 'vertical' as const, fontFamily: 'inherit' },
-    optionWrap: { display: 'flex', flexWrap: 'wrap' as const, gap: '10px' },
-    optionPill: { padding: '10px 16px', borderRadius: '20px', border: '1px solid #34283F', backgroundColor: '#131017', color: '#D8B38A', fontSize: '13px', fontWeight: 600, cursor: 'pointer' },
-    optionPillActive: { backgroundColor: '#D8B38A', color: '#131017', border: '1px solid #D8B38A' },
-    modalActions: { display: 'flex', gap: '12px', marginTop: '20px' },
-    modalCancel: { flex: 1, padding: '14px', borderRadius: '16px', border: '1px solid #34283F', backgroundColor: 'transparent', color: '#B58A83', fontWeight: 700, fontSize: '14px', cursor: 'pointer' },
-    modalSave: { flex: 1, padding: '14px', borderRadius: '16px', border: 'none', background: 'linear-gradient(135deg, #D8B38A, #C78C8D)', color: '#131017', fontWeight: 700, fontSize: '14px', cursor: 'pointer' },
-    modalError: { marginTop: '12px', color: '#F0A6A6', fontSize: '13px' },
-    toast: { position: 'fixed' as const, left: '50%', bottom: '96px', transform: 'translateX(-50%)', zIndex: 110, padding: '12px 20px', borderRadius: '999px', fontSize: '13px', fontWeight: 600, boxShadow: '0 10px 30px rgba(0,0,0,0.4)', maxWidth: '90%', textAlign: 'center' as const },
-    toastSuccess: { backgroundColor: '#D8B38A', color: '#131017' },
-    toastError: { backgroundColor: '#4A1828', color: '#F2CFCF' }
-  };
 
   const radius = 20;
   const circumference = 2 * Math.PI * radius;
   const strokeDashoffset = circumference - (completionPercentage / 100) * circumference;
+  const isComplete = completionPercentage >= 100;
 
   const author: MomentAuthor = {
     id: profile.id,
@@ -871,20 +829,22 @@ export default function ProfileDashboardPage() {
         return (
           <>
             <textarea
-              style={styles.modalTextarea}
+              className="pf-textarea"
               value={textDraft}
               maxLength={MAX_BIO_LENGTH}
               onChange={(e) => setTextDraft(e.target.value)}
               placeholder="Tell others what makes you unique..."
             />
-            <p style={{ ...styles.editHint, marginTop: '8px', marginBottom: 0 }}>{textDraft.length}/{MAX_BIO_LENGTH}</p>
+            <p className="pf-detail-hint" style={{ marginTop: 8, marginBottom: 0 }}>
+              {textDraft.length}/{MAX_BIO_LENGTH}
+            </p>
           </>
         );
 
       case 'personality':
         return (
           <input
-            style={styles.modalInput}
+            className="pf-input"
             value={tagDraft}
             onChange={(e) => setTagDraft(e.target.value)}
             placeholder="e.g. Adventurous, Kind, Funny"
@@ -896,7 +856,7 @@ export default function ProfileDashboardPage() {
           <input
             type="email"
             autoComplete="email"
-            style={styles.modalInput}
+            className="pf-input"
             value={textDraft}
             onChange={(e) => setTextDraft(e.target.value)}
             placeholder="you@example.com"
@@ -908,7 +868,7 @@ export default function ProfileDashboardPage() {
           <input
             inputMode="numeric"
             autoComplete="one-time-code"
-            style={styles.modalInput}
+            className="pf-input"
             value={textDraft}
             onChange={(e) => setTextDraft(e.target.value)}
             placeholder="6-digit code"
@@ -917,7 +877,7 @@ export default function ProfileDashboardPage() {
           <input
             type="tel"
             autoComplete="tel"
-            style={styles.modalInput}
+            className="pf-input"
             value={textDraft}
             onChange={(e) => setTextDraft(e.target.value)}
             placeholder="+977 98XXXXXXXX"
@@ -931,7 +891,7 @@ export default function ProfileDashboardPage() {
             min={MIN_AGE}
             max={MAX_AGE}
             inputMode="numeric"
-            style={styles.modalInput}
+            className="pf-input"
             value={textDraft}
             onChange={(e) => setTextDraft(e.target.value)}
             placeholder="e.g. 28"
@@ -940,12 +900,13 @@ export default function ProfileDashboardPage() {
 
       case 'gender':
         return (
-          <div style={styles.optionWrap}>
+          <div className="pf-options">
             {ONBOARDING_GENDERS.map((option) => (
               <button
                 key={option}
                 type="button"
-                style={{ ...styles.optionPill, ...(textDraft === option ? styles.optionPillActive : {}) }}
+                className="pf-option"
+                aria-pressed={textDraft === option}
                 onClick={() => setTextDraft((prev) => (prev === option ? '' : option))}
               >
                 {option}
@@ -956,12 +917,13 @@ export default function ProfileDashboardPage() {
 
       case 'intention':
         return (
-          <div style={styles.optionWrap}>
+          <div className="pf-options">
             {PROFILE_INTENTION_OPTIONS.map((option) => (
               <button
                 key={option.value}
                 type="button"
-                style={{ ...styles.optionPill, ...(textDraft === option.value ? styles.optionPillActive : {}) }}
+                className="pf-option"
+                aria-pressed={textDraft === option.value}
                 onClick={() => setTextDraft((prev) => (prev === option.value ? '' : option.value))}
               >
                 {option.label}
@@ -972,12 +934,13 @@ export default function ProfileDashboardPage() {
 
       case 'drinking':
         return (
-          <div style={styles.optionWrap}>
+          <div className="pf-options">
             {PROFILE_DRINKING_OPTIONS.map((option) => (
               <button
                 key={option}
                 type="button"
-                style={{ ...styles.optionPill, ...(textDraft === option ? styles.optionPillActive : {}) }}
+                className="pf-option"
+                aria-pressed={textDraft === option}
                 onClick={() => setTextDraft((prev) => (prev === option ? '' : option))}
               >
                 {option}
@@ -988,12 +951,13 @@ export default function ProfileDashboardPage() {
 
       case 'smoking':
         return (
-          <div style={styles.optionWrap}>
+          <div className="pf-options">
             {PROFILE_SMOKING_OPTIONS.map((option) => (
               <button
                 key={option}
                 type="button"
-                style={{ ...styles.optionPill, ...(textDraft === option ? styles.optionPillActive : {}) }}
+                className="pf-option"
+                aria-pressed={textDraft === option}
                 onClick={() => setTextDraft((prev) => (prev === option ? '' : option))}
               >
                 {option}
@@ -1004,12 +968,13 @@ export default function ProfileDashboardPage() {
 
       case 'looking_for':
         return (
-          <div style={styles.optionWrap}>
+          <div className="pf-options">
             {PROFILE_LOOKING_FOR_OPTIONS.map((option) => (
               <button
                 key={option}
                 type="button"
-                style={{ ...styles.optionPill, ...(listDraft.includes(option) ? styles.optionPillActive : {}) }}
+                className="pf-option"
+                aria-pressed={listDraft.includes(option)}
                 onClick={() => toggleListDraft(option)}
               >
                 {option}
@@ -1020,12 +985,13 @@ export default function ProfileDashboardPage() {
 
       case 'pets':
         return (
-          <div style={styles.optionWrap}>
+          <div className="pf-options">
             {PROFILE_PETS_OPTIONS.map((option) => (
               <button
                 key={option}
                 type="button"
-                style={{ ...styles.optionPill, ...(listDraft.includes(option) ? styles.optionPillActive : {}) }}
+                className="pf-option"
+                aria-pressed={listDraft.includes(option)}
                 onClick={() => toggleListDraft(option)}
               >
                 {option}
@@ -1036,12 +1002,13 @@ export default function ProfileDashboardPage() {
 
       case 'hobbies':
         return (
-          <div style={styles.optionWrap}>
+          <div className="pf-options">
             {PROFILE_HOBBIES_OPTIONS.map((option) => (
               <button
                 key={option}
                 type="button"
-                style={{ ...styles.optionPill, ...(listDraft.includes(option) ? styles.optionPillActive : {}) }}
+                className="pf-option"
+                aria-pressed={listDraft.includes(option)}
                 onClick={() => toggleListDraft(option)}
               >
                 {option}
@@ -1052,18 +1019,25 @@ export default function ProfileDashboardPage() {
 
       case 'religion':
         return (
-          <input
-            style={styles.modalInput}
-            value={textDraft}
-            onChange={(e) => setTextDraft(e.target.value)}
-            placeholder="e.g. Hindu, Buddhist, Prefer not to say"
-          />
+          <div className="pf-options">
+            {PROFILE_RELIGION_OPTIONS.map((option) => (
+              <button
+                key={option}
+                type="button"
+                className="pf-option"
+                aria-pressed={textDraft === option}
+                onClick={() => setTextDraft((prev) => (prev === option ? '' : option))}
+              >
+                {option}
+              </button>
+            ))}
+          </div>
         );
 
       case 'politics':
         return (
           <input
-            style={styles.modalInput}
+            className="pf-input"
             value={textDraft}
             onChange={(e) => setTextDraft(e.target.value)}
             placeholder="e.g. Moderate, Liberal, Prefer not to say"
@@ -1076,198 +1050,316 @@ export default function ProfileDashboardPage() {
   };
 
   return (
-    <div style={styles.container}>
-      <div style={styles.topBar}>
-        <button style={styles.iconButton} onClick={() => router.back()} aria-label="Back"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M15 18l-6-6 6-6"/></svg></button>
-        <div style={styles.title}>My Profile</div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          {!viewAs && (
-            <ProfileActionMenu
-              onViewAs={() => {
-                // Entering the preview must not leave an owner editor open.
-                closeEditor();
-                setStatusOpen(false);
-                setArchiveOpen(false);
-                setSearchOpen(false);
-                setViewAs(true);
-              }}
-              onSearch={() => setSearchOpen(true)}
-              onProfileStatus={openStatus}
-              onArchive={() => setArchiveOpen(true)}
-            />
-          )}
-          {!viewAs && (
-            <button style={styles.iconButton} onClick={() => router.push('/profile/settings')} aria-label="Settings"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg></button>
-          )}
-        </div>
-      </div>
-
-      <ProfileHeader
-        displayName={profile.display_name}
-        age={profile.age ?? null}
-        gender={profile.gender}
-        city={profile.city}
-        country={profile.country}
-        avatarUrl={profile.avatar_url}
-        isOnline
-        intention={profile.intention}
-        matches={profile.matches_count}
-        following={profile.following_count}
-        followers={profile.followers_count}
-        likes={profile.profile_likes_count}
-        onStatNavigate={(key) => router.push(`/profile/stats/${key}`)}
-      />
-
-      {viewAs && <ProfileViewAsBanner onExit={() => setViewAs(false)} />}
-
-      {!viewAs && profile.status?.trim() ? (
-        <div style={styles.statusPill} data-testid="profile-status-pill">
-          <span aria-hidden>💬</span>
-          <span>{profile.status}</span>
-        </div>
-      ) : null}
-
-      {!viewAs && searchOpen && (
-        <div style={styles.searchWrap}>
-          <span aria-hidden style={styles.searchIcon}>🔍</span>
-          <input
-            style={styles.searchInput}
-            value={searchQuery}
-            onChange={(event) => setSearchQuery(event.target.value)}
-            placeholder="Search your posts by caption…"
-            aria-label="Search your posts"
-            data-testid="profile-search-input"
-            autoFocus
-          />
+    <div className="pf-page">
+      <header className="pf-topbar">
+        <div className="pf-topbar-inner">
           <button
             type="button"
-            style={styles.searchClear}
-            onClick={() => {
-              setSearchQuery('');
-              setSearchOpen(false);
-            }}
-            aria-label="Close search"
+            className="pf-icon-btn"
+            onClick={() => router.back()}
+            aria-label="Back"
           >
-            ×
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="m15 18-6-6 6-6" />
+            </svg>
           </button>
+
+          <div className="pf-title">My Profile</div>
+
+          <div className="pf-toolbar">
+            {!viewAs && (
+              <ProfileActionMenu
+                onViewAs={() => {
+                  // Entering the preview must not leave an owner editor open.
+                  closeEditor();
+                  setStatusOpen(false);
+                  setArchiveOpen(false);
+                  setSearchOpen(false);
+                  setViewAs(true);
+                }}
+                onSearch={() => setSearchOpen(true)}
+                onProfileStatus={openStatus}
+                onArchive={() => setArchiveOpen(true)}
+              />
+            )}
+            {!viewAs && (
+              <button
+                type="button"
+                className="pf-icon-btn"
+                onClick={() => router.push('/profile/settings')}
+                aria-label="Settings"
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <circle cx="12" cy="12" r="3" />
+                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" />
+                </svg>
+              </button>
+            )}
+            {viewAs && <span className="pf-toolbar-spacer" aria-hidden="true" />}
+          </div>
         </div>
-      )}
+      </header>
 
-      <div style={styles.section}>
-        <div style={styles.bioWrap}>
-          {profile.bio?.trim() ? (
-            <p style={styles.bioText}>{profile.bio}</p>
-          ) : (
-            <div style={styles.emptyText}>No bio added yet.</div>
-          )}
-          {!viewAs && (
-            <button
-              type="button"
-              onClick={() => openEditor('bio')}
-              style={styles.bioEditBtn}
-              aria-label="Edit Bio"
-              data-testid="bio-edit-button"
-            >
-              <span aria-hidden="true">✏️</span> Edit
-            </button>
-          )}
-        </div>
-      </div>
-
-      {!viewAs && (
-        <div style={styles.progressCard}>
-          <svg style={styles.progressCircle} viewBox="0 0 50 50"><circle cx="25" cy="25" r={radius} fill="none" stroke="#34283F" strokeWidth="4" /><circle cx="25" cy="25" r={radius} fill="none" stroke="#D8B38A" strokeWidth="4" strokeDasharray={circumference} strokeDashoffset={strokeDashoffset} strokeLinecap="round" transform="rotate(-90 25 25)" /><text x="25" y="28" textAnchor="middle" fill="#EAE2F0" fontSize="10" fontWeight="bold">{completionPercentage}%</text></svg>
-          <div style={styles.progressText}><div style={styles.progressTitle}>Complete your profile</div><div style={styles.progressSubtitle}>Add more info to attract matches</div></div>
-          <button style={styles.completeBtn} onClick={() => router.push('/profile/edit')}>Complete</button>
-        </div>
-      )}
-
-      <ProfileTabs active={activeTab} onChange={setActiveTab} />
-
-      {activeTab === 'feed' && (
-        <ProfileMoments
-          posts={displayedPosts}
-          author={author}
-          isOwn
-          currentUserId={profile.id}
-          loading={postsLoading}
-          error={postsError}
-          title={viewAs ? 'Posts' : 'Your Posts'}
-          action={
+      <main className="pf-content">
+        <ProfileHeader
+          displayName={profile.display_name}
+          age={profile.age ?? null}
+          gender={profile.gender}
+          city={profile.city}
+          country={profile.country}
+          avatarUrl={profile.avatar_url}
+          intention={profile.intention}
+          matches={profile.matches_count}
+          following={profile.following_count}
+          followers={profile.followers_count}
+          likes={profile.profile_likes_count}
+          onStatNavigate={(key) => router.push(`/profile/stats/${key}`)}
+          actions={
             !viewAs ? (
-              <button type="button" style={styles.newPostBtn} onClick={() => router.push('/moments')}>
-                + New Post
+              <button
+                type="button"
+                className="pf-btn pf-btn-primary"
+                onClick={() => router.push('/profile/edit')}
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M12 20h9" />
+                  <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                </svg>
+                Edit profile
               </button>
             ) : undefined
           }
-          emptyTitle={
-            normalizedQuery ? 'No matching posts' : viewAs ? 'No public posts' : 'No posts yet'
-          }
-          emptyBody={
-            normalizedQuery
-              ? 'Try a different search.'
-              : viewAs
-                ? 'Nothing you have shared is public yet.'
-                : 'Share photos, videos and updates in Moments and they will appear here.'
-          }
-          onLike={(item) => void handleLikePost(item)}
-          headerAction={
-            viewAs
-              ? undefined
-              : (post) => (
-                  <PostOptionsMenu
-                    post={post}
-                    onEditCaption={(caption) => handleEditCaption(post, caption)}
-                    onChangeVisibility={(visibility) => handleChangeVisibility(post, visibility)}
-                    onArchive={() => handleArchivePost(post)}
-                    onDelete={() => handleDeletePost(post)}
-                  />
-                )
-          }
         />
-      )}
 
-      {activeTab === 'details' && (
-        <ProfileDetails
-          data={{
-            bio: profile.bio,
-            age: profile.age ?? null,
-            gender: profile.gender,
-            looking_for: profile.looking_for,
-            intention: profile.intention,
-            drinking: profile.drinking,
-            smoking: profile.smoking,
-            religion: profile.religion,
-            politics: profile.politics,
-            pets: profile.pets,
-            personality: profile.personality,
-            hobbies: profile.hobbies,
-          }}
-          onEdit={viewAs ? undefined : openEditor}
-          contact={{ email: userEmail, phone }}
-        />
-      )}
+        {viewAs && <ProfileViewAsBanner onExit={() => setViewAs(false)} />}
+
+        {!viewAs && profile.status?.trim() ? (
+          <div className="pf-status" data-testid="profile-status-pill">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M21 12a8 8 0 0 1-8 8H5l-2 2V12a8 8 0 0 1 8-8h2a8 8 0 0 1 8 8Z" />
+            </svg>
+            <span>{profile.status}</span>
+          </div>
+        ) : null}
+
+        {!viewAs && searchOpen && (
+          <div className="pf-search">
+            <svg className="pf-search-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+              <circle cx="11" cy="11" r="7" />
+              <path d="m20 20-4-4" />
+            </svg>
+            <input
+              className="pf-input"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Search your posts by caption…"
+              aria-label="Search your posts"
+              data-testid="profile-search-input"
+              autoFocus
+            />
+            <button
+              type="button"
+              className="pf-search-clear"
+              onClick={() => {
+                setSearchQuery('');
+                setSearchOpen(false);
+              }}
+              aria-label="Close search"
+            >
+              ×
+            </button>
+          </div>
+        )}
+
+        <div className={`pf-overview${isComplete ? ' pf-overview-single' : ''}`}>
+          <section className="pf-card" aria-labelledby="profile-about-title">
+            <div className="pf-section-head">
+              <h2 className="pf-section-title" id="profile-about-title">
+                About
+              </h2>
+              {!viewAs && (
+                <button
+                  type="button"
+                  className="pf-link-btn"
+                  onClick={() => openEditor('bio')}
+                  aria-label="Edit Bio"
+                  data-testid="bio-edit-button"
+                >
+                  Edit
+                </button>
+              )}
+            </div>
+            {profile.bio?.trim() ? (
+              <p className="pf-bio">{profile.bio}</p>
+            ) : (
+              <p className="pf-muted">
+                {viewAs
+                  ? 'No bio added yet.'
+                  : 'Add a short bio so people have something to start a conversation about.'}
+              </p>
+            )}
+            {!viewAs && !profile.bio?.trim() && (
+              <div className="pf-about-actions">
+                <button
+                  type="button"
+                  className="pf-btn pf-btn-small pf-btn-quiet"
+                  onClick={() => openEditor('bio')}
+                >
+                  Add bio
+                </button>
+              </div>
+            )}
+          </section>
+
+          {!viewAs && !isComplete && (
+            <section className="pf-card pf-completion" aria-labelledby="profile-strength-title">
+              <svg
+                className="pf-ring"
+                viewBox="0 0 50 50"
+                role="img"
+                aria-label={`Profile ${completionPercentage}% complete`}
+              >
+                <circle cx="25" cy="25" r={radius} fill="none" stroke="#34283F" strokeWidth="4" />
+                <circle
+                  cx="25"
+                  cy="25"
+                  r={radius}
+                  fill="none"
+                  stroke="#D8B38A"
+                  strokeWidth="4"
+                  strokeDasharray={circumference}
+                  strokeDashoffset={strokeDashoffset}
+                  strokeLinecap="round"
+                  transform="rotate(-90 25 25)"
+                />
+                <text x="25" y="28" textAnchor="middle" fill="#EAE2F0" fontSize="10" fontWeight="bold">
+                  {completionPercentage}%
+                </text>
+              </svg>
+              <div className="pf-completion-copy">
+                <h2 className="pf-completion-title" id="profile-strength-title">
+                  Profile strength
+                </h2>
+                <p className="pf-completion-text">
+                  {completionPercentage}% complete. Add a few details to help people find you.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="pf-btn pf-btn-small pf-btn-primary"
+                onClick={() => router.push('/profile/edit')}
+              >
+                Finish
+              </button>
+            </section>
+          )}
+        </div>
+
+        <ProfileTabs active={activeTab} onChange={setActiveTab} />
+
+        {activeTab === 'feed' && (
+          <div
+            role="tabpanel"
+            id="profile-panel-feed"
+            aria-labelledby="profile-tab-feed"
+          >
+            <ProfileMoments
+              posts={displayedPosts}
+              author={author}
+              isOwn
+              currentUserId={profile.id}
+              loading={postsLoading}
+              error={postsError}
+              title={viewAs ? 'Posts' : 'Your Posts'}
+              action={
+                !viewAs ? (
+                  <button
+                    type="button"
+                    className="pf-btn pf-btn-small pf-btn-primary"
+                    onClick={() => router.push('/moments')}
+                  >
+                    New post
+                  </button>
+                ) : undefined
+              }
+              emptyTitle={
+                normalizedQuery ? 'No matching posts' : viewAs ? 'No public posts' : 'No posts yet'
+              }
+              emptyBody={
+                normalizedQuery
+                  ? 'Try a different search.'
+                  : viewAs
+                    ? 'Nothing you have shared is public yet.'
+                    : 'Share photos, videos and updates in Moments and they will appear here.'
+              }
+              onLike={(item) => void handleLikePost(item)}
+              headerAction={
+                viewAs
+                  ? undefined
+                  : (post) => (
+                      <PostOptionsMenu
+                        post={post}
+                        onEditCaption={(caption) => handleEditCaption(post, caption)}
+                        onChangeVisibility={(visibility) => handleChangeVisibility(post, visibility)}
+                        onArchive={() => handleArchivePost(post)}
+                        onDelete={() => handleDeletePost(post)}
+                      />
+                    )
+              }
+            />
+          </div>
+        )}
+
+        {activeTab === 'details' && (
+          <div
+            role="tabpanel"
+            id="profile-panel-details"
+            aria-labelledby="profile-tab-details"
+          >
+            <ProfileDetails
+              data={{
+                bio: profile.bio,
+                age: profile.age ?? null,
+                gender: profile.gender,
+                looking_for: profile.looking_for,
+                intention: profile.intention,
+                drinking: profile.drinking,
+                smoking: profile.smoking,
+                religion: profile.religion,
+                politics: profile.politics,
+                pets: profile.pets,
+                personality: profile.personality,
+                hobbies: profile.hobbies,
+              }}
+              onEdit={viewAs ? undefined : openEditor}
+              contact={{ email: userEmail, phone }}
+            />
+          </div>
+        )}
+      </main>
 
       {!viewAs && editor && editorConfig && (
         <div
-          style={styles.overlay}
+          className="pf-sheet-overlay"
           onClick={() => { if (!saving) closeEditor(); }}
         >
           <div
-            style={styles.modal}
+            className="pf-sheet"
             role="dialog"
             aria-modal="true"
-            aria-label={editorTitle}
+            aria-labelledby="profile-editor-title"
             onClick={(event) => event.stopPropagation()}
           >
-            <div style={styles.modalTitle}>{editorTitle}</div>
-            <div style={styles.modalSubtitle}>{editorHint}</div>
+            <h2 className="pf-sheet-title" id="profile-editor-title">{editorTitle}</h2>
+            <p className="pf-sheet-subtitle">{editorHint}</p>
             {renderEditorInput()}
-            {editorError && <div style={styles.modalError}>{editorError}</div>}
-            <div style={styles.modalActions}>
+            {editorError && (
+              <p className="pf-form-error" role="alert">{editorError}</p>
+            )}
+            <div className="pf-sheet-actions">
               <button
                 type="button"
-                style={styles.modalCancel}
+                className="pf-sheet-cancel"
                 onClick={closeEditor}
                 disabled={saving}
               >
@@ -1275,11 +1367,11 @@ export default function ProfileDashboardPage() {
               </button>
               <button
                 type="button"
-                style={{ ...styles.modalSave, opacity: saving ? 0.7 : 1 }}
+                className="pf-sheet-save"
                 onClick={handleSave}
                 disabled={saving}
               >
-                {saving ? 'Saving...' : 'Save'}
+                {saving ? 'Saving…' : 'Save'}
               </button>
             </div>
           </div>
@@ -1288,34 +1380,36 @@ export default function ProfileDashboardPage() {
 
       {!viewAs && statusOpen && (
         <div
-          style={styles.overlay}
+          className="pf-sheet-overlay"
           onClick={() => { if (!statusSaving) setStatusOpen(false); }}
         >
           <div
-            style={styles.modal}
+            className="pf-sheet"
             role="dialog"
             aria-modal="true"
-            aria-label="Profile status"
+            aria-labelledby="profile-status-title"
             onClick={(event) => event.stopPropagation()}
           >
-            <div style={styles.modalTitle}>Profile status</div>
-            <div style={styles.modalSubtitle}>A short headline shown under your name.</div>
+            <h2 className="pf-sheet-title" id="profile-status-title">Profile status</h2>
+            <p className="pf-sheet-subtitle">A short headline shown under your name.</p>
             <input
-              style={styles.modalInput}
+              className="pf-input"
               value={statusDraft}
               maxLength={100}
               onChange={(event) => setStatusDraft(event.target.value)}
               placeholder="e.g. Chasing sunsets 🌅"
               autoFocus
             />
-            <p style={{ ...styles.editHint, marginTop: '8px', marginBottom: 0 }}>
+            <p className="pf-detail-hint" style={{ marginTop: 8, marginBottom: 0 }}>
               {statusDraft.length}/100
             </p>
-            {statusError && <div style={styles.modalError}>{statusError}</div>}
-            <div style={styles.modalActions}>
+            {statusError && (
+              <p className="pf-form-error" role="alert">{statusError}</p>
+            )}
+            <div className="pf-sheet-actions">
               <button
                 type="button"
-                style={styles.modalCancel}
+                className="pf-sheet-cancel"
                 onClick={() => setStatusOpen(false)}
                 disabled={statusSaving}
               >
@@ -1323,7 +1417,7 @@ export default function ProfileDashboardPage() {
               </button>
               <button
                 type="button"
-                style={{ ...styles.modalSave, opacity: statusSaving ? 0.7 : 1 }}
+                className="pf-sheet-save"
                 onClick={() => void handleSaveStatus()}
                 disabled={statusSaving}
               >
@@ -1342,7 +1436,11 @@ export default function ProfileDashboardPage() {
       )}
 
       {toast && (
-        <div style={{ ...styles.toast, ...(toast.tone === 'success' ? styles.toastSuccess : styles.toastError) }}>
+        <div
+          className={`pf-toast ${toast.tone === 'success' ? 'pf-toast-success' : 'pf-toast-error'}`}
+          role="status"
+          aria-live="polite"
+        >
           {toast.message}
         </div>
       )}

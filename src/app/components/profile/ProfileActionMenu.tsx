@@ -1,19 +1,36 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
 /**
  * The "…" button in the profile top bar.
  *
  * Pure navigation: each row invokes a handler the profile page owns, so this
- * component never touches data itself. Kept separate from `PostOptionsMenu`,
- * which mutates one post.
+ * component never touches data itself.
  */
 export interface ProfileActionMenuProps {
   onViewAs: () => void;
   onSearch: () => void;
   onProfileStatus: () => void;
   onArchive: () => void;
+}
+
+function Icon({ children }: { children: ReactNode }) {
+  return (
+    <svg
+      width="19"
+      height="19"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {children}
+    </svg>
+  );
 }
 
 export default function ProfileActionMenu({
@@ -23,8 +40,13 @@ export default function ProfileActionMenu({
   onArchive,
 }: ProfileActionMenuProps) {
   const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const sheetRef = useRef<HTMLDivElement>(null);
 
-  const close = useCallback(() => setOpen(false), []);
+  const close = useCallback(() => {
+    setOpen(false);
+    triggerRef.current?.focus();
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -32,6 +54,7 @@ export default function ProfileActionMenu({
       if (event.key === 'Escape') close();
     };
     window.addEventListener('keydown', onKey);
+    sheetRef.current?.querySelector<HTMLButtonElement>('button')?.focus();
     return () => window.removeEventListener('keydown', onKey);
   }, [open, close]);
 
@@ -43,79 +66,109 @@ export default function ProfileActionMenu({
   return (
     <>
       <button
+        ref={triggerRef}
         type="button"
-        style={styles.trigger}
+        className="pf-icon-btn"
         onClick={() => setOpen(true)}
         aria-label="Profile options"
+        aria-haspopup="dialog"
         data-testid="profile-options"
       >
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-          <circle cx="5" cy="12" r="1.8" />
-          <circle cx="12" cy="12" r="1.8" />
-          <circle cx="19" cy="12" r="1.8" />
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <circle cx="5" cy="12" r="1.7" />
+          <circle cx="12" cy="12" r="1.7" />
+          <circle cx="19" cy="12" r="1.7" />
         </svg>
       </button>
 
       {open && (
-        <div style={styles.overlay} onClick={close}>
+        <div className="pf-sheet-overlay" onClick={close}>
           <div
-            style={styles.sheet}
+            ref={sheetRef}
+            className="pf-sheet"
             role="dialog"
             aria-modal="true"
-            aria-label="Profile options"
+            aria-labelledby="profile-options-title"
             onClick={(event) => event.stopPropagation()}
           >
-            <div style={styles.title}>Profile options</div>
+            <h2 className="pf-sheet-title" id="profile-options-title">
+              Profile options
+            </h2>
+            <p className="pf-sheet-subtitle">Manage how your profile appears and behaves.</p>
+
             <button
               type="button"
-              style={styles.row}
+              className="pf-menu-row"
               onClick={() => choose(onViewAs)}
               data-testid="profile-view-as"
             >
-              <span style={styles.rowIcon}>👁️</span>
-              <span style={styles.rowLabel}>
-                View As
-                <span style={styles.rowHint}>See your profile the way a visitor does</span>
+              <span className="pf-menu-icon">
+                <Icon>
+                  <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z" />
+                  <circle cx="12" cy="12" r="2.6" />
+                </Icon>
               </span>
-            </button>
-            <button
-              type="button"
-              style={styles.row}
-              onClick={() => choose(onSearch)}
-              data-testid="profile-search"
-            >
-              <span style={styles.rowIcon}>🔍</span>
-              <span style={styles.rowLabel}>
-                Search
-                <span style={styles.rowHint}>Find a post by its caption</span>
-              </span>
-            </button>
-            <button
-              type="button"
-              style={styles.row}
-              onClick={() => choose(onProfileStatus)}
-              data-testid="profile-status"
-            >
-              <span style={styles.rowIcon}>💬</span>
-              <span style={styles.rowLabel}>
-                Profile status
-                <span style={styles.rowHint}>Set a short headline</span>
-              </span>
-            </button>
-            <button
-              type="button"
-              style={styles.row}
-              onClick={() => choose(onArchive)}
-              data-testid="profile-archive"
-            >
-              <span style={styles.rowIcon}>📦</span>
-              <span style={styles.rowLabel}>
-                Archive
-                <span style={styles.rowHint}>Hidden posts — restore or delete them</span>
+              <span className="pf-menu-copy">
+                <span>View as visitor</span>
+                <span className="pf-menu-hint">See your profile the way a visitor does</span>
               </span>
             </button>
 
-            <button type="button" style={styles.cancel} onClick={close}>
+            <button
+              type="button"
+              className="pf-menu-row"
+              onClick={() => choose(onSearch)}
+              data-testid="profile-search"
+            >
+              <span className="pf-menu-icon">
+                <Icon>
+                  <circle cx="11" cy="11" r="7" />
+                  <path d="m20 20-4-4" />
+                </Icon>
+              </span>
+              <span className="pf-menu-copy">
+                <span>Search posts</span>
+                <span className="pf-menu-hint">Find a post by its caption</span>
+              </span>
+            </button>
+
+            <button
+              type="button"
+              className="pf-menu-row"
+              onClick={() => choose(onProfileStatus)}
+              data-testid="profile-status"
+            >
+              <span className="pf-menu-icon">
+                <Icon>
+                  <path d="M21 12a8 8 0 0 1-8 8H5l-2 2V12a8 8 0 0 1 8-8h2a8 8 0 0 1 8 8Z" />
+                  <path d="M8 11h8M8 15h5" />
+                </Icon>
+              </span>
+              <span className="pf-menu-copy">
+                <span>Profile status</span>
+                <span className="pf-menu-hint">Set a short headline</span>
+              </span>
+            </button>
+
+            <button
+              type="button"
+              className="pf-menu-row"
+              onClick={() => choose(onArchive)}
+              data-testid="profile-archive"
+            >
+              <span className="pf-menu-icon">
+                <Icon>
+                  <path d="M4 7h16v13H4z" />
+                  <path d="M3 4h18v3H3zM9 11h6" />
+                </Icon>
+              </span>
+              <span className="pf-menu-copy">
+                <span>Archive</span>
+                <span className="pf-menu-hint">Hidden posts — restore or delete them</span>
+              </span>
+            </button>
+
+            <button type="button" className="pf-sheet-cancel pf-menu-close" onClick={close}>
               Close
             </button>
           </div>
@@ -124,70 +177,3 @@ export default function ProfileActionMenu({
     </>
   );
 }
-
-const styles = {
-  trigger: {
-    width: '40px',
-    height: '40px',
-    borderRadius: '50%',
-    backgroundColor: '#211A28',
-    border: '1px solid #34283F',
-    display: 'flex',
-    justifyContent: 'center',
-    alignItems: 'center',
-    cursor: 'pointer',
-    color: '#EAE2F0',
-  },
-  overlay: {
-    position: 'fixed' as const,
-    inset: 0,
-    backgroundColor: 'rgba(8, 6, 10, 0.72)',
-    display: 'flex',
-    alignItems: 'flex-end',
-    justifyContent: 'center',
-    zIndex: 120,
-    padding: '16px',
-  },
-  sheet: {
-    width: '100%',
-    maxWidth: '440px',
-    backgroundColor: '#211A28',
-    borderRadius: '24px',
-    padding: '20px',
-    border: '1px solid #34283F',
-    marginBottom: '16px',
-    maxHeight: '80vh',
-    overflowY: 'auto' as const,
-  },
-  title: { fontSize: '17px', fontWeight: 700, color: '#EAE2F0', marginBottom: '12px' },
-  row: {
-    width: '100%',
-    display: 'flex',
-    alignItems: 'center',
-    gap: '14px',
-    padding: '14px 12px',
-    borderRadius: '14px',
-    border: 'none',
-    background: 'none',
-    color: '#EAE2F0',
-    fontSize: '15px',
-    fontWeight: 600,
-    cursor: 'pointer',
-    textAlign: 'left' as const,
-  },
-  rowIcon: { fontSize: '18px', width: '24px', textAlign: 'center' as const },
-  rowLabel: { display: 'flex', flexDirection: 'column' as const, gap: '2px', flex: 1 },
-  rowHint: { fontSize: '12px', color: '#B58A83', fontWeight: 500 },
-  cancel: {
-    width: '100%',
-    marginTop: '12px',
-    padding: '14px',
-    borderRadius: '16px',
-    border: '1px solid #34283F',
-    backgroundColor: 'transparent',
-    color: '#B58A83',
-    fontWeight: 700,
-    fontSize: '14px',
-    cursor: 'pointer',
-  },
-};
