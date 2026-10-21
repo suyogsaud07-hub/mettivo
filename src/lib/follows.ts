@@ -148,9 +148,9 @@ export async function fetchMyFollowingIds(): Promise<Set<string>> {
 /**
  * The match id shared with `targetUserId`, or `null` when there is none.
  *
- * A match is a cross-gender connection (a reciprocal follow or a mutual like),
- * and it is the only thing that unlocks messaging. `matches` is RLS-scoped to
- * its participants, so a failure simply means "not connected"; the public
+ * A match is a reciprocal cross-gender follow (M23) and it is the only thing
+ * that unlocks messaging. Likes never create matches. `matches` is RLS-scoped
+ * to its participants, so a failure simply means "not connected"; the public
  * profile uses `null` to offer a follow instead of a chat.
  */
 export async function findMatchId(targetUserId: string): Promise<string | null> {

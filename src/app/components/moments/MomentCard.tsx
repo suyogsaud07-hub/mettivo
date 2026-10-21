@@ -12,6 +12,8 @@ import {
 } from '@/lib/moments';
 import { formatCount, formatDuration, resolveMediaType } from '@/lib/media';
 import { ReportButton } from '@/app/components/moderation/ReportButton';
+import FollowButton from '@/app/components/profile/FollowButton';
+import ProfileLink from '@/app/components/profile/ProfileLink';
 import CommentSheet from './CommentSheet';
 
 /**
@@ -36,7 +38,13 @@ export interface MomentCardProps {
   /** Hides the Follow button unconditionally (the profile Posts tab). */
   isOwn?: boolean;
   onLike: (post: MomentFeedRow) => void;
+  /** Optimistic save toggle; the parent owns the flag and count. */
+  onSave?: (post: MomentFeedRow) => void;
+  /** Requests an authorised download; the server decides, not this button. */
+  onDownload?: (post: MomentFeedRow) => void;
   onFollow?: (authorId: string) => void;
+  /** `reel` renders a tall 9:16 player; `post` keeps the square/feed media. */
+  variant?: 'post' | 'reel';
   /**
    * Trailing slot in the card header, used by the owner's profile to mount the
    * per-post options menu. Kept as a slot so the card stays unaware of profile
@@ -57,12 +65,16 @@ export default function MomentCard({
   currentUserId,
   isOwn = false,
   onLike,
+  onSave,
+  onDownload,
   onFollow,
+  variant = 'post',
   headerAction,
 }: MomentCardProps) {
   const mediaUrl = post.media[0];
   const mediaType = resolveMediaType(post.media_type, mediaUrl);
   const isVideo = mediaType === 'video' && !!mediaUrl;
+  const isReel = variant === 'reel' || post.content_kind === 'reel';
 
   const [viewingMedia, setViewingMedia] = useState<string | null>(null);
   const [commentOpen, setCommentOpen] = useState(false);
@@ -231,7 +243,7 @@ export default function MomentCard({
     }
   };
 
-  const showFollow = !isOwn && !!onFollow && post.author_id !== currentUserId;
+  const showFollow = !isOwn && post.author_id !== currentUserId;
   const caption = post.caption ?? '';
   const captionTruncated = caption.length > CAPTION_PREVIEW_CHARS;
   const captionText =
@@ -242,12 +254,18 @@ export default function MomentCard({
   return (
     <div ref={cardRef} style={styles.postCard}>
       <div style={styles.postHeader}>
-        {author.avatarUrl ? (
-          <img src={author.avatarUrl} alt={author.displayName} style={styles.avatar} />
-        ) : (
-          <div style={styles.avatarFallback}>{genderIcon(author.gender)}</div>
-        )}
-        <div style={styles.postUserInfo}>
+        <ProfileLink userId={author.id} label={`View ${author.displayName}'s profile`}>
+          {author.avatarUrl ? (
+            <img src={author.avatarUrl} alt={author.displayName} style={styles.avatar} />
+          ) : (
+            <div style={styles.avatarFallback}>{genderIcon(author.gender)}</div>
+          )}
+        </ProfileLink>
+        <ProfileLink
+          userId={author.id}
+          label={`View ${author.displayName}'s profile`}
+          style={styles.postUserInfo}
+        >
           <div style={styles.nameRow}>
             <span style={styles.flag}>{countryFlag(author.country)}</span>
             <span style={styles.name}>{author.displayName}</span>
@@ -256,17 +274,16 @@ export default function MomentCard({
           <div style={styles.activeNow}>
             {isOwn && post.visibility !== 'public'
               ? `${post.visibility === 'only_me' ? '🔒' : '👥'} ${MOMENT_VISIBILITY_LABELS[post.visibility]}`
-              : 'Active now'}
+              : isReel
+                ? 'Reel'
+                : 'Shared a Moment'}
           </div>
-        </div>
+        </ProfileLink>
         {showFollow && (
-          <button
-            type="button"
-            style={styles.followBtn}
-            onClick={() => onFollow?.(post.author_id)}
-          >
-            Follow
-          </button>
+          <FollowButton
+            targetUserId={post.author_id}
+            onChange={() => onFollow?.(post.author_id)}
+          />
         )}
         {headerAction}
       </div>
@@ -288,7 +305,13 @@ export default function MomentCard({
 
       {post.media.length > 0 && (
         <div
-          style={post.media.length === 1 ? styles.singleMediaWrap : styles.mediaGrid}
+          style={
+            isReel
+              ? styles.reelWrap
+              : post.media.length === 1
+                ? styles.singleMediaWrap
+                : styles.mediaGrid
+          }
           onClick={handleMediaTap}
         >
           {isVideo ? (
@@ -296,7 +319,7 @@ export default function MomentCard({
               <video
                 ref={videoRef}
                 src={mediaUrl}
-                style={styles.singleMedia}
+                style={isReel ? styles.reelMedia : styles.singleMedia}
                 loop
                 muted={muted}
                 playsInline
@@ -389,6 +412,43 @@ export default function MomentCard({
           {formatCount(shares)}
         </button>
 
+        {onSave && (
+          <button
+            type="button"
+            style={{ ...styles.actionBtn, ...(post.saved_by_me ? styles.actionBtnSaved : {}) }}
+            onClick={() => onSave(post)}
+            aria-label={post.saved_by_me ? 'Remove from saved' : 'Save'}
+            aria-pressed={post.saved_by_me}
+          >
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill={post.saved_by_me ? 'currentColor' : 'none'}
+              stroke="currentColor"
+              strokeWidth="2"
+            >
+              <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path>
+            </svg>
+            {post.save_count > 0 ? formatCount(post.save_count) : ''}
+          </button>
+        )}
+
+        {onDownload && (post.allow_downloads || isOwn) && (
+          <button
+            type="button"
+            style={styles.actionBtn}
+            onClick={() => onDownload(post)}
+            aria-label="Download"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="7 10 12 15 17 10"></polyline>
+              <line x1="12" y1="15" x2="12" y2="3"></line>
+            </svg>
+          </button>
+        )}
+
         {!isOwn && post.author_id !== currentUserId && (
           <ReportButton
             targetUserId={post.author_id}
@@ -457,6 +517,8 @@ const styles = {
   caption: { fontSize: '14px', color: '#EAE2F0', lineHeight: 1.5, whiteSpace: 'pre-wrap' as const, overflowWrap: 'anywhere' as const },
   moreBtn: { background: 'none', border: 'none', color: '#B58A83', fontSize: '13px', fontWeight: 700, cursor: 'pointer', padding: '0 4px' },
   singleMediaWrap: { position: 'relative' as const, padding: '0 16px' },
+  reelWrap: { position: 'relative' as const, margin: '0 16px', borderRadius: '12px', overflow: 'hidden' as const, backgroundColor: '#0B0910' },
+  reelMedia: { width: '100%', aspectRatio: '9/16', maxHeight: '78vh', objectFit: 'cover' as const, backgroundColor: '#0B0910', cursor: 'pointer', display: 'block', margin: '0 auto' },
   mediaGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2px', position: 'relative' as const },
   mediaItem: { width: '100%', aspectRatio: '1/1', objectFit: 'cover' as const, backgroundColor: '#34283F', cursor: 'pointer' },
   singleMedia: { width: '100%', maxHeight: '460px', objectFit: 'cover' as const, backgroundColor: '#0B0910', cursor: 'pointer', display: 'block', borderRadius: '12px' },
@@ -467,6 +529,7 @@ const styles = {
   actionBar: { display: 'flex', alignItems: 'center', gap: '18px', padding: '16px', flexWrap: 'wrap' as const },
   actionBtn: { display: 'flex', alignItems: 'center', gap: '6px', background: 'none', border: 'none', color: '#B58A83', fontSize: '14px', fontWeight: 600, cursor: 'pointer' },
   actionBtnLiked: { color: '#EF4444' },
+  actionBtnSaved: { color: '#D8B38A' },
   viewsChip: { display: 'flex', alignItems: 'center', gap: '6px', color: '#7C6F86', fontSize: '14px', fontWeight: 600, marginLeft: 'auto' },
   notice: { fontSize: '12px', color: '#D8B38A', fontWeight: 600 },
   lightbox: { position: 'fixed' as const, inset: 0, backgroundColor: 'rgba(8, 6, 10, 0.94)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, padding: '20px' },

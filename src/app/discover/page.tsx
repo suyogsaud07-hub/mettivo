@@ -6,10 +6,11 @@ import { useRouter } from 'next/navigation';
 import MobileNav from '../components/layout/MobileNav';
 import IntentionBadge from '../components/profile/IntentionBadge';
 import FollowButton from '../components/profile/FollowButton';
+import ProfileLink from '../components/profile/ProfileLink';
 import { recordLike, LikeError } from '@/lib/likes';
-import { fetchMyFollowingIds } from '@/lib/follows';
 import { blockMember, BlockingError } from '@/lib/blocking';
 import { fetchDiscoveryCandidates, rankDiscovery } from '@/lib/discovery';
+import { gendersForLookingFor } from '@/lib/dating-preferences';
 
 interface Profile {
   id: string;
@@ -57,13 +58,12 @@ export default function DiscoverPage() {
   const [decisionPending, setDecisionPending] = useState<string | null>(null);
   const [matchNotice, setMatchNotice] = useState<{ name: string } | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [followingIds, setFollowingIds] = useState<Set<string>>(new Set());
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
 
   // NOTE: `loading` already defaults to true, so this must not set it
   // synchronously — doing so inside the mount effect causes a cascading render.
-  const loadOnlineProfiles = async () => {
+  const loadOnlineProfiles = async (genderFilter?: string[], applyPreferences = false) => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) { router.push('/auth'); return; }
 
@@ -72,7 +72,7 @@ export default function DiscoverPage() {
     // rather than for a generic one.
     const { data: profileCheck } = await supabase
       .from('profiles')
-      .select('onboarding_completed, intention, interests, prompts')
+      .select('onboarding_completed, gender, intention, interests, prompts, looking_for')
       .eq('id', user.id)
       .single();
 
@@ -80,6 +80,16 @@ export default function DiscoverPage() {
       router.push('/profile');
       return;
     }
+
+    const savedPreferences = Array.isArray(profileCheck.looking_for)
+      ? profileCheck.looking_for
+      : [];
+    const preferredGenders = gendersForLookingFor(savedPreferences);
+    const effectiveGenders = applyPreferences
+      ? preferredGenders
+      : (genderFilter ?? selectedGenders);
+
+    if (applyPreferences) setSelectedGenders(preferredGenders);
 
     try {
       // M12: eligibility is decided by `discover_profiles()` in PostgreSQL --
@@ -89,19 +99,21 @@ export default function DiscoverPage() {
       const candidates = await fetchDiscoveryCandidates({
         minAge,
         maxAge,
-        genders: selectedGenders,
-        onlineOnly: true,
+        genders: effectiveGenders,
+        onlineOnly: false,
         limit: 50,
       });
 
       const me = {
         id: user.id,
+        gender: typeof profileCheck.gender === 'string' ? profileCheck.gender : null,
         intention: typeof profileCheck.intention === 'string' ? profileCheck.intention : null,
         interests: Array.isArray(profileCheck.interests) ? profileCheck.interests : [],
         promptAnswers:
           typeof profileCheck.prompts === 'object' && profileCheck.prompts !== null
             ? (profileCheck.prompts as Record<string, string>)
             : {},
+        lookingFor: savedPreferences,
       };
 
       const ranked = rankDiscovery(me, candidates, { limit: 50 });
@@ -120,10 +132,6 @@ export default function DiscoverPage() {
           is_online: profile.online,
         }))
       );
-
-      // Hydrate the per-card Follow state so an already-followed member is not
-      // mislabelled "Follow" on every load.
-      setFollowingIds(await fetchMyFollowingIds());
     } catch (err) {
       console.error('[discover] failed to load candidates:', err);
       setActionError(
@@ -138,7 +146,7 @@ export default function DiscoverPage() {
   // `loadOnlineProfiles` only calls setState after an `await`, so this is a
   // one-shot mount fetch, not a synchronous setState that cascades renders.
   // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => { void loadOnlineProfiles(); }, []);
+  useEffect(() => { void loadOnlineProfiles(undefined, true); }, []);
 
   const toggleGender = (gender: string) => {
     setSelectedGenders(prev => prev.includes(gender) ? prev.filter(g => g !== gender) : [...prev, gender]);
@@ -215,7 +223,7 @@ export default function DiscoverPage() {
   const handleApplyFilters = () => {
     setIsFilterOpen(false);
     setLoading(true);
-    void loadOnlineProfiles();
+    void loadOnlineProfiles(selectedGenders);
   };
 
   const startRecording = async () => {
@@ -333,11 +341,11 @@ export default function DiscoverPage() {
       </div>
 
       {loading ? (
-        <div style={{ textAlign: 'center', marginTop: '40px', color: '#B58A83' }}>Finding people online...</div>
+        <div style={{ textAlign: 'center', marginTop: '40px', color: '#B58A83' }}>Finding people for you...</div>
       ) : profiles.length === 0 ? (
         <div style={styles.emptyState}>
           <div style={{ fontSize: '50px', marginBottom: '16px' }}>🫥</div>
-          <div style={styles.emptyTitle}>No one is online right now</div>
+          <div style={styles.emptyTitle}>No one to discover right now</div>
           <div style={styles.emptySubtitle}>Try adjusting your filters or check back later.</div>
           <button style={{ backgroundColor: '#D4B18A', color: '#17121C', padding: '14px 24px', borderRadius: '20px', border: 'none', fontWeight: '700', cursor: 'pointer' }} onClick={() => setIsFilterOpen(true)}>Adjust Filters</button>
         </div>
@@ -345,19 +353,19 @@ export default function DiscoverPage() {
         <div style={styles.listContainer}>
           {profiles.map((profile) => (
             <div key={profile.id} style={styles.listItem}>
-              <div style={styles.avatarWrapper} onClick={() => router.push(`/profile/${profile.id}`)}>
+              <ProfileLink userId={profile.id} label={`View ${profile.display_name}'s profile`} style={styles.avatarWrapper}>
                 {profile.avatar_url ? <img src={profile.avatar_url} alt={profile.display_name} style={styles.avatar} /> : <div style={{ ...styles.avatar, display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '24px' }}>👤</div>}
-                <div style={styles.onlineDot} />
-              </div>
-              <div style={styles.infoWrapper} onClick={() => router.push(`/profile/${profile.id}`)}>
+                {profile.is_online && <span style={styles.onlineDot} aria-label="Online" title="Online" />}
+              </ProfileLink>
+              <ProfileLink userId={profile.id} label={`View ${profile.display_name}'s profile`} style={styles.infoWrapper}>
                 <div style={styles.nameRow}><span style={styles.flag}>{getCountryFlag(profile.country)}</span><span style={styles.name}>{profile.display_name}</span><span style={styles.genderIcon}>{getGenderIcon(profile.gender)}</span></div>
                 {profile.username ? <div style={styles.username}>@{profile.username}</div> : null}
                 <IntentionBadge intention={profile.intention} />
-              </div>
+              </ProfileLink>
 
               {/* M10: like / pass. M18: follow, without leaving the feed. */}
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <FollowButton targetUserId={profile.id} initialFollowing={followingIds.has(profile.id)} />
+                <FollowButton targetUserId={profile.id} />
                 <button
                   type="button"
                   aria-label={`Pass on ${profile.display_name}`}

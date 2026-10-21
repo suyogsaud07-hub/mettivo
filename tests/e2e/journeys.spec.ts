@@ -272,6 +272,7 @@ test.describe('§3.3 — the onboarding wizard', () => {
         // The wizard prefills the date of birth through this owner-only RPC,
         // because `profiles.birth_date` is revoked for every role.
         my_birth_date: null,
+        check_username_available: true,
       },
     });
 
@@ -436,8 +437,10 @@ test.describe('§3.3 — discovery and blocking', () => {
 
     await page.goto('/discover');
 
-    // The mocked candidate is rendered from the `discover_profiles` RPC.
-    await expect(page.getByText('Bo')).toBeVisible();
+    // The mocked candidate is rendered from the `discover_profiles` RPC, with
+    // the display name and the separate @username handle.
+    await expect(page.getByText('Bo', { exact: true })).toBeVisible();
+    await expect(page.getByText('@bo_karki', { exact: true })).toBeVisible();
 
     // Open the card menu (the button carrying the three-dot SVG) and block.
     await page.locator('button:has(svg circle)').first().click();
@@ -450,6 +453,7 @@ test.describe('§3.3 — discovery and blocking', () => {
       .toBe(true);
 
     // ...and the member is gone from the feed.
-    await expect(page.getByText('Bo')).toHaveCount(0);
+    await expect(page.getByText('Bo', { exact: true })).toHaveCount(0);
+    await expect(page.getByText('@bo_karki', { exact: true })).toHaveCount(0);
   });
 });

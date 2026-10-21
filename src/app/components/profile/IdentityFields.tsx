@@ -12,7 +12,7 @@ import {
   validateUsername,
 } from '@/lib/identity';
 
-type Availability = 'idle' | 'checking' | 'available' | 'taken' | 'error';
+type Availability = 'idle' | 'invalid' | 'checking' | 'available' | 'taken' | 'error';
 
 export interface IdentityFieldsProps {
   firstName: string;
@@ -48,7 +48,10 @@ export default function IdentityFields({
   disabled = false,
 }: IdentityFieldsProps) {
   const ids = useId();
-  const [availability, setAvailability] = useState<Availability>('idle');
+  const [check, setCheck] = useState<{
+    username: string;
+    status: Exclude<Availability, 'idle' | 'checking'>;
+  } | null>(null);
   const requestId = useRef(0);
 
   const normalized = normalizeUsername(username);
@@ -56,22 +59,25 @@ export default function IdentityFields({
   const isCurrent = Boolean(
     currentUsername && normalized && normalized === normalizeUsername(currentUsername)
   );
+  const shouldCheck = Boolean(username.trim()) && !localProblem && !isCurrent;
+  const availability: Availability = !username.trim()
+    ? 'idle'
+    : localProblem
+      ? 'invalid'
+      : isCurrent
+        ? 'available'
+        : check?.username === normalized
+          ? check.status
+          : shouldCheck
+            ? 'checking'
+            : 'idle';
 
   useEffect(() => {
     requestId.current += 1;
     const id = requestId.current;
 
-    if (!username.trim() || localProblem) {
-      setAvailability('idle');
-      return;
-    }
+    if (!shouldCheck) return;
 
-    if (isCurrent) {
-      setAvailability('available');
-      return;
-    }
-
-    setAvailability('checking');
     const timer = window.setTimeout(() => {
       void (async () => {
         try {
@@ -83,15 +89,15 @@ export default function IdentityFields({
 
           if (error) {
             console.error('[identity] username availability failed:', error.message);
-            setAvailability('error');
+            setCheck({ username: normalized, status: 'error' });
             return;
           }
 
-          setAvailability(data === true ? 'available' : 'taken');
+          setCheck({ username: normalized, status: data === true ? 'available' : 'taken' });
         } catch (error) {
           if (requestId.current !== id) return;
           console.error('[identity] username availability threw:', error);
-          setAvailability('error');
+          setCheck({ username: normalized, status: 'error' });
         }
       })();
     }, 400);
@@ -99,7 +105,7 @@ export default function IdentityFields({
     return () => {
       window.clearTimeout(timer);
     };
-  }, [username, normalized, localProblem, isCurrent]);
+  }, [normalized, shouldCheck]);
 
   const availabilityMessage =
     availability === 'checking'
@@ -113,6 +119,14 @@ export default function IdentityFields({
           : availability === 'error'
             ? 'We could not check availability. You can still save; the server will confirm it.'
             : null;
+
+  const statusMessage = localProblem
+    ? username.trim()
+      ? localProblem
+      : 'Choose a unique username.'
+    : availabilityMessage;
+  const statusIsError =
+    availability === 'invalid' || availability === 'taken' || availability === 'error';
 
   return (
     <div className="pf-identity-fields">
@@ -195,10 +209,10 @@ export default function IdentityFields({
         <p
           id={`${ids}-username-status`}
           className={`pf-username-status pf-username-${availability}`}
-          role={availability === 'taken' || availability === 'error' ? 'alert' : 'status'}
+          role={statusIsError ? 'alert' : 'status'}
           aria-live="polite"
         >
-          {localProblem ?? availabilityMessage ?? '\u00a0'}
+          {statusMessage ?? '\u00a0'}
         </p>
       </div>
     </div>

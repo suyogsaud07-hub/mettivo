@@ -96,7 +96,7 @@ import {
   setMomentVisibility,
   updateMomentCaption,
 } from '@/lib/moments';
-import { fetchPublicProfile } from '@/lib/public-profiles';
+import { fetchPublicIdentities, fetchPublicProfile } from '@/lib/public-profiles';
 import { isMissingColumnError, isMissingRelationError } from '@/lib/postgrest-errors';
 
 beforeEach(() => {
@@ -667,6 +667,54 @@ describe('§3.2 — schema drift does not blank a profile surface', () => {
       following_count: 0,
       matches_count: 0,
       profile_likes_count: 0,
+    });
+  });
+
+  it('loads list identities through the allow-listed public view', async () => {
+    h.state.table = {
+      data: [
+        {
+          id: 'user-2',
+          first_name: 'Sujata',
+          last_name: 'Saud',
+          has_last_name: true,
+          username: 'sujata',
+          display_name: 'Sujata Saud',
+          avatar_url: null,
+        },
+      ],
+      error: null,
+    };
+
+    const identities = await fetchPublicIdentities(['user-2', 'user-2', '']);
+    expect(identities.get('user-2')).toMatchObject({
+      display_name: 'Sujata Saud',
+      username: 'sujata',
+    });
+    expect(h.state.calls.some((call) => call.method === 'in')).toBe(true);
+  });
+
+  it('falls back to display_name when the split identity columns are not live yet', async () => {
+    h.state.tableQueue = [
+      {
+        data: null,
+        error: { message: 'column public_profiles.username does not exist', code: '42703' },
+      },
+      {
+        data: [{ id: 'user-2', display_name: 'Sujata', avatar_url: null }],
+        error: null,
+      },
+    ];
+
+    const identities = await fetchPublicIdentities(['user-2']);
+    expect(identities.get('user-2')).toEqual({
+      id: 'user-2',
+      display_name: 'Sujata',
+      avatar_url: null,
+      first_name: null,
+      last_name: null,
+      has_last_name: null,
+      username: null,
     });
   });
 });

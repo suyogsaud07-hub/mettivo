@@ -56,7 +56,23 @@ test.describe('§M26 — receipts and disappearing chats', () => {
   test('renders delivered and seen ticks from the database, not a guess', async ({ page }) => {
     await signedIn(page);
     await stubSupabase(page, {
-      tables: { messages: MESSAGES, chat_media: [], chat_settings: [], user_preferences: [] },
+      tables: {
+        messages: MESSAGES,
+        chat_media: [],
+        chat_settings: [],
+        user_preferences: [],
+        public_profiles: [
+          {
+            id: E2E_OTHER_USER_ID,
+            first_name: 'Bo',
+            last_name: 'Karki',
+            has_last_name: true,
+            username: 'bo_karki',
+            display_name: 'Bo Karki',
+            avatar_url: null,
+          },
+        ],
+      },
       rpc: {
         my_restrictions: NO_RESTRICTIONS,
         mark_conversation_read: '2026-10-15T10:03:00.000Z',
@@ -66,6 +82,10 @@ test.describe('§M26 — receipts and disappearing chats', () => {
     });
 
     await page.goto(`/chat/${MATCH_ID}`);
+
+    // The header names the other member from the public view's split identity.
+    await expect(page.getByText('Bo Karki', { exact: true })).toBeVisible();
+    await expect(page.getByText('@bo_karki', { exact: true })).toBeVisible();
 
     // The message with a seen_at shows "Seen"; the one with only delivered_at
     // shows "Delivered". A client guess could not tell them apart.

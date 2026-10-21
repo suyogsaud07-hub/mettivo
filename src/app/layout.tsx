@@ -1,8 +1,10 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import { LanguageProvider } from '@/context/LanguageContext';
+import { FollowProvider } from '@/context/FollowContext';
 import ServiceWorkerRegistrar from '@/app/components/ServiceWorkerRegistrar';
 import LocationVerificationGate from '@/components/shared/LocationVerificationGate';
+import PresenceHeartbeat from '@/components/shared/PresenceHeartbeat';
 
 const APP_NAME = 'Mettivo';
 const APP_DESCRIPTION =
@@ -70,7 +72,10 @@ export default function RootLayout({
     <html lang="en">
       <body className="bg-[#131017] text-[#eae2f0] antialiased">
         <LanguageProvider>
-          {children}
+          <FollowProvider>
+            {children}
+            <PresenceHeartbeat />
+          </FollowProvider>
           <ServiceWorkerRegistrar />
           {/*
             Global location prompt. Mounted once here so it survives client-side

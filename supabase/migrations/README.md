@@ -50,6 +50,13 @@ same state and no error.
 | 15 | `20261015240000_m13_moderation_workflow.sql` | Evidence snapshots, moderator triage queue, resolution | M13 |
 | 16 | `20261015250000_m7_profile_validation.sql` | 18+ age guard and profile field constraints | M7 |
 | 17 | `20261015260000_m15_revoke_birth_date.sql` | Column-level revoke of `profiles.birth_date` + `my_birth_date()` | M15 |
+| 43 | `20261015430000_elite_profile_identity.sql` | Split names, canonical unique usernames, availability RPC, canonical MBTI, and Politics removal from public projections | Elite profile |
+| 44 | `20261015440000_people_follow_presence.sql` | `last_seen_at` + `touch_presence()` heartbeat, expiring online state in `public_profiles`/`discover_profiles()`, privacy-aware discovery, and a load-more exclusion argument | People discovery |
+| 45 | `20261015450000_moments_posts_and_reels.sql` | `moments.content_kind` (post/reel) with a 120s Reel CHECK, a 10-item media cap, `allow_downloads` + `can_download_moment()`/`get_moment_download_url()`, `moderation_status` gating with an author guard and AI-scan demotion, owner-only `moment_saves`, and rebuilt `moment_feed`/`moment_archive` with `save_count`/`saved_by_me` | Moments Posts & Reels |
+
+> The table above lists the milestone-defining migrations; later migrations
+> (M16–M31 and the elite profile upgrade) apply in filename order after these.
+> The generated `supabase/apply_all.sql` is the authoritative full sequence.
 
 > **Applying to a live project.** Migrations 1–3 are the security boundary: on a
 > project where they have not been applied, `profiles` is readable by anyone

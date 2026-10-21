@@ -67,6 +67,7 @@ TABLES=(
   "moments"
   "moment_likes"
   "moment_comments"
+  "moment_saves"
   "moment_feed"
   "moment_archive"
   # M21 moderation enforcement. These name members and measure their behaviour,

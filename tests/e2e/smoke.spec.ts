@@ -138,42 +138,39 @@ test.describe('§3.3 — protected navigation and routes (R-12)', () => {
     // Regression guard. `/people` previously shipped as a full-height dark div
     // containing nothing but <MobileNav />, with the author's own
     // `{/* ... content ... */}` markers still in the source. It is a protected
-    // nav destination, so every member who tapped it got a blank screen.
+    // nav destination, so every member who tapped it got a blank screen. It is
+    // now the swipe discovery surface: with no candidates stubbed, the "all
+    // caught up" state is the content that must exist.
     await page.goto('/people');
 
-    await expect(page.getByRole('heading', { name: /connections/i })).toBeVisible();
-    // With no matches stubbed, the empty state is the content that must exist.
-    await expect(page.getByText(/no connections yet/i)).toBeVisible();
-    await expect(page.getByRole('link', { name: /start discovering/i })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'People' })).toBeVisible();
+    await expect(page.getByText(/you're all caught up/i)).toBeVisible();
+    await expect(page.getByRole('link', { name: /view matches/i })).toBeVisible();
   });
 
   test('lists a mutual match and links it to the conversation', async ({ page }) => {
     await stubSupabase(page, {
       tables: {
-        // Two different reads hit `profiles`: the gatekeeper wants one row, the
-        // connection lookup wants a list with names. Branch on the query.
-        profiles: (url) =>
-          url.searchParams.get('select')?.includes('onboarding_completed')
-            ? { onboarding_completed: true, intention: 'dating', interests: [], prompts: {} }
-            : [
-                {
-                  id: E2E_OTHER_USER_ID,
-                  display_name: 'Bo',
-                  age: 30,
-                  city: 'Pokhara',
-                  country: 'Nepal',
-                  avatar_url: null,
-                  is_online: true,
-                },
-              ],
         matches: [{ id: 'match-1', user_a: E2E_USER_ID, user_b: E2E_OTHER_USER_ID }],
+        public_profiles: [
+          {
+            id: E2E_OTHER_USER_ID,
+            display_name: 'Bo',
+            username: 'bo',
+            age: 30,
+            city: 'Pokhara',
+            country: 'Nepal',
+            avatar_url: null,
+          },
+        ],
       },
       rpc: { discover_profiles: [] },
     });
-    await page.goto('/people');
+    await page.goto('/profile/stats/matches');
 
     await expect(page.getByText('Bo')).toBeVisible();
-    await expect(page.locator('a[href="/chat/match-1"]')).toBeVisible();
+    await page.getByText('Bo').click();
+    await expect(page).toHaveURL(/\/chat\/match-1$/);
   });
 
   test('no protected route renders a bare navigation shell', async ({ page }) => {

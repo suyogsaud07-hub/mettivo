@@ -201,6 +201,21 @@ export type MomentMediaType = 'image' | 'video';
  */
 export type MomentVisibility = 'only_me' | 'matches' | 'public';
 
+/**
+ * Whether a Moment is an ordinary Post or a vertical Reel.
+ *
+ * A Reel is exactly one video with a declared duration of at most 120 seconds;
+ * a Post is a single image, a multi-image carousel, or an ordinary video.
+ */
+export type MomentKind = 'post' | 'reel';
+
+/** The moderation lifecycle of a Moment. Only `approved` shows to others. */
+export type MomentModerationStatus =
+  | 'pending'
+  | 'approved'
+  | 'rejected'
+  | 'failed_review';
+
 /** A row from the `moments` table. */
 export interface MomentRow {
   id: string;
@@ -209,6 +224,14 @@ export interface MomentRow {
   media: string[];
   /** `image` | `video`; null on rows stored before media_type existed. */
   media_type: MomentMediaType | null;
+  /** Post or Reel; absent on a legacy view is treated as `post`. */
+  content_kind: MomentKind;
+  /** Declared media duration in seconds, or null for images. */
+  duration_seconds: number | null;
+  /** Creator switch controlling whether viewers may download the media. */
+  allow_downloads: boolean;
+  /** Moderation lifecycle; only `approved` is public. */
+  moderation_status: MomentModerationStatus;
   tags: string[];
   shares: number;
   /** Total views, maintained server-side by `record_moment_view()`. */
@@ -223,7 +246,9 @@ export interface MomentFeedRow extends MomentRow {
   unique_views: number;
   like_count: number;
   comment_count: number;
+  save_count: number;
   liked_by_me: boolean;
+  saved_by_me: boolean;
   /** M22 privacy tier; absent on a legacy view is treated as `public`. */
   visibility: MomentVisibility;
 }

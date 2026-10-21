@@ -5,6 +5,7 @@ import type {
   MomentAuthor,
   MomentCommentRow,
   MomentFeedRow,
+  MomentKind,
   MomentMediaType,
   MomentVisibility,
 } from '@/lib/types';
@@ -122,8 +123,8 @@ export function genderIcon(gender: string): string {
   return '⚧';
 }
 
-/** IDs the signed-in member follows, used by the "Following" tab. */
-async function fetchFollowingIds(userId: string): Promise<Set<string>> {
+/** IDs the signed-in member follows, used by the "Following" tab and ranking. */
+export async function fetchFollowingIds(userId: string): Promise<Set<string>> {
   const { data, error } = await supabase
     .from('follows')
     .select('following_id')
@@ -142,21 +143,31 @@ async function fetchFollowingIds(userId: string): Promise<Set<string>> {
   );
 }
 
+/** A keyset cursor so a "load more" page cannot duplicate or skip a post. */
+export interface MomentCursor {
+  createdAt: string;
+  id: string;
+}
+
 export interface FetchFeedOptions {
   tab?: MomentTab;
   tag?: string | null;
   limit?: number;
   /** Defaults to the signed-in user; pass explicitly to avoid an extra round trip. */
   userId?: string;
+  /** `post` (default) or `reel`. */
+  kind?: MomentKind;
+  /** Keyset cursor from the last row of the previous page. */
+  cursor?: MomentCursor | null;
 }
 
 /**
- * `moment_feed` columns, split so the M19 media/engagement columns are optional.
+ * `moment_feed` columns, split so the M19/M45 columns are optional.
  *
- * A deployment that has not run the Moments engagement migration still has the
- * base view, so a select naming `media_type`/`views_count`/`unique_views` fails
- * with `42703` and the feed — and the profile Posts tab — would go blank. The
- * core list is tried first and upgraded only when the schema supports it.
+ * A deployment that has not run the Reels/saves migration still has the base
+ * view, so a select naming `content_kind`/`save_count` fails with `42703` and
+ * the feed — and the profile Posts tab — would go blank. The core list is tried
+ * first and upgraded only when the schema supports it.
  *
  * Single literals (not a `.join()`): supabase-js parses the column list at the
  * type level.
@@ -164,92 +175,152 @@ export interface FetchFeedOptions {
 const MOMENT_FEED_CORE_COLUMNS =
   'id, author_id, caption, media, tags, shares, created_at, updated_at, like_count, comment_count, liked_by_me' as const;
 
-const MOMENT_FEED_ENGAGEMENT_COLUMNS = 'media_type, views_count, unique_views, visibility' as const;
+const MOMENT_FEED_ENGAGEMENT_COLUMNS =
+  'media_type, views_count, unique_views, visibility, content_kind, duration_seconds, allow_downloads, moderation_status, save_count, saved_by_me' as const;
 
 const MOMENT_FEED_COLUMNS = `${MOMENT_FEED_CORE_COLUMNS}, ${MOMENT_FEED_ENGAGEMENT_COLUMNS}` as const;
 
 /** `moment_archive` adds the archival timestamp to the feed shape. */
 const MOMENT_ARCHIVE_COLUMNS = `${MOMENT_FEED_COLUMNS}, archived_at` as const;
 
+/** The optional columns a legacy (pre-M45) view does not carry. */
+type OptionalFeedColumns =
+  | 'media_type'
+  | 'views_count'
+  | 'unique_views'
+  | 'visibility'
+  | 'content_kind'
+  | 'duration_seconds'
+  | 'allow_downloads'
+  | 'moderation_status'
+  | 'save_count'
+  | 'saved_by_me';
+
 /** A feed row without the optional media/engagement/privacy columns. */
-type MomentFeedCoreRow = Omit<
-  MomentFeedRow,
-  'media_type' | 'views_count' | 'unique_views' | 'visibility'
->;
+type MomentFeedCoreRow = Omit<MomentFeedRow, OptionalFeedColumns>;
 
 /** Defaults the optional columns so a legacy view row still renders. */
 function withDefaultEngagement(row: MomentFeedCoreRow): MomentFeedRow {
-  return { ...row, media_type: null, views_count: 0, unique_views: 0, visibility: 'public' };
+  return {
+    ...row,
+    media_type: null,
+    views_count: 0,
+    unique_views: 0,
+    visibility: 'public',
+    content_kind: 'post',
+    duration_seconds: null,
+    allow_downloads: false,
+    moderation_status: 'approved',
+    save_count: 0,
+    saved_by_me: false,
+  };
 }
 
 interface FeedQueryOptions {
   tab: MomentTab;
   tag: string | null;
   limit: number;
+  kind: MomentKind;
+  cursor: MomentCursor | null;
+  followingIds: string[] | null;
 }
 
-/** Runs the tab/tag/order query against a given column list. */
-function momentFeedQuery(tab: MomentTab, tag: string | null, limit: number) {
-  let query = supabase.from('moment_feed').select(MOMENT_FEED_COLUMNS);
-
-  if (tag) query = query.contains('tags', [tag]);
-
-  if (tab === 'For You') {
-    query = query.order('like_count', { ascending: false }).order('created_at', { ascending: false });
-  } else {
-    query = query.order('created_at', { ascending: false });
-  }
-
-  return query.limit(limit);
-}
-
-/** The same query against the base columns, for a schema without M19. */
-function momentFeedCoreQuery(tab: MomentTab, tag: string | null, limit: number) {
-  let query = supabase.from('moment_feed').select(MOMENT_FEED_CORE_COLUMNS);
-
-  if (tag) query = query.contains('tags', [tag]);
-
-  if (tab === 'For You') {
-    query = query.order('like_count', { ascending: false }).order('created_at', { ascending: false });
-  } else {
-    query = query.order('created_at', { ascending: false });
-  }
-
-  return query.limit(limit);
-}
-
-/** Loads feed rows, transparently dropping the optional columns if needed. */
-async function loadFeedRows({ tab, tag, limit }: FeedQueryOptions): Promise<MomentFeedRow[]> {
-  const { data, error } = await momentFeedQuery(tab, tag, limit);
-
-  if (!error) return (data ?? []) as MomentFeedRow[];
-
-  if (isMissingColumnError(error)) {
-    const fallback = await momentFeedCoreQuery(tab, tag, limit);
-    if (fallback.error) {
-      console.error('[moments] load feed failed (core fallback):', fallback.error.message);
-      throw new MomentError(fallback.error.message, fallback.error.code);
-    }
-    return ((fallback.data ?? []) as MomentFeedCoreRow[]).map(withDefaultEngagement);
-  }
-
-  console.error('[moments] load feed failed:', error.message);
-  throw new MomentError(error.message, error.code);
+/** The keyset OR-clause for a `(created_at, id)` cursor. */
+function cursorFilter(cursor: MomentCursor | null): string | null {
+  if (!cursor) return null;
+  return `created_at.lt.${cursor.createdAt},and(created_at.eq.${cursor.createdAt},id.lt.${cursor.id})`;
 }
 
 /**
- * Loads the feed for a tab.
+ * Loads feed rows against the full column set.
+ *
+ * Cursor pagination is keyset on `(created_at, id)` and always ordered newest
+ * first: a stable total order is what stops a page boundary from repeating or
+ * skipping a row. "For You" therefore ranks within the fetched page on the
+ * client (`rankMoments`) instead of re-sorting in SQL.
+ */
+async function loadFullFeedRows(options: FeedQueryOptions): Promise<MomentFeedRow[]> {
+  let query = supabase
+    .from('moment_feed')
+    .select(MOMENT_FEED_COLUMNS)
+    .eq('content_kind', options.kind);
+
+  if (options.tag) query = query.contains('tags', [options.tag]);
+  if (options.followingIds) query = query.in('author_id', options.followingIds);
+
+  const filter = cursorFilter(options.cursor);
+  if (filter) query = query.or(filter);
+
+  const { data, error } = await query
+    .order('created_at', { ascending: false })
+    .order('id', { ascending: false })
+    .limit(options.limit);
+
+  if (error) throw error;
+  return (data ?? []) as unknown as MomentFeedRow[];
+}
+
+/** The same query against the base columns, for a schema without M45. */
+async function loadCoreFeedRows(options: FeedQueryOptions): Promise<MomentFeedRow[]> {
+  let query = supabase
+    .from('moment_feed')
+    .select(MOMENT_FEED_CORE_COLUMNS);
+
+  if (options.tag) query = query.contains('tags', [options.tag]);
+  if (options.followingIds) query = query.in('author_id', options.followingIds);
+
+  const filter = cursorFilter(options.cursor);
+  if (filter) query = query.or(filter);
+
+  const { data, error } = await query
+    .order('created_at', { ascending: false })
+    .order('id', { ascending: false })
+    .limit(options.limit);
+
+  if (error) throw error;
+  return ((data ?? []) as unknown as MomentFeedCoreRow[]).map(withDefaultEngagement);
+}
+
+/** Loads feed rows, transparently dropping the optional columns if needed. */
+async function loadFeedRows(options: FeedQueryOptions): Promise<MomentFeedRow[]> {
+  try {
+    return await loadFullFeedRows(options);
+  } catch (error) {
+    if (isMissingColumnError(error)) {
+      try {
+        return await loadCoreFeedRows(options);
+      } catch (fallbackError) {
+        const err = fallbackError as { message: string; code?: string };
+        console.error('[moments] load feed failed (core fallback):', err.message);
+        throw new MomentError(err.message, err.code);
+      }
+    }
+    const err = error as { message: string; code?: string };
+    console.error('[moments] load feed failed:', err.message);
+    throw new MomentError(err.message, err.code);
+  }
+}
+
+/**
+ * Loads one page of the feed for a tab and content kind.
  *
  *   Latest    -> newest first
- *   For You   -> most engaged first, then newest
+ *   For You   -> newest page; the caller re-ranks it with `rankMoments`
  *   Following -> only moments from members the caller follows
  */
 export async function fetchMomentFeed(
   options: FetchFeedOptions = {}
 ): Promise<MomentFeedRow[]> {
-  const { tab = 'Latest', tag = null, limit = 50, userId } = options;
+  const {
+    tab = 'Latest',
+    tag = null,
+    limit = 24,
+    userId,
+    kind = 'post',
+    cursor = null,
+  } = options;
 
-  let rows = await loadFeedRows({ tab, tag, limit });
+  let followingIds: string[] | null = null;
 
   if (tab === 'Following') {
     let me = userId;
@@ -262,10 +333,11 @@ export async function fetchMomentFeed(
     if (!me) return [];
 
     const following = await fetchFollowingIds(me);
-    rows = rows.filter((row) => following.has(row.author_id));
+    if (following.size === 0) return [];
+    followingIds = Array.from(following);
   }
 
-  return rows;
+  return loadFeedRows({ tab, tag, limit, kind, cursor, followingIds });
 }
 
 /**
@@ -347,28 +419,64 @@ export async function fetchMomentAuthors(
   return authors;
 }
 
+/** The most media a single Post may carry (mirrors the SQL constraint). */
+export const MAX_MOMENT_MEDIA = 10;
+
+/** The longest a Reel may be, in seconds (mirrors the SQL constraint). */
+export const MAX_REEL_SECONDS = 120;
+
+export interface CreateMomentInput {
+  caption?: string;
+  media?: string[];
+  tags?: string[];
+  mediaType?: MomentMediaType | null;
+  visibility?: MomentVisibility;
+  contentKind?: MomentKind;
+  durationSeconds?: number | null;
+  allowDownloads?: boolean;
+}
+
 /**
- * Publishes a moment authored by the signed-in member.
+ * Publishes a Moment authored by the signed-in member.
  *
  * `media` holds Storage URLs (see `@/lib/media`); `mediaType` labels them so the
- * feed knows to autoplay a video. Legacy rows written before `media_type`
- * existed simply pass `null` and are treated as images.
+ * feed knows to autoplay a video. A Reel is exactly one video with a declared
+ * duration of at most 120s — the same rules the SQL CHECK constraints enforce,
+ * repeated here so a member gets a friendly error instead of a raw 400.
  *
  * `visibility` is the privacy tier persisted on the row; the `moment_feed` view
  * filters on it through `can_view_moment()`, so this value — not any client
- * filtering — decides who can read the post.
+ * filtering — decides who can read the post. `moderation_status` is never sent:
+ * the database computes it.
  */
-export async function createMoment(
-  caption: string,
-  media: string[] = [],
-  tags: string[] = [],
-  mediaType: MomentMediaType | null = null,
-  visibility: MomentVisibility = 'public'
-): Promise<void> {
-  const text = caption.trim();
+export async function createMoment(input: CreateMomentInput = {}): Promise<void> {
+  const caption = (input.caption ?? '').trim();
+  const media = input.media ?? [];
+  const tags = input.tags ?? [];
+  const mediaType = input.mediaType ?? null;
+  const visibility = input.visibility ?? 'public';
+  const contentKind = input.contentKind ?? 'post';
+  const durationSeconds = input.durationSeconds ?? null;
+  const allowDownloads = input.allowDownloads ?? false;
 
-  if (!text && media.length === 0) {
+  if (!caption && media.length === 0) {
     throw new MomentError('Please add a caption or media.');
+  }
+
+  if (media.length > MAX_MOMENT_MEDIA) {
+    throw new MomentError(`A post can hold at most ${MAX_MOMENT_MEDIA} items.`);
+  }
+
+  if (contentKind === 'reel') {
+    if (media.length !== 1 || mediaType !== 'video') {
+      throw new MomentError('A Reel is a single video.');
+    }
+    if (typeof durationSeconds !== 'number' || durationSeconds <= 0) {
+      throw new MomentError('That video has no readable duration.');
+    }
+    if (durationSeconds > MAX_REEL_SECONDS) {
+      throw new MomentError(`Reels must be ${MAX_REEL_SECONDS} seconds or shorter.`);
+    }
   }
 
   // Inline data URLs are stored as text; keep any that sneak through small.
@@ -389,9 +497,12 @@ export async function createMoment(
 
   const { error } = await supabase.from('moments').insert({
     author_id: user.id,
-    caption: text || null,
+    caption: caption || null,
     media,
     media_type: mediaType,
+    content_kind: contentKind,
+    duration_seconds: durationSeconds,
+    allow_downloads: allowDownloads,
     tags: tags.slice(0, MAX_MOMENT_TAGS),
     visibility,
   });
@@ -689,6 +800,156 @@ export async function shareMoment(momentId: string): Promise<number> {
 
   return typeof data === 'number' ? data : 0;
 }
+
+/** Saves a post for the signed-in member. A repeat save is a no-op conflict. */
+export async function saveMoment(momentId: string): Promise<void> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) throw new MomentError('You must be signed in.', '28000');
+
+  const { error } = await supabase
+    .from('moment_saves')
+    .insert({ moment_id: momentId, user_id: user.id });
+
+  // 23505 = unique violation: already saved, which is not an error for the UI.
+  if (error && error.code !== '23505') {
+    console.error('[moments] save failed:', error.message);
+    throw new MomentError(error.message, error.code);
+  }
+}
+
+/** Removes a post from the signed-in member's saves. */
+export async function unsaveMoment(momentId: string): Promise<void> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) throw new MomentError('You must be signed in.', '28000');
+
+  const { error } = await supabase
+    .from('moment_saves')
+    .delete()
+    .eq('moment_id', momentId)
+    .eq('user_id', user.id);
+
+  if (error) {
+    console.error('[moments] unsave failed:', error.message);
+    throw new MomentError(error.message, error.code);
+  }
+}
+
+/**
+ * The signed-in member's saved posts, newest save first.
+ *
+ * Saves are stored in `moment_saves` (owner-only RLS); the posts are then read
+ * through `moment_feed`, so a saved post that has since been deleted, hidden by
+ * moderation, or become unviewable simply drops out.
+ */
+export async function fetchSavedMoments(limit = 60): Promise<MomentFeedRow[]> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) return [];
+
+  const { data: saves, error: savesError } = await supabase
+    .from('moment_saves')
+    .select('moment_id, created_at')
+    .eq('user_id', user.id)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  if (savesError) {
+    console.error('[moments] load saves failed:', savesError.message);
+    throw new MomentError(savesError.message, savesError.code);
+  }
+
+  const ids = ((saves ?? []) as { moment_id: string }[]).map((row) => row.moment_id);
+  if (ids.length === 0) return [];
+
+  const { data, error } = await supabase
+    .from('moment_feed')
+    .select(MOMENT_FEED_COLUMNS)
+    .in('id', ids);
+
+  if (error) {
+    if (isMissingColumnError(error)) {
+      const fallback = await supabase
+        .from('moment_feed')
+        .select(MOMENT_FEED_CORE_COLUMNS)
+        .in('id', ids);
+      if (fallback.error) {
+        console.error('[moments] load saved moments failed:', fallback.error.message);
+        throw new MomentError(fallback.error.message, fallback.error.code);
+      }
+      return ((fallback.data ?? []) as unknown as MomentFeedCoreRow[]).map(withDefaultEngagement);
+    }
+    console.error('[moments] load saved moments failed:', error.message);
+    throw new MomentError(error.message, error.code);
+  }
+
+  const byId = new Map(
+    ((data ?? []) as unknown as MomentFeedRow[]).map((row) => [row.id, row])
+  );
+  return ids.map((id) => byId.get(id)).filter((row): row is MomentFeedRow => Boolean(row));
+}
+
+/** Whether the server will allow the caller to download this post's media. */
+export async function canDownloadMoment(momentId: string): Promise<boolean> {
+  const { data, error } = await supabase.rpc('can_download_moment', {
+    p_moment_id: momentId,
+  });
+
+  if (error) {
+    console.error('[moments] download check failed:', error.message);
+    return false;
+  }
+
+  return data === true;
+}
+
+/**
+ * Asks the server for an authorised download URL and opens it.
+ *
+ * The server re-checks ownership, visibility, moderation and the creator's
+ * switch on every call; a hidden button is never the boundary. The returned
+ * object is used with a meaningful filename and the correct content type.
+ */
+export async function downloadMoment(
+  momentId: string,
+  filename?: string
+): Promise<void> {
+  const { data, error } = await supabase.rpc('get_moment_download_url', {
+    p_moment_id: momentId,
+  });
+
+  if (error) {
+    console.error('[moments] download failed:', error.message);
+    throw new MomentError('This download is not available.', error.code);
+  }
+
+  if (typeof data !== 'string' || !data) {
+    throw new MomentError('This post has no downloadable media.');
+  }
+
+  const anchor = document.createElement('a');
+  anchor.href = data;
+  if (filename) anchor.download = filename;
+  anchor.rel = 'noopener';
+  anchor.target = '_blank';
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+}
+
+/**
+ * Re-exports the relevance ranker so feed consumers have one import.
+ * Weights and behavior are documented in `@/lib/moments-rank`.
+ */
+export { rankMoments } from '@/lib/moments-rank';
+
 
 /**
  * Follows another member.

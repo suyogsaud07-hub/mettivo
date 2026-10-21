@@ -4,6 +4,8 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import MobileNav from '../../components/layout/MobileNav';
+import FollowButton from '../../components/profile/FollowButton';
+import ProfileLink from '../../components/profile/ProfileLink';
 
 interface UserProfile {
   id: string;
@@ -145,34 +147,6 @@ export default function UserList({ type }: UserListProps) {
     };
   }, [router, type]);
 
-  const handleToggleFollow = async (targetUserId: string, isCurrentlyFollowing: boolean) => {
-    if (!currentUserId || targetUserId === currentUserId) return;
-
-    setUsers((prev) =>
-      prev.map((u) =>
-        u.id === targetUserId ? { ...u, is_followed_by_me: !isCurrentlyFollowing } : u
-      )
-    );
-
-    const { error: writeError } = isCurrentlyFollowing
-      ? await supabase
-          .from('follows')
-          .delete()
-          .match({ follower_id: currentUserId, following_id: targetUserId })
-      : await supabase
-          .from('follows')
-          .insert({ follower_id: currentUserId, following_id: targetUserId });
-
-    if (writeError) {
-      console.error('[UserList] follow toggle failed:', writeError.message);
-      setUsers((prev) =>
-        prev.map((u) =>
-          u.id === targetUserId ? { ...u, is_followed_by_me: isCurrentlyFollowing } : u
-        )
-      );
-    }
-  };
-
   const filteredUsers = users.filter((u) =>
     `${u.display_name ?? ''} ${u.username ?? ''}`.toLowerCase().includes(searchQuery.toLowerCase())
   );
@@ -195,10 +169,6 @@ export default function UserList({ type }: UserListProps) {
     userInfo: { flex: 1 },
     userName: { fontSize: '16px', fontWeight: '700', color: '#F2E9E4' },
     userStatus: { fontSize: '12px', color: '#B58A83', marginTop: '2px' },
-
-    followBtn: { padding: '8px 20px', borderRadius: '20px', fontSize: '13px', fontWeight: '700', cursor: 'pointer', transition: 'all 0.2s', border: 'none' },
-    followBtnActive: { backgroundColor: '#29202D', color: '#D4B18A', border: '1px solid #4A1828' },
-    followBtnInactive: { backgroundColor: '#D4B18A', color: '#17121C' },
 
     emptyState: { display: 'flex', flexDirection: 'column' as const, alignItems: 'center', justifyContent: 'center', padding: '60px 20px', textAlign: 'center' as const },
     emptyIcon: { fontSize: '50px', marginBottom: '16px' },
@@ -257,25 +227,29 @@ export default function UserList({ type }: UserListProps) {
             <div style={styles.userList}>
               {filteredUsers.map((user) => (
                 <div key={user.id} style={styles.userCard}>
-                  {user.avatar_url ? (
-                    <img src={user.avatar_url} alt={user.display_name ?? 'Member'} style={styles.avatar} />
-                  ) : (
-                    <div style={{ ...styles.avatar, display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '20px' }}>👤</div>
-                  )}
-                  <div style={styles.userInfo}>
+                  <ProfileLink userId={user.id} label={`View ${user.display_name ?? 'this member'}'s profile`}>
+                    {user.avatar_url ? (
+                      <img src={user.avatar_url} alt={user.display_name ?? 'Member'} style={styles.avatar} />
+                    ) : (
+                      <div style={{ ...styles.avatar, display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '20px' }}>👤</div>
+                    )}
+                  </ProfileLink>
+                  <ProfileLink
+                    userId={user.id}
+                    label={`View ${user.display_name ?? 'this member'}'s profile`}
+                    style={styles.userInfo}
+                  >
                     <div style={styles.userName}>
                       {user.display_name ?? 'Member'}{user.age ? `, ${user.age}` : ''}
                     </div>
                     {user.username ? <div style={styles.userStatus}>@{user.username}</div> : null}
                     <div style={styles.userStatus}>📍 {user.city || 'Global'}{user.country ? `, ${user.country}` : ''}</div>
-                  </div>
+                  </ProfileLink>
                   {user.id !== currentUserId && (
-                    <button
-                      style={{ ...styles.followBtn, ...(user.is_followed_by_me ? styles.followBtnActive : styles.followBtnInactive) }}
-                      onClick={() => handleToggleFollow(user.id, user.is_followed_by_me)}
-                    >
-                      {user.is_followed_by_me ? 'Following' : 'Follow'}
-                    </button>
+                    <FollowButton
+                      targetUserId={user.id}
+                      initialFollowing={user.is_followed_by_me}
+                    />
                   )}
                 </div>
               ))}

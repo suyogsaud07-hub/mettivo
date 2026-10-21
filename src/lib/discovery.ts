@@ -57,6 +57,8 @@ export interface DiscoveryFilters {
   genders?: string[] | null;
   limit?: number;
   onlineOnly?: boolean;
+  /** Ids already shown by this surface; prevents duplicate load-more cards. */
+  excludeIds?: readonly string[];
 }
 
 /** Safety rails mirrored in SQL: `discover_profiles` clamps to the same range. */
@@ -159,6 +161,9 @@ export async function fetchDiscoveryCandidates(
     p_genders: filters.genders && filters.genders.length > 0 ? filters.genders : null,
     p_limit: clampLimit(filters.limit),
     p_online_only: filters.onlineOnly ?? false,
+    p_exclude_ids: filters.excludeIds && filters.excludeIds.length > 0
+      ? [...filters.excludeIds]
+      : [],
   });
 
   if (error) {
@@ -185,6 +190,7 @@ export function rankDiscovery(
 ): RankedCandidate<DiscoveryCandidate>[] {
   return rankCandidates(me, candidates, {
     requireIntentionalFit: true,
+    onlineFirst: true,
     ...options,
   });
 }

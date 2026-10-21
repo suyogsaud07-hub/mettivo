@@ -19,6 +19,8 @@
  *   demo fixtures in `mockData.ts` and a real row from `discover_profiles()`.
  */
 
+import { preferenceAffinity, type PreferenceAffinity } from '@/lib/dating-preferences';
+
 /** Weights sum to the 0-100 score ceiling. Exported so tests can assert them. */
 export const RANKING_WEIGHTS = {
   intention: 40,
@@ -42,6 +44,10 @@ export interface MatchProfile {
   country?: string | null;
   online?: boolean | null;
   is_online?: boolean | null;
+  /** The member's own gender, used only for preference affinity. */
+  gender?: string | null;
+  /** `profiles.looking_for` labels (`Men`, `Women`, `Everyone`). */
+  lookingFor?: readonly string[] | null;
 }
 
 export type IntentionAffinity = 'mutual' | 'one-way' | 'none';
@@ -179,6 +185,8 @@ export interface RankedCandidate<T extends MatchProfile = MatchProfile> {
   profile: T;
   score: number;
   breakdown: MatchBreakdown;
+  /** Whether the pair's saved gender preferences line up. */
+  preferenceFit: PreferenceAffinity;
 }
 
 export interface RankOptions {
@@ -189,6 +197,8 @@ export interface RankOptions {
   minScore?: number;
   /** Drop pairs whose declared intentions cannot both be satisfied (`FR-D5`). */
   requireIntentionalFit?: boolean;
+  /** Put currently-online candidates first, before score and preferences. */
+  onlineFirst?: boolean;
 }
 
 /**
@@ -220,10 +230,32 @@ export function rankCandidates<T extends MatchProfile>(
     )
     .map((profile) => {
       const breakdown = explainMatch(me, profile);
-      return { profile, score: breakdown.total, breakdown };
+      return {
+        profile,
+        score: breakdown.total,
+        breakdown,
+        preferenceFit: preferenceAffinity(me, profile),
+      };
     })
     .filter((entry) => entry.score > minScore)
-    .sort((a, b) => (b.score - a.score) || a.profile.id.localeCompare(b.profile.id))
+    .sort((a, b) => {
+      if (options.onlineFirst) {
+        const onlineA = a.profile.online === true || a.profile.is_online === true ? 1 : 0;
+        const onlineB = b.profile.online === true || b.profile.is_online === true ? 1 : 0;
+        if (onlineA !== onlineB) return onlineB - onlineA;
+      }
+
+      const preferenceRank: Record<PreferenceAffinity, number> = {
+        mutual: 3,
+        'one-way': 2,
+        unknown: 1,
+        none: 0,
+      };
+      const preferenceDelta = preferenceRank[b.preferenceFit] - preferenceRank[a.preferenceFit];
+      if (preferenceDelta !== 0) return preferenceDelta;
+
+      return (b.score - a.score) || a.profile.id.localeCompare(b.profile.id);
+    })
     .slice(0, limit);
 }
 

@@ -7,6 +7,7 @@ import { supabase } from '@/lib/supabase';
 import {
   MAX_BIO_LENGTH,
   MIN_AGE,
+  ProfileError,
   calculateAge,
   saveProfile,
   validateProfileDraft,
@@ -367,6 +368,12 @@ export default function EditProfileWizardPage() {
       router.replace('/discover');
     } catch (err) {
       console.error('[onboarding] save failed:', err);
+      if (err instanceof ProfileError && err.code === '23505') {
+        // A concurrent claim lost the race. Return the member to the identity
+        // step so the taken handle is corrected in place, not on the review
+        // screen.
+        setCurrentStep(FIELD_TO_STEP.username ?? 1);
+      }
       setError(
         err instanceof Error
           ? err.message

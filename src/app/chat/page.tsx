@@ -9,14 +9,25 @@ import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { type MessageRow } from '@/lib/types';
 import { fetchUnreadCounts } from '@/lib/messages';
+import { fetchPublicIdentities, type PublicIdentity } from '@/lib/public-profiles';
 import MobileNav from '../components/layout/MobileNav';
 
 interface ConversationSummary {
   matchId: string;
+  otherUserId: string | null;
+  displayName: string;
+  username: string | null;
+  avatarUrl: string | null;
   lastMessage: string;
   lastMessageAt: string;
   isMine: boolean;
   unread: number;
+}
+
+interface MatchParticipants {
+  id: string;
+  user_a: string;
+  user_b: string;
 }
 
 function formatTimestamp(value: string): string {
@@ -26,6 +37,13 @@ function formatTimestamp(value: string): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(
     date.getHours()
   )}:${pad(date.getMinutes())}`;
+}
+
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
 }
 
 export default function ChatListPage() {
@@ -62,19 +80,79 @@ export default function ChatListPage() {
           return;
         }
 
+        const rows = (data ?? []) as MessageRow[];
         const seen = new Set<string>();
         const summaries: ConversationSummary[] = [];
+        const otherSenderByMatch = new Map<string, string>();
 
-        for (const row of (data ?? []) as MessageRow[]) {
+        for (const row of rows) {
+          if (row.sender_id !== user.id && !otherSenderByMatch.has(row.match_id)) {
+            otherSenderByMatch.set(row.match_id, row.sender_id);
+          }
+        }
+
+        for (const row of rows) {
           if (seen.has(row.match_id)) continue;
           seen.add(row.match_id);
           summaries.push({
             matchId: row.match_id,
+            otherUserId: otherSenderByMatch.get(row.match_id) ?? null,
+            displayName: 'Member',
+            username: null,
+            avatarUrl: null,
             lastMessage: row.content || 'Photo',
             lastMessageAt: row.created_at,
             isMine: row.sender_id === user.id,
             unread: 0,
           });
+        }
+
+        // Resolve the other participant from the match as well as the thread.
+        // A brand-new conversation may contain only the caller's messages, so
+        // the sender ids alone cannot identify who they are talking to.
+        if (summaries.length > 0) {
+          const { data: matchRows, error: matchError } = await supabase
+            .from('matches')
+            .select('id, user_a, user_b')
+            .in('id', summaries.map((summary) => summary.matchId));
+
+          if (matchError) {
+            console.error('Failed to load conversation participants:', matchError.message);
+          } else {
+            for (const match of (matchRows ?? []) as MatchParticipants[]) {
+              const other =
+                match.user_a === user.id ? match.user_b : match.user_a;
+              if (other) otherSenderByMatch.set(match.id, other);
+            }
+          }
+
+          for (const summary of summaries) {
+            summary.otherUserId = otherSenderByMatch.get(summary.matchId) ?? null;
+          }
+
+          const identities = await fetchPublicIdentities(
+            summaries
+              .map((summary) => summary.otherUserId)
+              .filter((id): id is string => Boolean(id))
+          ).catch((identityError: unknown) => {
+            // A directory failure must not erase the conversation list. Names
+            // fall back to "Member" until the next load.
+            console.error('Failed to load conversation profiles:', identityError);
+            return new Map<string, PublicIdentity>();
+          });
+
+          if (!isMounted) return;
+
+          for (const summary of summaries) {
+            const identity = summary.otherUserId
+              ? identities.get(summary.otherUserId)
+              : undefined;
+            if (!identity) continue;
+            summary.displayName =
+              identity.display_name?.trim() || identity.username || 'Member';
+            summary.username = identity.username;
+            summary.avatarUrl = identity.avatar_url;
+          }
         }
 
         const counts = await fetchUnreadCounts();
@@ -208,43 +286,121 @@ export default function ChatListPage() {
                   color: '#F2E9E4',
                 }}
               >
-                <p
-                  style={{
-                    margin: 0,
-                    fontSize: '14px',
-                    color: '#F2E9E4',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  {conversation.isMine ? `You: ${conversation.lastMessage}` : conversation.lastMessage}
-                </p>
-                <p
-                  style={{
-                    margin: '6px 0 0 0',
-                    fontSize: '11px',
-                    color: '#B58A83',
-                  }}
-                >
-                  {formatTimestamp(conversation.lastMessageAt)}
-                </p>
-                {conversation.unread > 0 && (
-                  <span
-                    style={{
-                      display: 'inline-block',
-                      marginTop: '8px',
-                      backgroundColor: '#D4B18A',
-                      color: '#17121C',
-                      borderRadius: '10px',
-                      padding: '2px 10px',
-                      fontSize: '11px',
-                      fontWeight: 700,
-                    }}
-                  >
-                    {conversation.unread} new
-                  </span>
-                )}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  {conversation.avatarUrl ? (
+                    <img
+                      src={conversation.avatarUrl}
+                      alt=""
+                      aria-hidden="true"
+                      style={{
+                        width: '44px',
+                        height: '44px',
+                        borderRadius: '50%',
+                        objectFit: 'cover',
+                        flexShrink: 0,
+                      }}
+                    />
+                  ) : (
+                    <span
+                      aria-hidden="true"
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        width: '44px',
+                        height: '44px',
+                        borderRadius: '50%',
+                        backgroundColor: '#29202D',
+                        color: '#D4B18A',
+                        flexShrink: 0,
+                        fontSize: '14px',
+                        fontWeight: 700,
+                      }}
+                    >
+                      {initials(conversation.displayName)}
+                    </span>
+                  )}
+
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'baseline',
+                        justifyContent: 'space-between',
+                        gap: '10px',
+                      }}
+                    >
+                      <div style={{ minWidth: 0 }}>
+                        <p
+                          style={{
+                            margin: 0,
+                            fontSize: '14px',
+                            fontWeight: 700,
+                            color: '#F2E9E4',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {conversation.displayName}
+                        </p>
+                        {conversation.username ? (
+                          <p
+                            style={{
+                              margin: '2px 0 0 0',
+                              fontSize: '12px',
+                              color: '#D4B18A',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            @{conversation.username.replace(/^@/, '')}
+                          </p>
+                        ) : null}
+                      </div>
+                      <span
+                        style={{
+                          flexShrink: 0,
+                          fontSize: '11px',
+                          color: '#B58A83',
+                        }}
+                      >
+                        {formatTimestamp(conversation.lastMessageAt)}
+                      </span>
+                    </div>
+                    <p
+                      style={{
+                        margin: '6px 0 0 0',
+                        fontSize: '13px',
+                        color: '#B58A83',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {conversation.isMine
+                        ? `You: ${conversation.lastMessage}`
+                        : conversation.lastMessage}
+                    </p>
+                    {conversation.unread > 0 && (
+                      <span
+                        style={{
+                          display: 'inline-block',
+                          marginTop: '8px',
+                          backgroundColor: '#D4B18A',
+                          color: '#17121C',
+                          borderRadius: '10px',
+                          padding: '2px 10px',
+                          fontSize: '11px',
+                          fontWeight: 700,
+                        }}
+                      >
+                        {conversation.unread} new
+                      </span>
+                    )}
+                  </div>
+                </div>
               </Link>
             </li>
           ))}

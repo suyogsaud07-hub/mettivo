@@ -42,7 +42,7 @@ src/
       dashboard/page.tsx    Profile view, completion score, stats
       settings/page.tsx     Settings, language, cache, sign-out
       stats/                followers, following, friends, interests, matches, photos
-    people/page.tsx         (placeholder — see Known gaps)
+    people/page.tsx         Swipe discovery feed (like / pass / follow) over discover_profiles()
     moments, game-zone, notifications, report, offline
     components/
       ui/                   Button, Card, Input, Modal, Avatar, Badge, UserList
@@ -135,7 +135,7 @@ moderation tables in §5.1 (`moderation_settings`, `moderation_secrets`, `bans`,
 
 | Table | Status | Key columns |
 | --- | --- | --- |
-| `profiles` | exists | `id`, `display_name`, `age`, `birth_date`, `gender`, `city`, `country`, `avatar_url`, `photos`, `intention`, `looking_for`, `hobbies`, `pets`, `personality`, `religion`, `politics`, `drinking`, `smoking`, `is_online`, `onboarding_completed`, `followers_count`, `following_count`, `friends_count`, `interests`, `prompts`, `bio`, `height`, `education`, `profession`, `languages_spoken`, `exercise`, `banned_until`, `ban_reason` |
+| `profiles` | exists | `id`, `first_name`, `last_name`, `has_last_name`, `username`, `display_name`, `age`, `birth_date`, `gender`, `city`, `country`, `avatar_url`, `photos`, `intention`, `looking_for`, `hobbies`, `pets`, `mbti`, `religion`, `drinking`, `smoking`, `is_online`, `last_seen_at`, `onboarding_completed`, `followers_count`, `following_count`, `friends_count`, `interests`, `prompts`, `bio`, `height`, `education`, `profession`, `languages_spoken`, `exercise`, `banned_until`, `ban_reason`. `politics` and the legacy `personality` tags are retained for historical data but excluded from `public_profiles` and every profile UI. |
 | `messages` | exists | `id`, `match_id`, `sender_id`, `content`, `created_at` |
 | `follows` | exists | `follower_id`, `following_id` |
 | `matches` | exists (0 rows, unused by code — **columns not yet introspected**) | — |
@@ -211,6 +211,45 @@ than roleplay.
 - **UI.** `/chat/subbu` reads `my_ban_status()` on load, disables the text/send/
   image controls and shows a red expiry banner. A 403 mid-conversation locks the
   composer immediately and survives a refresh.
+
+### 5.3 Moments — Posts and Reels (Moments Elite upgrade)
+
+`20261015450000_moments_posts_and_reels.sql` turns the single Moments feed into
+Instagram-style **Posts** and TikTok-style **Reels**, with saves, authorized
+downloads and moderation gating. The database stays the source of truth; the
+client never decides visibility, moderation or downloads.
+
+- **Two kinds.** `moments.content_kind` is `post` (a photo carousel of up to 10
+  items, or one ordinary video ≤ 600s) or `reel` (exactly one video ≤ 120s). Both
+  the media cap (`moments_media_max`) and the Reel shape
+  (`moments_reel_shape_chk`) are CHECK constraints, so a forged client insert is
+  rejected. `/moments` has a Posts/Reels switch; `/moments` pages keyset on
+  `(created_at, id)` via a "Load more" button, and "For You" is re-ranked on the
+  client (`src/lib/moments-rank.ts`) using the page's `like_count`,
+  `comment_count`, `save_count`, `shares`, recency, follows and the viewer's
+  interests.
+- **Saves.** `moment_saves` is owner-only (RLS `auth.uid() = user_id`); the
+  `moment_feed`/`moment_archive` views expose `save_count` and a per-caller
+  `saved_by_me`. The saved list is read client-side from `moment_saves` then
+  hydrated through `moment_feed`, so a deleted or demoted post drops out.
+- **Downloads.** `moments.allow_downloads` (default `false`) is the creator's
+  switch. `can_download_moment()` re-checks ownership, visibility, moderation and
+  blocking on every call; `get_moment_download_url()` returns the media only to
+  an authorized caller. A hidden button is never the boundary.
+- **Moderation.** `moderation_settings.moments_require_review` (default `false`)
+  decides whether a new post starts `pending` or `approved`; a flagged AI scan of
+  the first image demotes it to `rejected`; `admin_set_moment_moderation()` is the
+  moderator-only manual path. `guard_moment_moderation()` overwrites any
+  browser-supplied status on insert and refuses an author's own status change.
+  Only `approved` content appears to other members (the author always sees their
+  own).
+- **Honest limitations.** Duration is client-declared and only bounded by a
+  CHECK; there is no server-side media probe (no `ffmpeg`/`sharp` in the
+  serverless runtime). Video frames are not sampled for moderation — only the
+  first image is scanned. `moment-media` is a **public-read** bucket, so a
+  download refusal is enforced by the RPC, not by storage ACLs; making the bucket
+  private (with signed URLs) is the documented follow-up for real byte-level
+  enforcement.
 
 ## 6. Known gaps (as of this revision)
 
@@ -292,9 +331,22 @@ These are recorded so no future change assumes they are solved.
 - ~~`src/app/people/page.tsx` was a placeholder~~ — it shipped as a full-height
   dark div containing only the bottom navigation, with the author's empty JSX
   comment markers still in the source, while being one of the six protected nav
-  destinations. It now lists mutual matches with an explicit column allow-list,
-  and two E2E tests guard it: one asserts it renders content, and a general one
-  fails any protected route that paints only the navigation shell.
+  destinations. It is now the swipe discovery surface (like / pass / follow)
+  backed by `discover_profiles()` + `rankCandidates`, with photo carousel,
+  profile links and load-more exclusions. Mutual matches moved to
+  `/profile/stats/matches`. Two E2E tests guard the route: one asserts it
+  renders content, and a general one fails any protected route that paints only
+  the navigation shell.
+- ~~`profiles.is_online` was a manually maintained boolean with no heartbeat~~ —
+  `20261015440000_people_follow_presence.sql` adds `last_seen_at`,
+  `touch_presence()` (SECURITY DEFINER, `auth.uid()` only), and derives online
+  state from a two-minute window in `public_profiles` and `discover_profiles()`.
+  `user_preferences.show_online_status` and `profile_visibility` are honoured.
+  Pinned by `tests/database/presence.test.ts`.
+- ~~Follow buttons disagreed per surface~~ — a single `FollowProvider` hydrates
+  the member's outgoing follows once and every `FollowButton` (Discover, People,
+  Moments, lists, public profile) reads and mutates that one set, with
+  optimistic writes, per-target pending locks and rollback.
 - ~~`birth_date` was readable by any signed-in member~~ — revoked at the column
   level (`20261015260000_m15_revoke_birth_date.sql`). Note the naively obvious
   `revoke select (birth_date)` is a **no-op** while a table-wide grant exists; see

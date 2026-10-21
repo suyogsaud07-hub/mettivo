@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { detectFileMediaType } from '@/lib/media-signature';
 import type { MomentMediaType } from '@/lib/types';
 
 /**
@@ -7,13 +8,15 @@ import type { MomentMediaType } from '@/lib/types';
  * WHY THIS EXISTS
  *   The browser talks straight to Supabase (there is no application server), so
  *   the heavy lifting — resizing a photo before it leaves the device, refusing a
- *   video longer than ten seconds, and writing the object to Storage — all has
- *   to happen here. Doing it client-side keeps Storage small and the feed fast,
- *   and means a member on a slow connection uploads kilobytes, not megabytes.
+ *   video longer than the Reel limit, and writing the object to Storage — all
+ *   has to happen here. Doing it client-side keeps Storage small and the feed
+ *   fast, and means a member on a slow connection uploads kilobytes, not
+ *   megabytes.
  *
- * The only server-side rule is in SQL: `record_moment_view()` owns the view
- * counter and the bucket policies scope writes to `<user-id>/…`. Nothing in
- * this module is trusted for authorisation.
+ * The only server-side rules are in SQL: the `moments_*` CHECK constraints own
+ * the Reel shape and duration, `record_moment_view()` owns the view counter, and
+ * the bucket policies scope writes to `<user-id>/…`. Nothing in this module is
+ * trusted for authorisation.
  */
 
 /** Raised for expected media failures (unsupported type, too large, upload failed). */
@@ -24,8 +27,20 @@ export class MediaError extends Error {
   }
 }
 
-/** Videos longer than this are rejected before upload. */
-export const MAX_VIDEO_SECONDS = 10;
+/**
+ * The longest video a Reel may be.
+ *
+ * Kept in sync with `MAX_REEL_SECONDS` in `@/lib/moments` and the
+ * `moments_reel_shape_chk` SQL constraint. The client check gives a friendly
+ * message; the constraint is the boundary.
+ */
+export const MAX_VIDEO_SECONDS = 120;
+
+/**
+ * A single Post may carry several items, but a Reel and an ordinary video are
+ * one file. The cap matches `MAX_MOMENT_MEDIA` in `@/lib/moments`.
+ */
+export const MAX_POST_MEDIA = 10;
 
 /** Hard ceiling for a video file, so a huge file fails fast and locally. */
 const MAX_VIDEO_BYTES = 50 * 1024 * 1024; // 50 MB
@@ -82,9 +97,55 @@ export function resolveMediaType(
 
 /** Validates and (for images) optimizes a file the member picked. */
 export async function prepareMedia(file: File): Promise<PreparedMedia> {
-  if (isImageFile(file)) return prepareImage(file);
-  if (isVideoFile(file)) return prepareVideo(file);
-  throw new MediaError('That file type is not supported. Choose an image or a short video.');
+  const claimed: MomentMediaType | null = isImageFile(file)
+    ? 'image'
+    : isVideoFile(file)
+      ? 'video'
+      : null;
+
+  if (!claimed) {
+    throw new MediaError('That file type is not supported. Choose an image or a short video.');
+  }
+
+  // The MIME type is only a hint; confirm the real bytes agree before we trust it.
+  const actual = await detectFileMediaType(file);
+  if (actual === null) {
+    throw new MediaError('That file could not be recognised as an image or video.');
+  }
+  if (actual !== claimed) {
+    throw new MediaError('That file does not match its type. Choose a real image or video.');
+  }
+
+  return claimed === 'image' ? prepareImage(file) : prepareVideo(file);
+}
+
+/**
+ * Validates and optimizes a batch of files for one Post.
+ *
+ * Order is preserved and the count is capped at `max`, mirroring the SQL
+ * `moments_media_max` constraint so the member is told before uploading.
+ * A Reel must pass `max: 1` and be a video; the caller enforces the kind.
+ */
+export async function prepareMediaList(
+  files: readonly File[],
+  max: number = MAX_POST_MEDIA
+): Promise<PreparedMedia[]> {
+  if (files.length === 0) throw new MediaError('Choose at least one photo or video.');
+  if (files.length > max) {
+    throw new MediaError(`You can attach at most ${max} items.`);
+  }
+
+  const prepared: PreparedMedia[] = [];
+  try {
+    for (const file of files) {
+      prepared.push(await prepareMedia(file));
+    }
+    return prepared;
+  } catch (error) {
+    // Release whatever preview URLs were created before the failure.
+    prepared.forEach((media) => releaseMedia(media));
+    throw error;
+  }
 }
 
 /** Releases the object URL backing a preview, so the blob can be collected. */

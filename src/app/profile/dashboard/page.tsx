@@ -845,7 +845,20 @@ export default function ProfileDashboardPage() {
                 aria-pressed={textDraft === option.code}
                 onClick={() => setTextDraft(option.code)}
               >
-                {option.name} ({option.code})
+                <span style={{ display: 'block', fontWeight: 700 }}>
+                  {option.name} ({option.code})
+                </span>
+                <span
+                  style={{
+                    display: 'block',
+                    marginTop: 3,
+                    fontSize: 12,
+                    lineHeight: 1.4,
+                    opacity: 0.78,
+                  }}
+                >
+                  {option.description}
+                </span>
               </button>
             ))}
           </div>

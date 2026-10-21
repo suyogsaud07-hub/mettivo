@@ -122,3 +122,82 @@ export async function fetchPublicProfile(userId: string): Promise<PublicProfile 
 
   return (data as PublicProfile | null) ?? null;
 }
+
+/**
+ * The minimum public identity needed by a list or conversation header.
+ *
+ * Deliberately narrower than `PublicProfile`: a chat list needs a name, handle
+ * and avatar, not age, religion or anything else. Reads the same allow-listed
+ * view so a private profile column can never be pulled in by accident.
+ */
+export interface PublicIdentity {
+  id: string;
+  first_name: string | null;
+  last_name: string | null;
+  has_last_name: boolean | null;
+  username: string | null;
+  display_name: string | null;
+  avatar_url: string | null;
+}
+
+const PUBLIC_IDENTITY_COLUMNS =
+  'id, first_name, last_name, has_last_name, username, display_name, avatar_url' as const;
+
+const PUBLIC_IDENTITY_CORE_COLUMNS = 'id, display_name, avatar_url' as const;
+
+type PublicIdentityCore = Pick<PublicIdentity, 'id' | 'display_name' | 'avatar_url'>;
+
+/** Fills the split-name fields for a deployment whose view predates them. */
+function identityFromCore(row: PublicIdentityCore): PublicIdentity {
+  return {
+    ...row,
+    first_name: null,
+    last_name: null,
+    has_last_name: null,
+    username: null,
+  };
+}
+
+/**
+ * Loads public identities for a set of member ids, keyed by id.
+ *
+ * Missing ids are simply absent from the map. Callers render their own
+ * "Member" fallback rather than inventing a name, which is the same rule the
+ * database follows for legacy rows.
+ */
+export async function fetchPublicIdentities(
+  ids: readonly string[]
+): Promise<Map<string, PublicIdentity>> {
+  const uniqueIds = [...new Set(ids.filter((id) => typeof id === 'string' && id.length > 0))];
+  if (uniqueIds.length === 0) return new Map();
+
+  const { data, error } = await supabase
+    .from('public_profiles')
+    .select(PUBLIC_IDENTITY_COLUMNS)
+    .in('id', uniqueIds);
+
+  let rows: PublicIdentity[];
+
+  if (error) {
+    if (!isMissingColumnError(error)) {
+      console.error('[public-profiles] identity load failed:', error.message);
+      throw new PublicProfileError(error.message, error.code);
+    }
+
+    const fallback = await supabase
+      .from('public_profiles')
+      .select(PUBLIC_IDENTITY_CORE_COLUMNS)
+      .in('id', uniqueIds);
+
+    if (fallback.error) {
+      console.error('[public-profiles] identity load failed (core fallback):', fallback.error.message);
+      throw new PublicProfileError(fallback.error.message, fallback.error.code);
+    }
+
+    rows = ((fallback.data ?? []) as PublicIdentityCore[]).map(identityFromCore);
+  } else {
+    rows = (data ?? []) as PublicIdentity[];
+  }
+
+  return new Map(rows.map((row) => [row.id, row]));
+}

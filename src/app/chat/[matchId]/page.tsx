@@ -32,6 +32,7 @@ import { ReportModal } from '@/app/components/moderation/ReportModal';
 import { ReportButton } from '@/app/components/moderation/ReportButton';
 import TranslatableMessage from '@/app/components/chat/TranslatableMessage';
 import { usePreferredTranslationLanguage } from '@/app/components/chat/usePreferredTranslationLanguage';
+import { fetchPublicIdentities, type PublicIdentity } from '@/lib/public-profiles';
 
 /** The 24-hour window offered by the disappearing-chat toggle. */
 const DISAPPEARING_SECONDS = 86_400;
@@ -67,6 +68,7 @@ export default function ChatPage({
   const [newMessage, setNewMessage] = useState('');
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [otherUserId, setOtherUserId] = useState<string | null>(null);
+  const [otherIdentity, setOtherIdentity] = useState<PublicIdentity | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [blocking, setBlocking] = useState(false);
@@ -274,6 +276,36 @@ export default function ChatPage({
     };
   }, [matchId]);
 
+  // The header shows the other member's public identity (name and @handle),
+  // never their private profile fields. Read through the allow-listed view.
+  useEffect(() => {
+    if (!otherUserId) return;
+
+    let cancelled = false;
+
+    fetchPublicIdentities([otherUserId])
+      .then((identities) => {
+        if (!cancelled) setOtherIdentity(identities.get(otherUserId) ?? null);
+      })
+      .catch((identityError: unknown) => {
+        // The thread remains usable without a header name; do not block it.
+        console.error('Failed to load conversation identity:', identityError);
+        if (!cancelled) setOtherIdentity(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [otherUserId]);
+
+  const activeIdentity =
+    otherIdentity && otherIdentity.id === otherUserId ? otherIdentity : null;
+  const conversationName =
+    activeIdentity?.display_name?.trim() || activeIdentity?.username || 'Conversation';
+  const conversationUsername = activeIdentity?.username
+    ? `@${activeIdentity.username.replace(/^@/, '')}`
+    : null;
+
   const sendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -418,15 +450,23 @@ export default function ChatPage({
 
   return (
     <div className="flex flex-col h-screen max-w-md mx-auto p-4 bg-neutral-950 text-white">
-      {/* Header with back button and report/block menu */}
-      <div className="flex items-center justify-between mb-4">
+      {/* Header with back button, the other member's public identity and menu */}
+      <div className="flex items-center justify-between gap-2 mb-4">
         <button
           onClick={() => window.history.back()}
-          className="px-3 py-1 rounded text-sm bg-neutral-800 hover:bg-neutral-700"
+          className="px-3 py-1 rounded text-sm bg-neutral-800 hover:bg-neutral-700 shrink-0"
         >
           ← Back
         </button>
-        <div className="flex items-center gap-2">
+        <div className="min-w-0 flex-1 text-center">
+          <p className="truncate text-sm font-semibold text-neutral-100">
+            {conversationName}
+          </p>
+          {conversationUsername ? (
+            <p className="truncate text-xs text-amber-200/80">{conversationUsername}</p>
+          ) : null}
+        </div>
+        <div className="flex items-center gap-2 relative shrink-0">
           <button
             onClick={() => setMenuOpen(!menuOpen)}
             className="p-1 rounded bg-neutral-800 hover:bg-neutral-700"
