@@ -309,6 +309,50 @@ export interface GameStats {
   winRate: number | null;
 }
 
+/**
+ * One distinct member who viewed the signed-in profile owner.
+ *
+ * A repeated visit stays the SAME row: `view_count` grows and `last_viewed_at`
+ * moves, so a returning viewer is never double-counted as a new one.
+ */
+export interface ProfileViewerRow {
+  viewer_id: string;
+  first_name: string | null;
+  last_name: string | null;
+  has_last_name: boolean;
+  username: string | null;
+  display_name: string | null;
+  avatar_url: string | null;
+  is_online: boolean;
+  first_viewed_at: string;
+  last_viewed_at: string;
+  /** Total recorded visits by this viewer (> 1 means returning). */
+  view_count: number;
+  is_followed_by_me: boolean;
+}
+
+/** Aggregate metrics for the signed-in member's own profile views. */
+export interface ProfileViewSummary {
+  /** Distinct accounts, the primary public metric. */
+  unique_viewers: number;
+  /** Distinct accounts with more than one recorded visit. */
+  returning_viewers: number;
+  /** All recorded visits, including repeats. Never labelled as unique. */
+  total_visits: number;
+  /** Most recent visit, or null when nobody has viewed the profile. */
+  most_recent_at: string | null;
+}
+
+/** Result of recording a profile visit through `record_profile_view`. */
+export interface RecordProfileViewResult {
+  recorded: boolean;
+  reason?: 'self_view' | 'missing_profile' | 'blocked';
+  is_new_viewer?: boolean;
+  unique_viewers?: number;
+  total_visits?: number;
+  viewer_visits?: number;
+}
+
 
 
 

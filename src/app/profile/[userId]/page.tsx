@@ -1,10 +1,12 @@
 'use client';
 
-import { useEffect, useState, use } from 'react';
+import { useEffect, useRef, useState, use } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { fetchUserMoments, likeMoment, unlikeMoment } from '@/lib/moments';
 import { isFollowing, findMatchId } from '@/lib/follows';
+import { isProfileLiked } from '@/lib/likes';
+import { fetchProfileViewCount, recordProfileView } from '@/lib/profile-views';
 import { fetchPublicProfile, PublicProfileError, type PublicProfile } from '@/lib/public-profiles';
 import type { MomentAuthor, MomentFeedRow } from '@/lib/types';
 import MobileNav from '../../components/layout/MobileNav';
@@ -13,6 +15,7 @@ import ProfileTabs, { type ProfileTab } from '../../components/profile/ProfileTa
 import ProfileDetails from '../../components/profile/ProfileDetails';
 import ProfileMoments from '../../components/profile/ProfileMoments';
 import FollowButton from '../../components/profile/FollowButton';
+import ProfileLikeButton from '../../components/profile/ProfileLikeButton';
 import { ReportButton } from '../../components/moderation/ReportButton';
 
 /**
@@ -42,6 +45,20 @@ export default function PublicProfilePage({ params }: { params: Promise<{ userId
   const [notice, setNotice] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<ProfileTab>('feed');
 
+  // Profile-like and profile-view state. The like count is seeded from the
+  // profile row and adjusted only after the database confirms the change.
+  const [liked, setLiked] = useState(false);
+  const [likeCount, setLikeCount] = useState(0);
+  const [viewCount, setViewCount] = useState<number | undefined>(undefined);
+
+  /**
+   * One genuine visit per profile navigation. The ref survives React Strict
+   * Mode's effect replay and re-renders, so a single navigation cannot be
+   * recorded twice, while a real unmount/remount (leaving and returning) uses a
+   * fresh instance and is recorded again.
+   */
+  const recordedViewRef = useRef<string | null>(null);
+
   const [posts, setPosts] = useState<MomentFeedRow[]>([]);
   const [postsLoading, setPostsLoading] = useState(true);
   const [postsError, setPostsError] = useState<string | null>(null);
@@ -60,6 +77,9 @@ export default function PublicProfilePage({ params }: { params: Promise<{ userId
       setFollowing(false);
       setMatchId(null);
       setNotice(null);
+      setLiked(false);
+      setLikeCount(0);
+      setViewCount(undefined);
 
       try {
         const {
@@ -81,13 +101,20 @@ export default function PublicProfilePage({ params }: { params: Promise<{ userId
           return;
         }
         setProfile(data);
+        setLikeCount(data.profile_likes_count ?? 0);
 
-        const followState = user.id === userId ? false : await isFollowing(userId);
+        const isSelf = user.id === userId;
+
+        const followState = isSelf ? false : await isFollowing(userId);
         if (!cancelled) setFollowing(followState);
+
+        // Load the caller's existing like so the button renders "Liked" on entry.
+        const likedState = isSelf ? false : await isProfileLiked(userId);
+        if (!cancelled) setLiked(likedState);
 
         // Messaging is unlocked only by a match (reciprocal cross-gender
         // follow, or a mutual like). Look it up so the profile can offer a chat.
-        const connectionId = user.id === userId ? null : await findMatchId(userId);
+        const connectionId = isSelf ? null : await findMatchId(userId);
         if (!cancelled) setMatchId(connectionId);
       } catch (err) {
         console.error('[public-profile] load failed:', err);
@@ -108,6 +135,56 @@ export default function PublicProfilePage({ params }: { params: Promise<{ userId
       cancelled = true;
     };
   }, [userId, router]);
+
+  // Record a genuine visit to someone else's profile. This is deliberately a
+  // separate effect: a failure here is logged and swallowed so the profile still
+  // renders. Preloads never reach this page, and the ref prevents React Strict
+  // Mode's effect replay from recording the same navigation twice.
+  useEffect(() => {
+    // Only a profile that actually rendered counts as a view: a missing or
+    // unreadable profile must not inflate someone's analytics.
+    if (!profile || profile.id !== userId || !currentUserId || currentUserId === userId) return;
+    if (recordedViewRef.current === userId) return;
+    recordedViewRef.current = userId;
+
+    void (async () => {
+      try {
+        const result = await recordProfileView(userId);
+        // Only apply the result if the member is still looking at this profile.
+        if (recordedViewRef.current === userId && result.recorded) {
+          if (result.unique_viewers !== undefined) setViewCount(result.unique_viewers);
+        }
+      } catch (err) {
+        console.error('[public-profile] view tracking failed:', err);
+        try {
+          const count = await fetchProfileViewCount(userId);
+          if (recordedViewRef.current === userId) setViewCount(count);
+        } catch (fallbackErr) {
+          console.error('[public-profile] view count fallback failed:', fallbackErr);
+        }
+      }
+    })();
+  }, [currentUserId, userId, profile]);
+
+  // Viewing your own profile does not record a visit, but the public count is
+  // still shown.
+  useEffect(() => {
+    if (!currentUserId || currentUserId !== userId) return;
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const count = await fetchProfileViewCount(userId);
+        if (!cancelled) setViewCount(count);
+      } catch (err) {
+        console.error('[public-profile] view count failed:', err);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUserId, userId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -171,6 +248,14 @@ export default function PublicProfilePage({ params }: { params: Promise<{ userId
         )
       );
     }
+  };
+
+  const handleLikedChange = (nowLiked: boolean) => {
+    // Runs only after the database confirmed the change, so this reflects the
+    // real count delta rather than an optimistic guess. Keep the prop in sync so
+    // the button cannot revert when the page re-renders for another reason.
+    setLiked(nowLiked);
+    setLikeCount((current) => Math.max(0, current + (nowLiked ? 1 : -1)));
   };
 
   const handleSendText = () => {
@@ -264,7 +349,8 @@ export default function PublicProfilePage({ params }: { params: Promise<{ userId
         matches={profile.matches_count ?? 0}
         following={profile.following_count ?? 0}
         followers={profile.followers_count ?? 0}
-        likes={profile.profile_likes_count ?? 0}
+        likes={likeCount}
+        views={viewCount}
         onStatNavigate={(key) => {
           // Only Followers is browsable on another member's profile. Matches,
           // Following and Likes stay informational (see the list privacy RPCs).
@@ -277,8 +363,15 @@ export default function PublicProfilePage({ params }: { params: Promise<{ userId
           !isOwn ? (
             <>
               <FollowButton targetUserId={profile.id} initialFollowing={following} size="md" />
+              <ProfileLikeButton
+                key={profile.id}
+                targetUserId={profile.id}
+                initialLiked={liked}
+                onLikedChange={handleLikedChange}
+                size="md"
+              />
               <button type="button" onClick={handleSendText} style={styles.sendTextButton}>
-                Send Text
+                Message
               </button>
             </>
           ) : null

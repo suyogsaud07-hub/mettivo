@@ -25,6 +25,11 @@ export interface ProfileHeaderProps {
   following: number;
   followers: number;
   likes: number;
+  /**
+   * Public unique-viewer count. Omitted on the owner dashboard, which shows the
+   * dedicated Profile Views button instead.
+   */
+  views?: number;
   onStatNavigate?: (key: ProfileStatKey) => void;
   /** Counters that open a list. On another member's profile, Followers only. */
   navigableStats?: ProfileStatKey[];
@@ -53,6 +58,7 @@ export default function ProfileHeader({
   following,
   followers,
   likes,
+  views,
   onStatNavigate,
   navigableStats,
   actions,
@@ -91,6 +97,28 @@ export default function ProfileHeader({
           <p className="pf-meta">{meta}</p>
 
           <IntentionBadge intention={intention} className="pf-intention" />
+
+          {views !== undefined ? (
+            <p className="pf-views-meta" aria-label={`${views} profile views`}>
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.9"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z" />
+                <circle cx="12" cy="12" r="3" />
+              </svg>
+              <span>
+                <strong>{views}</strong> profile view{views === 1 ? '' : 's'}
+              </span>
+            </p>
+          ) : null}
 
           {actions && <div className="pf-actions">{actions}</div>}
         </div>

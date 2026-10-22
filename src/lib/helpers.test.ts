@@ -55,13 +55,14 @@ describe('notification actions', () => {
 
   it('returns no action when a deep link is impossible', () => {
     expect(actionForNotification(notification({ type: 'match', entity_id: null }))).toBeNull();
-    expect(actionForNotification(notification({ type: 'visitor' }))).toBeNull();
+    expect(actionForNotification(notification({ type: 'visitor', actor_id: null }))).toBeNull();
     expect(actionForNotification(notification({ type: 'report' }))).toBeNull();
   });
 
   it('routes profile-driven notifications to a browsing surface', () => {
     expect(actionForNotification(notification({ type: 'like' }))?.href).toBe('/discover');
     expect(actionForNotification(notification({ type: 'follow' }))?.href).toBe('/people');
+    expect(actionForNotification(notification({ type: 'visitor' }))?.href).toBe('/profile/u2');
   });
 });
 

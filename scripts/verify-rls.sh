@@ -83,6 +83,10 @@ TABLES=(
   # M25 disappearing chat media. The ledger names the match and the sender and
   # is participant-readable only; the bytes live in a private Storage bucket.
   "chat_media"
+  # Profile-view analytics. RPC-only and names every viewer, so no client role
+  # (including authenticated) has a table grant. Skipped until the migration is
+  # applied to the project being checked.
+  "profile_viewers"
 )
 
 failures=0

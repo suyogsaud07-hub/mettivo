@@ -83,6 +83,10 @@ export function actionForNotification(
       return { label: 'View', href: '/discover' };
     case 'follow':
       return { label: 'View', href: '/people' };
+    case 'visitor':
+      return notification.actor_id
+        ? { label: 'View', href: `/profile/${notification.actor_id}` }
+        : null;
     default:
       return null;
   }

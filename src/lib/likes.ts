@@ -91,3 +91,85 @@ export async function recordLike(
 
   return result;
 }
+
+/**
+ * Likes another member's profile.
+ *
+ * Delegates to the existing `record_like` RPC, so the `likes` unique pair,
+ * the no-self-like CHECK and the blocked-pair rejection all still apply. Liking
+ * twice is idempotent: the same row is updated, never duplicated.
+ */
+export async function likeProfile(targetUserId: string): Promise<RecordLikeResult> {
+  return recordLike(targetUserId, true);
+}
+
+/**
+ * Removes the caller's like from another member's profile.
+ *
+ * Deleting the row (rather than writing `is_like = false`) is the honest
+ * "unlike": the `likes_sync_profile_counts` trigger decrements the target's
+ * `profile_likes_count`, and the member is no longer recorded as having liked
+ * the profile. A pass recorded elsewhere in the product is left untouched.
+ */
+export async function unlikeProfile(targetUserId: string): Promise<void> {
+  if (!targetUserId) {
+    throw new LikeError('A target user is required.');
+  }
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    throw new LikeError('You must be signed in to do that.', '28000');
+  }
+
+  if (user.id === targetUserId) {
+    throw new LikeError('You cannot like yourself.');
+  }
+
+  const { error } = await supabase
+    .from('likes')
+    .delete()
+    .eq('liker_id', user.id)
+    .eq('liked_id', targetUserId)
+    .eq('is_like', true);
+
+  if (error) {
+    console.error('[likes] unlike failed:', error.message);
+    throw new LikeError(error.message, error.code);
+  }
+}
+
+/**
+ * Whether the signed-in member currently has an ACTIVE like on `targetUserId`.
+ *
+ * A pass (`is_like = false`) is not a like. Reads are permitted by
+ * `likes_select_involved` (the caller is the liker). A read failure degrades to
+ * `false`, matching `isFollowing`, so a transient error cannot show a false
+ * "Liked" state.
+ */
+export async function isProfileLiked(targetUserId: string): Promise<boolean> {
+  if (!targetUserId) return false;
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user || user.id === targetUserId) return false;
+
+  const { data, error } = await supabase
+    .from('likes')
+    .select('id')
+    .eq('liker_id', user.id)
+    .eq('liked_id', targetUserId)
+    .eq('is_like', true)
+    .maybeSingle();
+
+  if (error) {
+    console.error('[likes] isProfileLiked failed:', error.message);
+    return false;
+  }
+
+  return Boolean(data);
+}
