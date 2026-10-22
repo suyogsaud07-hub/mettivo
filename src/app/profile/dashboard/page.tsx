@@ -26,6 +26,7 @@ import {
   updateMomentCaption,
 } from '@/lib/moments';
 import { isMissingColumnError } from '@/lib/postgrest-errors';
+import { fetchProfileViewCount } from '@/lib/profile-views';
 import type { MomentAuthor, MomentFeedRow, MomentVisibility } from '@/lib/types';
 import MobileNav from '../../components/layout/MobileNav';
 import ProfileHeader from '../../components/profile/ProfileHeader';
@@ -189,6 +190,7 @@ function withDefaultCounts(row: ProfileCoreRow): Profile {
 export default function ProfileDashboardPage() {
   const router = useRouter();
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [viewCount, setViewCount] = useState<number | null>(null);
   const [userEmail, setUserEmail] = useState<string>('');
   const [phone, setPhone] = useState<string>('');
   const [loading, setLoading] = useState(true);
@@ -334,6 +336,30 @@ export default function ProfileDashboardPage() {
         }
       } finally {
         if (!cancelled) setPostsLoading(false);
+      }
+    };
+
+    void load();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [profileId]);
+
+  // The Profile Views pill shows the public unique-viewer aggregate. A failed
+  // read is nonfatal: the pill falls back to an unavailable placeholder while
+  // the analytics screen remains reachable.
+  useEffect(() => {
+    if (!profileId) return;
+    let cancelled = false;
+
+    const load = async () => {
+      try {
+        const count = await fetchProfileViewCount(profileId);
+        if (!cancelled) setViewCount(count);
+      } catch (err) {
+        console.error('Failed to load profile view count:', err);
+        if (!cancelled) setViewCount(null);
       }
     };
 
@@ -1118,8 +1144,27 @@ export default function ProfileDashboardPage() {
           following={profile.following_count}
           followers={profile.followers_count}
           likes={profile.profile_likes_count}
+          bio={profile.bio}
+          emptyBio={
+            viewAs
+              ? 'No bio added yet.'
+              : 'Add a short bio so people have something to start a conversation about.'
+          }
+          bioAction={
+            !viewAs ? (
+              <button
+                type="button"
+                className="pf-link-btn"
+                onClick={() => openEditor('bio')}
+                aria-label={profile.bio?.trim() ? 'Edit bio' : 'Add bio'}
+                data-testid="bio-edit-button"
+              >
+                {profile.bio?.trim() ? 'Edit bio' : 'Add bio'}
+              </button>
+            ) : undefined
+          }
           onStatNavigate={(key) => router.push(`/profile/stats/${key}`)}
-          topAction={!viewAs ? <ProfileViewsIconButton /> : undefined}
+          topAction={!viewAs ? <ProfileViewsIconButton count={viewCount} /> : undefined}
           actions={
             !viewAs ? (
               <button
@@ -1177,47 +1222,8 @@ export default function ProfileDashboardPage() {
           </div>
         )}
 
-        <div className={`pf-overview${isComplete ? ' pf-overview-single' : ''}`}>
-          <section className="pf-card" aria-labelledby="profile-about-title">
-            <div className="pf-section-head">
-              <h2 className="pf-section-title" id="profile-about-title">
-                About
-              </h2>
-              {!viewAs && (
-                <button
-                  type="button"
-                  className="pf-link-btn"
-                  onClick={() => openEditor('bio')}
-                  aria-label="Edit Bio"
-                  data-testid="bio-edit-button"
-                >
-                  Edit
-                </button>
-              )}
-            </div>
-            {profile.bio?.trim() ? (
-              <p className="pf-bio">{profile.bio}</p>
-            ) : (
-              <p className="pf-muted">
-                {viewAs
-                  ? 'No bio added yet.'
-                  : 'Add a short bio so people have something to start a conversation about.'}
-              </p>
-            )}
-            {!viewAs && !profile.bio?.trim() && (
-              <div className="pf-about-actions">
-                <button
-                  type="button"
-                  className="pf-btn pf-btn-small pf-btn-quiet"
-                  onClick={() => openEditor('bio')}
-                >
-                  Add bio
-                </button>
-              </div>
-            )}
-          </section>
-
-          {!viewAs && !isComplete && (
+        {!viewAs && !isComplete && (
+          <div className="pf-overview pf-overview-single">
             <section className="pf-card pf-completion" aria-labelledby="profile-strength-title">
               <svg
                 className="pf-ring"
@@ -1258,8 +1264,8 @@ export default function ProfileDashboardPage() {
                 Finish
               </button>
             </section>
-          )}
-        </div>
+          </div>
+        )}
 
         <ProfileTabs active={activeTab} onChange={setActiveTab} />
 

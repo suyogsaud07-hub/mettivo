@@ -8,9 +8,10 @@ import ProfileStatCards, { type ProfileStatKey } from './ProfileStatCards';
  * The profile hero: avatar, identity, intention and the four primary counters.
  *
  * Shared by the member's own dashboard and another member's public profile, so
- * the two surfaces stay structurally identical. `actions` is how the owner gets
- * Edit Profile and a visitor gets Follow / Like / Message; `topAction` is the
- * quiet Profile Views control above them.
+ * the two surfaces stay structurally identical. The identity, biography and
+ * counters form one centered column; `actions` is how the owner gets Edit
+ * Profile and a visitor gets Follow / Like / Message. `topAction` is the Profile
+ * Views pill in the top-right corner, independent of the centered identity.
  */
 export interface ProfileHeaderProps {
   displayName: string;
@@ -26,17 +27,18 @@ export interface ProfileHeaderProps {
   following: number;
   followers: number;
   likes: number;
-  /**
-   * Public unique-viewer count. Omitted on the owner dashboard, which uses the
-   * dedicated Profile Views action instead.
-   */
-  views?: number;
   onStatNavigate?: (key: ProfileStatKey) => void;
   /** Counters that open a list. On another member's profile, Followers only. */
   navigableStats?: ProfileStatKey[];
-  /** A quiet control rendered above the action row, aligned to its right edge. */
+  /** A compact control rendered in the top-right corner of the header card. */
   topAction?: ReactNode;
-  /** Extra controls rendered under the intention pill (Edit Profile / Follow). */
+  /** The member's biography, rendered directly below the identity. */
+  bio?: string | null;
+  /** Copy shown when the biography is empty. */
+  emptyBio?: string;
+  /** Owner edit control or visitor report affordance, rendered under the bio. */
+  bioAction?: ReactNode;
+  /** Owner (Edit Profile) or visitor (Follow / Like / Message) controls. */
   actions?: ReactNode;
 }
 
@@ -61,10 +63,12 @@ export default function ProfileHeader({
   following,
   followers,
   likes,
-  views,
   onStatNavigate,
   navigableStats,
   topAction,
+  bio,
+  emptyBio = 'No bio added yet.',
+  bioAction,
   actions,
 }: ProfileHeaderProps) {
   const safeName = String(displayName ?? '').trim() || 'Member';
@@ -75,6 +79,8 @@ export default function ProfileHeader({
   return (
     <>
       <section className="pf-hero" aria-label="Profile overview">
+        {topAction ? <div className="pf-hero-top">{topAction}</div> : null}
+
         <div className="pf-identity">
           <div className="pf-avatar-wrap">
             {avatarUrl ? (
@@ -102,34 +108,14 @@ export default function ProfileHeader({
 
           <IntentionBadge intention={intention} className="pf-intention" />
 
-          {views !== undefined ? (
-            <p className="pf-views-meta" aria-label={`${views} profile views`}>
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.9"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z" />
-                <circle cx="12" cy="12" r="3" />
-              </svg>
-              <span>
-                <strong>{views}</strong> profile view{views === 1 ? '' : 's'}
-              </span>
-            </p>
-          ) : null}
-
-          {(topAction || actions) && (
-            <div className="pf-action-stack">
-              {topAction ? <div className="pf-action-top">{topAction}</div> : null}
-              {actions ? <div className="pf-actions">{actions}</div> : null}
-            </div>
-          )}
+          <div className="pf-hero-bio-block">
+            {bio?.trim() ? (
+              <p className="pf-hero-bio">{bio}</p>
+            ) : (
+              <p className="pf-hero-bio pf-hero-bio-empty">{emptyBio}</p>
+            )}
+            {bioAction ? <div className="pf-hero-bio-action">{bioAction}</div> : null}
+          </div>
         </div>
 
         <ProfileStatCards
@@ -140,6 +126,8 @@ export default function ProfileHeader({
           onNavigate={onStatNavigate}
           navigableStats={navigableStats}
         />
+
+        {actions ? <div className="pf-actions">{actions}</div> : null}
       </section>
     </>
   );

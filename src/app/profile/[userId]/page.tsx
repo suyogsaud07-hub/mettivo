@@ -152,9 +152,15 @@ export default function PublicProfilePage({ params }: { params: Promise<{ userId
       try {
         const result = await recordProfileView(userId);
         // Only apply the result if the member is still looking at this profile.
-        if (recordedViewRef.current === userId && result.recorded) {
-          if (result.unique_viewers !== undefined) setViewCount(result.unique_viewers);
+        if (recordedViewRef.current !== userId) return;
+        if (result.unique_viewers !== undefined) {
+          setViewCount(result.unique_viewers);
+          return;
         }
+        // A blocked/missing profile is not recorded, but the public aggregate
+        // is still useful and safe to display.
+        const count = await fetchProfileViewCount(userId);
+        if (recordedViewRef.current === userId) setViewCount(count);
       } catch (err) {
         console.error('[public-profile] view tracking failed:', err);
         try {
@@ -351,7 +357,17 @@ export default function PublicProfilePage({ params }: { params: Promise<{ userId
         following={profile.following_count ?? 0}
         followers={profile.followers_count ?? 0}
         likes={likeCount}
-        views={viewCount}
+        bio={profile.bio}
+        bioAction={
+          !isOwn && profile.bio?.trim() ? (
+            <ReportButton
+              targetUserId={profile.id}
+              targetType="bio"
+              title={`Report ${displayName}'s bio`}
+              ariaLabel={`Report ${displayName}'s bio`}
+            />
+          ) : undefined
+        }
         onStatNavigate={(key) => {
           // Only Followers is browsable on another member's profile. Matches,
           // Following and Likes stay informational (see the list privacy RPCs).
@@ -360,7 +376,9 @@ export default function PublicProfilePage({ params }: { params: Promise<{ userId
           }
         }}
         navigableStats={['followers']}
-        topAction={!isOwn ? <ProfileViewsIconButton /> : undefined}
+        topAction={
+          !isOwn ? <ProfileViewsIconButton count={viewCount ?? null} /> : undefined
+        }
         actions={
           !isOwn ? (
             <>
@@ -381,27 +399,6 @@ export default function PublicProfilePage({ params }: { params: Promise<{ userId
       />
 
       {notice && <div style={styles.notice}>{notice}</div>}
-
-      <div style={styles.section}>
-        <div style={styles.sectionHeader}>
-          <div style={styles.sectionIcon}>📝</div>
-          <div style={styles.sectionTitle}>Bio</div>
-          {!isOwn && profile.bio?.trim() ? (
-            <ReportButton
-              targetUserId={profile.id}
-              targetType="bio"
-              title={`Report ${displayName}'s bio`}
-              ariaLabel={`Report ${displayName}'s bio`}
-              className="ml-auto"
-            />
-          ) : null}
-        </div>
-        {profile.bio?.trim() ? (
-          <p style={styles.bioText}>{profile.bio}</p>
-        ) : (
-          <div style={styles.emptyText}>No bio added yet.</div>
-        )}
-      </div>
 
       <ProfileTabs active={activeTab} onChange={setActiveTab} />
 
@@ -499,27 +496,6 @@ const styles = {
   },
   iconSpacer: { width: '40px', height: '40px' },
   title: { fontSize: '18px', fontWeight: 700, color: '#EAE2F0', letterSpacing: '0.5px' },
-  section: {
-    margin: '0 20px 24px 20px',
-    backgroundColor: '#211A28',
-    borderRadius: '20px',
-    padding: '20px',
-    border: '1px solid #34283F',
-  },
-  sectionHeader: { display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' },
-  sectionIcon: {
-    width: '32px',
-    height: '32px',
-    borderRadius: '10px',
-    background: 'linear-gradient(135deg, #4A1828, #D8B38A)',
-    display: 'flex',
-    justifyContent: 'center',
-    alignItems: 'center',
-    fontSize: '16px',
-  },
-  sectionTitle: { fontSize: '16px', fontWeight: 700, color: '#EAE2F0' },
-  bioText: { fontSize: '14px', color: '#EAE2F0', lineHeight: 1.6, margin: 0 },
-  emptyText: { fontSize: '13px', color: '#B58A83' },
   empty: {
     margin: '40px 20px',
     padding: '40px 24px',

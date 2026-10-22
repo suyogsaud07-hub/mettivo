@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { E2E_OTHER_USER_ID, signedIn, stubSupabase } from './fixtures';
+import { E2E_OTHER_USER_ID, E2E_USER_ID, signedIn, stubSupabase } from './fixtures';
 
 const otherProfile = {
   id: E2E_OTHER_USER_ID,
@@ -154,7 +154,11 @@ test.describe('profile view analytics', () => {
     await page.goto(`/profile/${E2E_OTHER_USER_ID}`);
 
     await expect(page.getByRole('button', { name: 'Like Profile' })).toBeVisible();
-    await expect(page.locator('.pf-views-meta[aria-label="4 profile views"]')).toBeVisible();
+    const countPill = page.locator('.pf-hero-top .pf-views-pill');
+    await expect(countPill).toBeVisible();
+    await expect(countPill).toHaveText('4');
+    await expect(countPill).toHaveAttribute('aria-label', '4 profile viewers. View visitors.');
+    await expect(page.locator('.pf-views-meta')).toHaveCount(0);
     await expect
       .poll(() =>
         stub.writes.some(
@@ -164,6 +168,63 @@ test.describe('profile view analytics', () => {
         )
       )
       .toBe(true);
+  });
+
+  test('shows the owner one eye pill, their bio and inline stats with Edit Profile', async ({
+    page,
+  }) => {
+    await stubSupabase(page, {
+      tables: {
+        profiles: {
+          id: E2E_USER_ID,
+          first_name: 'Ada',
+          last_name: 'Lovelace',
+          has_last_name: true,
+          username: 'ada',
+          display_name: 'Ada Lovelace',
+          age: 31,
+          gender: 'Woman',
+          city: 'Kathmandu',
+          country: 'Nepal',
+          avatar_url: null,
+          bio: 'Line one\nLine two',
+          intention: 'dating',
+          looking_for: ['Men'],
+          hobbies: [],
+          pets: [],
+          prompts: {},
+          interests: [],
+          photos: [],
+          onboarding_completed: true,
+          is_online: true,
+          followers_count: 3,
+          following_count: 2,
+          matches_count: 1,
+          profile_likes_count: 5,
+          status: null,
+        },
+        moment_feed: [],
+        notifications: [],
+      },
+      rpc: { profile_view_count: 7 },
+    });
+
+    await page.goto('/profile/dashboard');
+
+    const eye = page.locator('.pf-hero-top .pf-views-pill');
+    await expect(eye).toHaveText('7');
+    await expect(page.locator('.pf-views-pill')).toHaveCount(1);
+    await expect(page.locator('.pf-hero-bio')).toHaveText(/Line one\s+Line two/);
+    await expect(page.getByTestId('bio-edit-button')).toBeVisible();
+    await expect(page.locator('.pf-hero .pf-stat')).toHaveCount(4);
+    const ownerActions = page.locator('.pf-actions');
+    await expect(ownerActions.getByRole('button')).toHaveCount(1);
+    await expect(ownerActions.getByRole('button', { name: 'Edit profile' })).toBeVisible();
+    await expect(ownerActions.getByRole('button', { name: 'Like Profile' })).toHaveCount(0);
+    await expect(ownerActions.getByRole('button', { name: 'Message' })).toHaveCount(0);
+
+    await eye.click();
+    await expect(page).toHaveURL(/\/profile\/stats\/views$/);
   });
 
   test('likes another profile through the existing like RPC', async ({ page }) => {
@@ -230,15 +291,37 @@ test.describe('profile view analytics', () => {
 
     await page.goto(`/profile/${E2E_OTHER_USER_ID}`);
 
-    const eye = page.locator('.pf-action-top .pf-views-icon-btn');
+    const eye = page.locator('.pf-hero-top .pf-views-pill');
     await expect(eye).toBeVisible();
-    await expect(eye).toHaveText('');
-    await expect(eye).toHaveAttribute('aria-label', 'View profile visitors');
+    await expect(eye).toHaveText('4');
+    await expect(eye).toHaveAttribute('aria-label', '4 profile viewers. View visitors.');
     await expect(eye).toHaveAttribute('title', 'Profile views');
 
-    // The eye sits in its own row above the Follow / Like / Message group.
-    await expect(page.locator('.pf-action-stack > .pf-action-top')).toBeVisible();
-    await expect(page.locator('.pf-action-stack > .pf-actions')).toBeVisible();
+    // One control only: the old text count below the bio is gone.
+    await expect(page.locator('.pf-views-pill')).toHaveCount(1);
+    await expect(page.locator('.pf-views-meta')).toHaveCount(0);
+
+    // The bio is part of the header, not a separate card.
+    const bio = page.locator('.pf-hero .pf-hero-bio');
+    await expect(bio).toHaveText('Hello');
+    await expect(page.getByRole('heading', { name: 'Bio', exact: true })).toHaveCount(0);
+
+    // Four counters in one inline row, then the action buttons.
+    await expect(page.locator('.pf-hero .pf-stat')).toHaveCount(4);
+    const statsBox = await page.locator('.pf-stats').boundingBox();
+    const actionsBox = await page.locator('.pf-actions').boundingBox();
+    const pillBox = await eye.boundingBox();
+    const bioBox = await bio.boundingBox();
+    expect(pillBox).not.toBeNull();
+    expect(bioBox).not.toBeNull();
+    expect(statsBox).not.toBeNull();
+    expect(actionsBox).not.toBeNull();
+    expect(pillBox!.y + pillBox!.height).toBeLessThan(bioBox!.y);
+    expect(bioBox!.y + bioBox!.height).toBeLessThan(statsBox!.y);
+    expect(statsBox!.y + statsBox!.height).toBeLessThan(actionsBox!.y);
+
+    // The inline row is not the old bordered panel.
+    await expect(page.locator('.pf-stats')).toHaveCSS('border-top-width', '0px');
 
     await eye.click();
 
