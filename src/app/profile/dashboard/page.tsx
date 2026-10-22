@@ -26,10 +26,10 @@ import {
   updateMomentCaption,
 } from '@/lib/moments';
 import { isMissingColumnError } from '@/lib/postgrest-errors';
-import { fetchProfileViewCount } from '@/lib/profile-views';
 import type { MomentAuthor, MomentFeedRow, MomentVisibility } from '@/lib/types';
 import MobileNav from '../../components/layout/MobileNav';
 import ProfileHeader from '../../components/profile/ProfileHeader';
+import ProfileViewsIconButton from '../../components/profile/ProfileViewsIconButton';
 import ProfileTabs, { type ProfileTab } from '../../components/profile/ProfileTabs';
 import ProfileDetails from '../../components/profile/ProfileDetails';
 import ProfileMoments from '../../components/profile/ProfileMoments';
@@ -195,10 +195,6 @@ export default function ProfileDashboardPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<ProfileTab>('feed');
 
-  // Unique profile viewers. Null until the aggregate loads; a failed load leaves
-  // the count at zero rather than blocking the dashboard.
-  const [viewCount, setViewCount] = useState<number | null>(null);
-
   // The member's own Moments, shown on the Posts tab.
   const [posts, setPosts] = useState<MomentFeedRow[]>([]);
   const [postsLoading, setPostsLoading] = useState(true);
@@ -306,27 +302,6 @@ export default function ProfileDashboardPage() {
       isMounted = false;
     };
   }, [router]);
-
-  // Aggregate unique viewers for the visible Profile Views button. Keyed on the
-  // id so an inline edit does not re-fetch it.
-  useEffect(() => {
-    if (!profileId) return;
-
-    let cancelled = false;
-    void (async () => {
-      try {
-        const count = await fetchProfileViewCount(profileId);
-        if (!cancelled) setViewCount(count);
-      } catch (err) {
-        console.error('[dashboard] profile view count failed:', err);
-        if (!cancelled) setViewCount(0);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [profileId]);
 
   // GATEKEEPER: redirect to onboarding only when we know for certain that no
   // profile row exists. Bouncing whenever `profile` was null also bounced on
@@ -1144,35 +1119,20 @@ export default function ProfileDashboardPage() {
           followers={profile.followers_count}
           likes={profile.profile_likes_count}
           onStatNavigate={(key) => router.push(`/profile/stats/${key}`)}
+          topAction={!viewAs ? <ProfileViewsIconButton /> : undefined}
           actions={
             !viewAs ? (
-              <>
-                <button
-                  type="button"
-                  className="pf-btn pf-btn-quiet pf-views-cta"
-                  data-testid="profile-views-button"
-                  onClick={() => router.push('/profile/stats/views')}
-                  aria-label={`Profile views: ${viewCount ?? 0}. Open viewer analytics.`}
-                >
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z" />
-                    <circle cx="12" cy="12" r="3" />
-                  </svg>
-                  <span>Profile Views</span>
-                  <span className="pf-views-cta-count">{viewCount ?? 0}</span>
-                </button>
-                <button
-                  type="button"
-                  className="pf-btn pf-btn-primary"
-                  onClick={() => router.push('/profile/edit')}
-                >
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <path d="M12 20h9" />
-                    <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
-                  </svg>
-                  Edit profile
-                </button>
-              </>
+              <button
+                type="button"
+                className="pf-btn pf-btn-primary"
+                onClick={() => router.push('/profile/edit')}
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M12 20h9" />
+                  <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                </svg>
+                Edit profile
+              </button>
             ) : undefined
           }
         />

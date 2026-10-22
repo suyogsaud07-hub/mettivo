@@ -369,13 +369,26 @@ body {
   line-height: 1.3;
 }
 
+.pf-action-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  margin-top: 20px;
+}
+
+.pf-action-top {
+  display: flex;
+  justify-content: flex-end;
+  width: 100%;
+}
+
 .pf-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: center;
   gap: 9px;
-  margin-top: 20px;
 }
 
 /* Buttons ---------------------------------------------------------- */
@@ -2079,27 +2092,49 @@ body:has(.pf-sheet-overlay) .pf-nav {
 }
 
 /* Profile Views ----------------------------------------------------- */
-.pf-views-cta {
-  border-color: rgba(216, 179, 138, 0.42);
-  background: linear-gradient(135deg, rgba(74, 28, 46, 0.58), rgba(216, 179, 138, 0.14));
+.pf-views-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border: 1px solid rgba(216, 179, 138, 0.26);
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 32% 22%, rgba(216, 179, 138, 0.14), transparent 68%),
+    rgba(33, 26, 40, 0.82);
   color: var(--pf-gold);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 8px 20px rgba(0, 0, 0, 0.18);
+  cursor: pointer;
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease,
+    transform 160ms ease;
 }
 
-.pf-views-cta:hover {
-  border-color: var(--pf-gold);
-  background: linear-gradient(135deg, rgba(74, 28, 46, 0.72), rgba(216, 179, 138, 0.22));
+.pf-views-icon-btn:hover {
+  border-color: rgba(216, 179, 138, 0.6);
+  background-color: rgba(74, 28, 46, 0.62);
+  color: var(--met-cream);
 }
 
-.pf-views-cta-count {
-  min-width: 30px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: var(--pf-gold);
-  color: #17110d;
-  font-size: 12px;
-  font-weight: 800;
-  text-align: center;
-  font-variant-numeric: tabular-nums;
+.pf-views-icon-btn:active {
+  transform: scale(0.93);
+}
+
+.pf-views-icon-btn:focus-visible {
+  outline: 2px solid var(--pf-gold);
+  outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pf-views-icon-btn {
+    transition: none;
+  }
 }
 
 .pf-views-meta {

@@ -16,6 +16,7 @@ import ProfileDetails from '../../components/profile/ProfileDetails';
 import ProfileMoments from '../../components/profile/ProfileMoments';
 import FollowButton from '../../components/profile/FollowButton';
 import ProfileLikeButton from '../../components/profile/ProfileLikeButton';
+import ProfileViewsIconButton from '../../components/profile/ProfileViewsIconButton';
 import { ReportButton } from '../../components/moderation/ReportButton';
 
 /**
@@ -359,6 +360,7 @@ export default function PublicProfilePage({ params }: { params: Promise<{ userId
           }
         }}
         navigableStats={['followers']}
+        topAction={!isOwn ? <ProfileViewsIconButton /> : undefined}
         actions={
           !isOwn ? (
             <>

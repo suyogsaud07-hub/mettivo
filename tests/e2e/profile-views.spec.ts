@@ -203,6 +203,51 @@ test.describe('profile view analytics', () => {
     ).toBe(true);
   });
 
+  test('opens the existing analytics from the icon-only eye above the actions', async ({
+    page,
+  }) => {
+    await stubSupabase(page, {
+      tables: {
+        public_profiles: otherProfile,
+        follows: [],
+        likes: [],
+        matches: [],
+        moment_feed: [],
+      },
+      rpc: {
+        record_profile_view: {
+          recorded: true,
+          is_new_viewer: true,
+          unique_viewers: 4,
+          total_visits: 9,
+          viewer_visits: 1,
+        },
+        profile_view_count: 4,
+        profile_view_summary: summary,
+        list_profile_viewers: [viewer],
+      },
+    });
+
+    await page.goto(`/profile/${E2E_OTHER_USER_ID}`);
+
+    const eye = page.locator('.pf-action-top .pf-views-icon-btn');
+    await expect(eye).toBeVisible();
+    await expect(eye).toHaveText('');
+    await expect(eye).toHaveAttribute('aria-label', 'View profile visitors');
+    await expect(eye).toHaveAttribute('title', 'Profile views');
+
+    // The eye sits in its own row above the Follow / Like / Message group.
+    await expect(page.locator('.pf-action-stack > .pf-action-top')).toBeVisible();
+    await expect(page.locator('.pf-action-stack > .pf-actions')).toBeVisible();
+
+    await eye.click();
+
+    await expect(page).toHaveURL(/\/profile\/stats\/views$/);
+    await expect(
+      page.getByRole('heading', { name: 'Who is looking at your profile' })
+    ).toBeVisible();
+  });
+
   test('surfaces a load failure with a retry instead of a blank page', async ({ page }) => {
     await stubSupabase(page, {
       rpc: { list_profile_viewers: [] },

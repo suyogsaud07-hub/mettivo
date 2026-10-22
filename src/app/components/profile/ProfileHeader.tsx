@@ -9,7 +9,8 @@ import ProfileStatCards, { type ProfileStatKey } from './ProfileStatCards';
  *
  * Shared by the member's own dashboard and another member's public profile, so
  * the two surfaces stay structurally identical. `actions` is how the owner gets
- * Edit Profile and a visitor gets Follow / Send Text without forking the markup.
+ * Edit Profile and a visitor gets Follow / Like / Message; `topAction` is the
+ * quiet Profile Views control above them.
  */
 export interface ProfileHeaderProps {
   displayName: string;
@@ -26,13 +27,15 @@ export interface ProfileHeaderProps {
   followers: number;
   likes: number;
   /**
-   * Public unique-viewer count. Omitted on the owner dashboard, which shows the
-   * dedicated Profile Views button instead.
+   * Public unique-viewer count. Omitted on the owner dashboard, which uses the
+   * dedicated Profile Views action instead.
    */
   views?: number;
   onStatNavigate?: (key: ProfileStatKey) => void;
   /** Counters that open a list. On another member's profile, Followers only. */
   navigableStats?: ProfileStatKey[];
+  /** A quiet control rendered above the action row, aligned to its right edge. */
+  topAction?: ReactNode;
   /** Extra controls rendered under the intention pill (Edit Profile / Follow). */
   actions?: ReactNode;
 }
@@ -61,6 +64,7 @@ export default function ProfileHeader({
   views,
   onStatNavigate,
   navigableStats,
+  topAction,
   actions,
 }: ProfileHeaderProps) {
   const safeName = String(displayName ?? '').trim() || 'Member';
@@ -120,7 +124,12 @@ export default function ProfileHeader({
             </p>
           ) : null}
 
-          {actions && <div className="pf-actions">{actions}</div>}
+          {(topAction || actions) && (
+            <div className="pf-action-stack">
+              {topAction ? <div className="pf-action-top">{topAction}</div> : null}
+              {actions ? <div className="pf-actions">{actions}</div> : null}
+            </div>
+          )}
         </div>
 
         <ProfileStatCards
