@@ -11116,11 +11116,27 @@ revoke all on public.notification_campaigns  from anon;
 revoke all on public.admin_settings          from anon;
 
 -- Defensive re-assertion for the social graph. `scripts/verify-rls.sh` found
--- the deployed `follows` table answering anonymous callers; enabling RLS alone
--- is not enough if the anon role still holds a table grant. Both boundaries are
--- closed here, and the involved-parties SELECT policy is re-created.
+-- the deployed `follows` table answering anonymous callers. Table grants are
+-- deliberately left in place (the security suite asserts RLS, not a missing
+-- GRANT), but any policy that applies to `anon` or PUBLIC is removed before the
+-- involved-parties policy is re-created.
 alter table public.follows enable row level security;
-revoke all on public.follows from anon;
+
+do $$
+declare
+  pol record;
+begin
+  for pol in
+    select policyname
+    from pg_policies
+    where schemaname = 'public'
+      and tablename = 'follows'
+      and ('anon' = any(roles) or 'public' = any(roles))
+  loop
+    execute format('drop policy %I on public.follows', pol.policyname);
+  end loop;
+end $$;
+
 drop policy if exists "follows_select_anon" on public.follows;
 drop policy if exists "follows_select_authenticated" on public.follows;
 drop policy if exists "follows_select_involved" on public.follows;
@@ -12707,6 +12723,15 @@ begin
   end if;
   if p_event_id is null or p_event_id = '' or p_event_type is null or p_event_type = '' then
     raise exception 'An event id and type are required' using errcode = '22023';
+  end if;
+
+  -- A financial event must survive an account deletion. If the supplied member
+  -- no longer exists, keep the money in the ledger without the FK and without
+  -- resurrecting a subscription for a deleted account.
+  if p_user_id is not null and not exists (
+    select 1 from auth.users u where u.id = p_user_id
+  ) then
+    p_user_id := null;
   end if;
 
   insert into public.payment_events

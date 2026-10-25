@@ -5,10 +5,11 @@
  * browser; only the publishable key (`NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`)
  * initialises Stripe.js on the client (docs/CONSTITUTION.md Article 1.5).
  *
- * POST body: { amount, currency, frequency }
- *   amount     — number, minor units of the selected currency (e.g. 5.00)
- *   currency   — 'EUR' | 'USD' | 'NPR'
- *   frequency  — 'one-time' | 'monthly'
+ * POST body: { amount, currency, frequency, displayName? }
+ *   amount      — number, in major units of the selected currency (e.g. 5.00)
+ *   currency    — 'EUR' | 'USD' | 'NPR'
+ *   frequency   — 'one-time' | 'monthly'
+ *   displayName — optional public name for the verified supporters wall
  *
  * Responds: { url } — the hosted Stripe Checkout URL the client redirects to.
  *
@@ -17,6 +18,8 @@
  * fields (Country, Street, City, Postal Code).
  */
 
+import { createServerClient } from '@supabase/ssr';
+import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 import Stripe from 'stripe';
 
@@ -37,6 +40,46 @@ function readDonateEnv(
 
 type CheckoutCurrency = 'eur' | 'usd' | 'npr';
 
+/**
+ * The verified server-side session, when the donor is signed in.
+ *
+ * Cookies are the same session the browser client writes. This value is used
+ * only as opaque Stripe metadata; the browser can never supply it, so a payment
+ * cannot be attributed to an account by editing the request body.
+ */
+async function signedInUserId(): Promise<string | null> {
+  const supabaseUrl = (process.env['NEXT_PUBLIC_SUPABASE_URL'] ?? '').trim();
+  const anonKey = (process.env['NEXT_PUBLIC_SUPABASE_ANON_KEY'] ?? '').trim();
+  if (!supabaseUrl || !anonKey) return null;
+
+  try {
+    const cookieStore = await cookies();
+    const supabase = createServerClient(supabaseUrl, anonKey, {
+      cookies: {
+        getAll: () => cookieStore.getAll(),
+        setAll: () => {
+          // Read-only lookup: the route does not mutate the session.
+        },
+      },
+    });
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    return user?.id ?? null;
+  } catch {
+    // A direct unit-test call has no Next request scope. Donation still works
+    // as an anonymous gift; it simply cannot be attributed to an account.
+    return null;
+  }
+}
+
+/** Optional public name, trimmed and bounded before it reaches Stripe metadata. */
+function donorDisplayName(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const cleaned = value.replace(/[\u0000-\u001f\u007f]/g, '').replace(/\s+/g, ' ').trim();
+  return cleaned ? cleaned.slice(0, 40) : null;
+}
+
 function normaliseCurrency(value: string | undefined): CheckoutCurrency {
   const c = (value ?? 'EUR').toUpperCase();
   if (c === 'USD') return 'usd';
@@ -53,9 +96,19 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
-  let body: { amount?: unknown; currency?: unknown; frequency?: unknown };
+  let body: {
+    amount?: unknown;
+    currency?: unknown;
+    frequency?: unknown;
+    displayName?: unknown;
+  };
   try {
-    body = (await request.json()) as { amount?: unknown; currency?: unknown; frequency?: unknown };
+    body = (await request.json()) as {
+      amount?: unknown;
+      currency?: unknown;
+      frequency?: unknown;
+      displayName?: unknown;
+    };
   } catch {
     return NextResponse.json({ error: 'Invalid request body.' }, { status: 400 });
   }
@@ -75,6 +128,16 @@ export async function POST(request: Request): Promise<NextResponse> {
   const origin = new URL(request.url).origin;
 
   const stripe = new Stripe(env.secretKey);
+
+  const donorUserId = await signedInUserId();
+  const donorName = donorDisplayName(body.displayName);
+  const donationMetadata: Record<string, string> = {
+    kind: 'donation',
+    frequency,
+    source: 'mettivo-landing',
+  };
+  if (donorUserId) donationMetadata['user_id'] = donorUserId;
+  if (donorName) donationMetadata['donor_display_name'] = donorName;
 
   const session = await stripe.checkout.sessions.create({
     mode: frequency === 'monthly' ? 'subscription' : 'payment',
@@ -97,10 +160,13 @@ export async function POST(request: Request): Promise<NextResponse> {
     success_url: `${origin}/auth?donation=success&session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${origin}/donate?donation=canceled`,
     billing_address_collection: 'required',
-    metadata: {
-      frequency,
-      source: 'mettivo-landing',
-    },
+    client_reference_id: donorUserId ?? undefined,
+    metadata: donationMetadata,
+    // Copies the attribution onto the recurring subscription, so later invoice
+    // events can be reconciled to the same donor without trusting the browser.
+    ...(frequency === 'monthly'
+      ? { subscription_data: { metadata: donationMetadata } }
+      : {}),
   });
 
   if (!session.url) {

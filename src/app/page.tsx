@@ -15,13 +15,14 @@ import IntroSplash from '@/components/hero/IntroSplash';
  * Bumble-style entry surface.
  *
  * It never reads the session and never redirects: every visitor, signed in or
- * not, sees the same page. The primary CTA hands off to the intermediate
- * `/donate` page, which in turn offers signup/login. Local storage is only
- * touched inside effects, so there are no hydration mismatches.
+ * not, sees the same page. The primary CTA opens signup directly; supporting
+ * Mettivo remains a separate, explicit choice. Local storage is only touched
+ * inside effects, so there are no hydration mismatches.
  */
 
-// The CTA no longer goes straight to auth: it lands on the intermediate
-// donation page, which offers both "donate" and "continue without donating".
+// Signup is the primary action. Donation is never a gate between a visitor and
+// an account; it stays available as its own voluntary destination.
+const SIGNUP_HREF = '/signup';
 const DONATE_HREF = '/donate';
 
 /**
@@ -147,7 +148,7 @@ export default function LandingPage() {
 
             <div className="group w-full">
               <Link
-                href={DONATE_HREF}
+                href={SIGNUP_HREF}
                 className="group w-full inline-flex items-center justify-center gap-1 py-3.5 px-6 rounded-full bg-[#D4B18A] text-[#17121C] text-sm font-bold tracking-tight uppercase shadow-lg shadow-[#D4B18A]/35 transition-all hover:bg-[#E4C9A0] hover:shadow-[#D4B18A]/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D4B18A] focus-visible:ring-offset-2 focus-visible:ring-offset-[#17121C]"
                 data-testid="landing-primary-cta"
               >
@@ -158,7 +159,7 @@ export default function LandingPage() {
               </Link>
             </div>
 
-            {/* Secondary CTA — same destination, framed as a donation. */}
+            {/* Secondary CTA — voluntary support, separate from signup. */}
             <Link
               href={DONATE_HREF}
               className="w-full inline-flex items-center justify-center gap-2 py-3.5 px-6 rounded-full bg-[#29202D] border border-[#D4B18A]/60 text-[#D4B18A] text-sm font-bold tracking-tight uppercase transition-all hover:bg-[#D4B18A]/10 hover:text-[#F2E9E4] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D4B18A]"

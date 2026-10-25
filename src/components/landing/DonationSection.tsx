@@ -56,6 +56,7 @@ export default function DonationSection({ afterDonate }: DonationSectionProps = 
   const [frequency, setFrequency] = useState<Frequency>('one-time');
   const [selectedAmount, setSelectedAmount] = useState<number | null>(null);
   const [customAmount, setCustomAmount] = useState('');
+  const [displayName, setDisplayName] = useState('');
   const [currency, setCurrency] = useState<Currency>('EUR');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -129,6 +130,7 @@ export default function DonationSection({ afterDonate }: DonationSectionProps = 
           amount: effectiveAmount,
           currency,
           frequency,
+          displayName: displayName.trim() || undefined,
         }),
       });
 
@@ -148,11 +150,12 @@ export default function DonationSection({ afterDonate }: DonationSectionProps = 
     } finally {
       setIsLoading(false);
     }
-  }, [currency, frequency, amountIsValid, effectiveAmount, symbol]);
+  }, [currency, frequency, amountIsValid, effectiveAmount, symbol, displayName]);
 
   const reset = () => {
     setSelectedAmount(null);
     setCustomAmount('');
+    setDisplayName('');
     setCurrency('EUR');
     setFrequency('one-time');
     setError(null);
@@ -311,6 +314,25 @@ export default function DonationSection({ afterDonate }: DonationSectionProps = 
               ))}
             </select>
           </div>
+
+          {/* Optional public attribution. This is the ONLY name shown on the
+              supporters wall; leaving it blank keeps the gift anonymous. */}
+          <label
+            htmlFor="donation-display-name"
+            className="block text-sm font-medium text-[#F2E9E4]/90 mb-2"
+          >
+            Name on the supporters wall <span className="text-[#F2E9E4]/45">(optional)</span>
+          </label>
+          <input
+            id="donation-display-name"
+            type="text"
+            value={displayName}
+            onChange={(event) => setDisplayName(event.target.value)}
+            maxLength={40}
+            autoComplete="name"
+            placeholder="Anonymous supporter"
+            className="w-full mb-8 px-4 py-2.5 rounded-xl bg-[#17121C]/40 border border-[#3a303d]/50 text-[#F2E9E4] text-sm placeholder-[#F2E9E4]/30 focus:outline-none focus:ring-2 focus:ring-[#D4B18A] focus:border-transparent transition-all"
+          />
 
           {/* Error / success inline state. */}
           {error && (

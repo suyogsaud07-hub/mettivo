@@ -3,34 +3,28 @@
 // ✅ This forces Vercel to build this page dynamically, not statically
 export const dynamic = 'force-dynamic';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
-import { type MessageRow } from '@/lib/types';
-import { fetchUnreadCounts } from '@/lib/messages';
-import { fetchPublicIdentities, type PublicIdentity } from '@/lib/public-profiles';
+import {
+  fetchInbox,
+  setConversationArchived,
+  type InboxConversation,
+} from '@/lib/inbox';
 import MobileNav from '../components/layout/MobileNav';
 
-interface ConversationSummary {
-  matchId: string;
-  otherUserId: string | null;
-  displayName: string;
-  username: string | null;
-  avatarUrl: string | null;
-  lastMessage: string;
-  lastMessageAt: string;
-  isMine: boolean;
-  unread: number;
-}
+type InboxTab = 'all' | 'requests' | 'online' | 'archived';
 
-interface MatchParticipants {
-  id: string;
-  user_a: string;
-  user_b: string;
-}
+const TABS: ReadonlyArray<{ key: InboxTab; label: string }> = [
+  { key: 'all', label: 'All' },
+  { key: 'requests', label: 'Requests' },
+  { key: 'online', label: 'Online' },
+  { key: 'archived', label: 'Archive' },
+];
 
-function formatTimestamp(value: string): string {
+function formatTimestamp(value: string | null): string {
+  if (!value) return '';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '';
   const pad = (n: number) => String(n).padStart(2, '0');
@@ -46,134 +40,102 @@ function initials(name: string): string {
   return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
 }
 
+function matchesTab(conversation: InboxConversation, tab: InboxTab): boolean {
+  if (tab === 'archived') return conversation.isArchived;
+  if (conversation.isArchived) return false;
+  if (tab === 'requests') return conversation.isRequest;
+  if (tab === 'online') return conversation.isOnline;
+  return true;
+}
+
+function emptyMessage(tab: InboxTab): string {
+  if (tab === 'requests') {
+    return 'No message requests. When someone new writes to you first, their conversation appears here.';
+  }
+  if (tab === 'online') return 'No one from your matches is online right now.';
+  if (tab === 'archived') return 'Your archive is empty.';
+  return 'No conversations yet. Find someone you connect with to start one.';
+}
+
 export default function ChatListPage() {
   const router = useRouter();
-  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [conversations, setConversations] = useState<InboxConversation[]>([]);
+  const [tab, setTab] = useState<InboxTab>('all');
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [busyMatchId, setBusyMatchId] = useState<string | null>(null);
+
+  const loadConversations = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) {
+        router.replace('/auth?next=/chat');
+        return;
+      }
+
+      setConversations(await fetchInbox());
+    } catch (err) {
+      console.error('Failed to load conversations:', err);
+      setError(
+        err instanceof Error ? err.message : 'Your conversations could not be loaded.'
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, [router]);
 
   useEffect(() => {
-    let isMounted = true;
-
-    const loadConversations = async () => {
-      try {
-        const {
-          data: { user },
-        } = await supabase.auth.getUser();
-
-        if (!isMounted) return;
-
-        if (!user) {
-          router.replace('/auth');
-          return;
-        }
-
-        const { data, error } = await supabase
-          .from('messages')
-          .select('id, match_id, sender_id, content, created_at')
-          .order('created_at', { ascending: false })
-          .limit(200);
-
-        if (!isMounted) return;
-
-        if (error) {
-          console.error('Failed to load conversations:', error.message);
-          return;
-        }
-
-        const rows = (data ?? []) as MessageRow[];
-        const seen = new Set<string>();
-        const summaries: ConversationSummary[] = [];
-        const otherSenderByMatch = new Map<string, string>();
-
-        for (const row of rows) {
-          if (row.sender_id !== user.id && !otherSenderByMatch.has(row.match_id)) {
-            otherSenderByMatch.set(row.match_id, row.sender_id);
-          }
-        }
-
-        for (const row of rows) {
-          if (seen.has(row.match_id)) continue;
-          seen.add(row.match_id);
-          summaries.push({
-            matchId: row.match_id,
-            otherUserId: otherSenderByMatch.get(row.match_id) ?? null,
-            displayName: 'Member',
-            username: null,
-            avatarUrl: null,
-            lastMessage: row.content || 'Photo',
-            lastMessageAt: row.created_at,
-            isMine: row.sender_id === user.id,
-            unread: 0,
-          });
-        }
-
-        // Resolve the other participant from the match as well as the thread.
-        // A brand-new conversation may contain only the caller's messages, so
-        // the sender ids alone cannot identify who they are talking to.
-        if (summaries.length > 0) {
-          const { data: matchRows, error: matchError } = await supabase
-            .from('matches')
-            .select('id, user_a, user_b')
-            .in('id', summaries.map((summary) => summary.matchId));
-
-          if (matchError) {
-            console.error('Failed to load conversation participants:', matchError.message);
-          } else {
-            for (const match of (matchRows ?? []) as MatchParticipants[]) {
-              const other =
-                match.user_a === user.id ? match.user_b : match.user_a;
-              if (other) otherSenderByMatch.set(match.id, other);
-            }
-          }
-
-          for (const summary of summaries) {
-            summary.otherUserId = otherSenderByMatch.get(summary.matchId) ?? null;
-          }
-
-          const identities = await fetchPublicIdentities(
-            summaries
-              .map((summary) => summary.otherUserId)
-              .filter((id): id is string => Boolean(id))
-          ).catch((identityError: unknown) => {
-            // A directory failure must not erase the conversation list. Names
-            // fall back to "Member" until the next load.
-            console.error('Failed to load conversation profiles:', identityError);
-            return new Map<string, PublicIdentity>();
-          });
-
-          if (!isMounted) return;
-
-          for (const summary of summaries) {
-            const identity = summary.otherUserId
-              ? identities.get(summary.otherUserId)
-              : undefined;
-            if (!identity) continue;
-            summary.displayName =
-              identity.display_name?.trim() || identity.username || 'Member';
-            summary.username = identity.username;
-            summary.avatarUrl = identity.avatar_url;
-          }
-        }
-
-        const counts = await fetchUnreadCounts();
-        if (!isMounted) return;
-
-        setConversations(
-          summaries.map((summary) => ({ ...summary, unread: counts[summary.matchId] ?? 0 }))
-        );
-      } catch (err) {
-        console.error('Failed to load conversations:', err);
-      } finally {
-        if (isMounted) setLoading(false);
-      }
-    };
-
     void loadConversations();
+  }, [loadConversations]);
 
-    return () => {
-      isMounted = false;
+  const counts = useMemo(() => {
+    return {
+      all: conversations.filter((conversation) => matchesTab(conversation, 'all')).length,
+      requests: conversations.filter((conversation) =>
+        matchesTab(conversation, 'requests')
+      ).length,
+      online: conversations.filter((conversation) =>
+        matchesTab(conversation, 'online')
+      ).length,
+      archived: conversations.filter((conversation) =>
+        matchesTab(conversation, 'archived')
+      ).length,
     };
-  }, [router]);
+  }, [conversations]);
+
+  const visible = useMemo(
+    () => conversations.filter((conversation) => matchesTab(conversation, tab)),
+    [conversations, tab]
+  );
+
+  const toggleArchive = async (conversation: InboxConversation) => {
+    const nextArchived = !conversation.isArchived;
+    setBusyMatchId(conversation.matchId);
+    setError(null);
+
+    try {
+      await setConversationArchived(conversation.matchId, nextArchived);
+      setConversations((previous) =>
+        previous.map((row) =>
+          row.matchId === conversation.matchId
+            ? { ...row, isArchived: nextArchived }
+            : row
+        )
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : 'That conversation could not be updated.'
+      );
+    } finally {
+      setBusyMatchId(null);
+    }
+  };
 
   return (
     <div
@@ -186,6 +148,9 @@ export default function ChatListPage() {
     >
       <header style={{ padding: '20px', borderBottom: '1px solid #29202D' }}>
         <h1 style={{ fontSize: '20px', fontWeight: 700, margin: 0 }}>Messages</h1>
+        <p style={{ margin: '4px 0 0', fontSize: '12px', color: '#B58A83' }}>
+          Requests stay separate until you reply.
+        </p>
       </header>
 
       {/* ✅ SUBBU AI BLOCK STARTS HERE */}
@@ -236,14 +201,69 @@ export default function ChatListPage() {
       </ul>
       {/* ✅ SUBBU AI BLOCK ENDS HERE */}
 
+      <div
+        role="tablist"
+        aria-label="Conversation filters"
+        style={{
+          display: 'flex',
+          gap: '8px',
+          overflowX: 'auto',
+          padding: '16px 20px 0',
+        }}
+      >
+        {TABS.map((item) => {
+          const active = tab === item.key;
+          return (
+            <button
+              key={item.key}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => setTab(item.key)}
+              style={{
+                flexShrink: 0,
+                border: active ? '1px solid #D4B18A' : '1px solid #29202D',
+                backgroundColor: active ? '#D4B18A' : '#1C1822',
+                color: active ? '#17121C' : '#B58A83',
+                borderRadius: '999px',
+                padding: '8px 14px',
+                fontSize: '12px',
+                fontWeight: 700,
+                cursor: 'pointer',
+              }}
+            >
+              {item.label}
+              {item.key === 'requests' && counts.requests > 0 ? ` (${counts.requests})` : ''}
+            </button>
+          );
+        })}
+      </div>
+
+      {error && (
+        <div
+          role="alert"
+          style={{
+            margin: '16px 20px 0',
+            padding: '12px 14px',
+            borderRadius: '12px',
+            border: '1px solid #4A1828',
+            backgroundColor: '#4A1828',
+            color: '#F2E9E4',
+            fontSize: '13px',
+          }}
+        >
+          {error}
+        </div>
+      )}
+
       {loading ? (
-        <p style={{ padding: '24px 20px', color: '#B58A83', fontSize: '14px' }}>
+        <p style={{ padding: '24px 20px', color: '#B58A83', fontSize: '14px' }} role="status">
           Loading conversations...
         </p>
-      ) : conversations.length === 0 ? (
+      ) : visible.length === 0 ? (
         <div style={{ padding: '48px 24px', textAlign: 'center' }}>
           <p style={{ color: '#B58A83', fontSize: '14px', marginBottom: '20px' }}>
-            No conversations yet. Find someone you connect with to start one.
+            {emptyMessage(tab)}
           </p>
           <Link
             href="/discover"
@@ -266,144 +286,216 @@ export default function ChatListPage() {
           style={{
             listStyle: 'none',
             margin: 0,
-            padding: '20px',
+            padding: '16px 20px 20px',
             display: 'flex',
             flexDirection: 'column',
             gap: '12px',
           }}
         >
-          {conversations.map((conversation) => (
-            <li key={conversation.matchId}>
-              <Link
-                href={`/chat/${conversation.matchId}`}
+          {visible.map((conversation) => {
+            const busy = busyMatchId === conversation.matchId;
+            return (
+              <li
+                key={conversation.matchId}
                 style={{
-                  display: 'block',
+                  display: 'flex',
+                  alignItems: 'stretch',
                   backgroundColor: '#1C1822',
                   border: '1px solid #29202D',
                   borderRadius: '16px',
-                  padding: '16px',
-                  textDecoration: 'none',
-                  color: '#F2E9E4',
+                  overflow: 'hidden',
                 }}
               >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                  {conversation.avatarUrl ? (
-                    <img
-                      src={conversation.avatarUrl}
-                      alt=""
-                      aria-hidden="true"
-                      style={{
-                        width: '44px',
-                        height: '44px',
-                        borderRadius: '50%',
-                        objectFit: 'cover',
-                        flexShrink: 0,
-                      }}
-                    />
-                  ) : (
-                    <span
-                      aria-hidden="true"
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        width: '44px',
-                        height: '44px',
-                        borderRadius: '50%',
-                        backgroundColor: '#29202D',
-                        color: '#D4B18A',
-                        flexShrink: 0,
-                        fontSize: '14px',
-                        fontWeight: 700,
-                      }}
-                    >
-                      {initials(conversation.displayName)}
-                    </span>
-                  )}
-
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div
-                      style={{
-                        display: 'flex',
-                        alignItems: 'baseline',
-                        justifyContent: 'space-between',
-                        gap: '10px',
-                      }}
-                    >
-                      <div style={{ minWidth: 0 }}>
-                        <p
+                <Link
+                  href={`/chat/${conversation.matchId}`}
+                  style={{
+                    display: 'block',
+                    flex: 1,
+                    minWidth: 0,
+                    padding: '16px',
+                    textDecoration: 'none',
+                    color: '#F2E9E4',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <span style={{ position: 'relative', flexShrink: 0 }}>
+                      {conversation.avatarUrl ? (
+                        <img
+                          src={conversation.avatarUrl}
+                          alt=""
+                          aria-hidden="true"
                           style={{
-                            margin: 0,
+                            width: '44px',
+                            height: '44px',
+                            borderRadius: '50%',
+                            objectFit: 'cover',
+                            display: 'block',
+                          }}
+                        />
+                      ) : (
+                        <span
+                          aria-hidden="true"
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            width: '44px',
+                            height: '44px',
+                            borderRadius: '50%',
+                            backgroundColor: '#29202D',
+                            color: '#D4B18A',
                             fontSize: '14px',
                             fontWeight: 700,
-                            color: '#F2E9E4',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
                           }}
                         >
-                          {conversation.displayName}
-                        </p>
-                        {conversation.username ? (
+                          {initials(conversation.displayName)}
+                        </span>
+                      )}
+                      {conversation.isOnline && (
+                        <span
+                          aria-label="Online"
+                          title="Online"
+                          style={{
+                            position: 'absolute',
+                            right: 0,
+                            bottom: 0,
+                            width: '12px',
+                            height: '12px',
+                            borderRadius: '50%',
+                            backgroundColor: '#5FBF8F',
+                            border: '2px solid #1C1822',
+                          }}
+                        />
+                      )}
+                    </span>
+
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'baseline',
+                          justifyContent: 'space-between',
+                          gap: '10px',
+                        }}
+                      >
+                        <div style={{ minWidth: 0 }}>
                           <p
                             style={{
-                              margin: '2px 0 0 0',
-                              fontSize: '12px',
-                              color: '#D4B18A',
+                              margin: 0,
+                              fontSize: '14px',
+                              fontWeight: 700,
+                              color: '#F2E9E4',
                               overflow: 'hidden',
                               textOverflow: 'ellipsis',
                               whiteSpace: 'nowrap',
                             }}
                           >
-                            @{conversation.username.replace(/^@/, '')}
+                            {conversation.displayName}
                           </p>
-                        ) : null}
+                          {conversation.username ? (
+                            <p
+                              style={{
+                                margin: '2px 0 0 0',
+                                fontSize: '12px',
+                                color: '#D4B18A',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                              }}
+                            >
+                              @{conversation.username.replace(/^@/, '')}
+                            </p>
+                          ) : null}
+                        </div>
+                        <span
+                          style={{
+                            flexShrink: 0,
+                            fontSize: '11px',
+                            color: '#B58A83',
+                          }}
+                        >
+                          {formatTimestamp(conversation.lastMessageAt)}
+                        </span>
                       </div>
-                      <span
+
+                      <p
                         style={{
-                          flexShrink: 0,
-                          fontSize: '11px',
-                          color: '#B58A83',
+                          margin: '6px 0 0 0',
+                          fontSize: '13px',
+                          color: conversation.isRequest ? '#D4B18A' : '#B58A83',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
                         }}
                       >
-                        {formatTimestamp(conversation.lastMessageAt)}
-                      </span>
+                        {conversation.lastMessage
+                          ? conversation.lastMessageIsMine
+                            ? `You: ${conversation.lastMessage}`
+                            : conversation.lastMessage
+                          : 'New match — say hello.'}
+                      </p>
+
+                      <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+                        {conversation.isRequest && (
+                          <span
+                            style={{
+                              backgroundColor: '#4A1828',
+                              color: '#F2E9E4',
+                              borderRadius: '10px',
+                              padding: '2px 10px',
+                              fontSize: '11px',
+                              fontWeight: 700,
+                            }}
+                          >
+                            Message request
+                          </span>
+                        )}
+                        {conversation.unreadCount > 0 && (
+                          <span
+                            style={{
+                              backgroundColor: '#D4B18A',
+                              color: '#17121C',
+                              borderRadius: '10px',
+                              padding: '2px 10px',
+                              fontSize: '11px',
+                              fontWeight: 700,
+                            }}
+                          >
+                            {conversation.unreadCount} new
+                          </span>
+                        )}
+                      </div>
                     </div>
-                    <p
-                      style={{
-                        margin: '6px 0 0 0',
-                        fontSize: '13px',
-                        color: '#B58A83',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {conversation.isMine
-                        ? `You: ${conversation.lastMessage}`
-                        : conversation.lastMessage}
-                    </p>
-                    {conversation.unread > 0 && (
-                      <span
-                        style={{
-                          display: 'inline-block',
-                          marginTop: '8px',
-                          backgroundColor: '#D4B18A',
-                          color: '#17121C',
-                          borderRadius: '10px',
-                          padding: '2px 10px',
-                          fontSize: '11px',
-                          fontWeight: 700,
-                        }}
-                      >
-                        {conversation.unread} new
-                      </span>
-                    )}
                   </div>
-                </div>
-              </Link>
-            </li>
-          ))}
+                </Link>
+
+                <button
+                  type="button"
+                  onClick={() => void toggleArchive(conversation)}
+                  disabled={busy}
+                  aria-label={
+                    conversation.isArchived
+                      ? `Restore conversation with ${conversation.displayName}`
+                      : `Archive conversation with ${conversation.displayName}`
+                  }
+                  style={{
+                    flexShrink: 0,
+                    width: '76px',
+                    border: 'none',
+                    borderLeft: '1px solid #29202D',
+                    backgroundColor: 'transparent',
+                    color: '#B58A83',
+                    fontSize: '11px',
+                    fontWeight: 700,
+                    cursor: busy ? 'wait' : 'pointer',
+                    opacity: busy ? 0.5 : 1,
+                  }}
+                >
+                  {busy ? '…' : conversation.isArchived ? 'Restore' : 'Archive'}
+                </button>
+              </li>
+            );
+          })}
         </ul>
       )}
 

@@ -9,6 +9,8 @@ import {
   fetchChatSettings,
   setDisappearingMessages,
   purgeExpiredChatContent,
+  fetchConversationSendState,
+  type ConversationSendState,
 } from '@/lib/messages';
 import { blockMember, BlockingError } from '@/lib/blocking';
 import { type MessageRow } from '@/lib/types';
@@ -80,6 +82,7 @@ export default function ChatPage({
   const [sendingMedia, setSendingMedia] = useState(false);
   const [disappearing, setDisappearing] = useState<number | null>(null);
   const [togglingDisappearing, setTogglingDisappearing] = useState(false);
+  const [sendState, setSendState] = useState<ConversationSendState | null>(null);
   const mediaInputRef = useRef<HTMLInputElement | null>(null);
 
   /**
@@ -151,6 +154,11 @@ export default function ChatPage({
       // explains the disabled composer instead of letting a send silently fail.
       const myRestrictions = await fetchMyRestrictions();
       if (isMounted) setRestrictions(myRestrictions);
+
+      // M34: the two-message request cap is enforced by a BEFORE INSERT
+      // trigger. This projection only lets the composer explain it in advance.
+      const requestState = await fetchConversationSendState(matchId);
+      if (isMounted) setSendState(requestState);
 
       const { data, error: fetchError } = await supabase
         .from('messages')
@@ -244,6 +252,11 @@ export default function ChatPage({
           if (inserted.sender_id !== currentUserIdRef.current) {
             void markMessagesDelivered(matchId);
             markConversationRead(matchId).catch(() => undefined);
+            // Their reply lifts the request cap; refresh so the composer
+            // unlocks without a reload.
+            void fetchConversationSendState(matchId).then((state) => {
+              if (state) setSendState(state);
+            });
           }
         }
       )
@@ -328,7 +341,11 @@ export default function ChatPage({
 
     if (insertError) {
       console.error('Failed to send message:', insertError.message);
-      setError('Message could not be sent.');
+      setError(
+        insertError.code === '42501'
+          ? insertError.message
+          : 'Message could not be sent.'
+      );
       return;
     }
 
@@ -341,6 +358,9 @@ export default function ChatPage({
 
     setError(null);
     setNewMessage('');
+
+    const nextState = await fetchConversationSendState(matchId);
+    if (nextState) setSendState(nextState);
   };
 
   const handleMediaPicked = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -370,6 +390,9 @@ export default function ChatPage({
       setMessages((prev) =>
         prev.some((m) => m.id === messageRow.id) ? prev : [...prev, messageRow]
       );
+      const nextState = await fetchConversationSendState(matchId);
+      if (nextState) setSendState(nextState);
+
       setChatMedia((prev) => ({
         ...prev,
         [sent.messageId]: {
@@ -446,7 +469,12 @@ export default function ChatPage({
   };
 
   const restrictionMessage = describeRestriction(restrictions);
-  const canSend = restrictionMessage === null && !blocked;
+  const requestBlocked = sendState !== null && !sendState.canSend;
+  const canSend = restrictionMessage === null && !blocked && !requestBlocked;
+  const remainingRequests =
+    sendState && !sendState.otherHasReplied
+      ? Math.max(0, sendState.sendLimit - sendState.sentCount)
+      : null;
 
   return (
     <div className="flex flex-col h-screen max-w-md mx-auto p-4 bg-neutral-950 text-white">
@@ -625,6 +653,30 @@ export default function ChatPage({
         </div>
       )}
 
+      {!blocked && sendState?.isRequest && !sendState.otherHasReplied && (
+        <div
+          role="status"
+          className="mb-3 rounded-xl border border-amber-700/40 bg-amber-950/20 p-3 text-center text-xs text-amber-200"
+        >
+          Message requests are limited to two messages until {conversationName} replies.
+          {remainingRequests !== null
+            ? ` ${remainingRequests} ${
+                remainingRequests === 1 ? 'message' : 'messages'
+              } left.`
+            : ''}
+        </div>
+      )}
+
+      {!blocked && requestBlocked && (
+        <div
+          role="alert"
+          className="mb-3 rounded-xl border border-rose-800/50 bg-rose-950/30 p-3 text-center text-xs text-rose-200"
+        >
+          You have sent {sendState.sentCount} messages. Wait for {conversationName} to
+          reply before sending more.
+        </div>
+      )}
+
       {error && (
         <p role="alert" className="mb-3 text-center text-xs text-rose-400">
           {error}
@@ -657,7 +709,13 @@ export default function ChatPage({
           type="text"
           value={newMessage}
           onChange={(e) => setNewMessage(e.target.value)}
-          placeholder={canSend ? 'Type a message...' : 'Messaging is paused'}
+          placeholder={
+            requestBlocked
+              ? 'Request limit reached — wait for a reply'
+              : canSend
+                ? 'Type a message...'
+                : 'Messaging is paused'
+          }
           aria-label="Message"
           disabled={!canSend}
           className="flex-1 p-3 rounded-xl bg-neutral-900 border border-neutral-800 text-white focus:outline-none disabled:opacity-50"

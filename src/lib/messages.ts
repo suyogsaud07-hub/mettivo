@@ -313,3 +313,56 @@ export async function fetchUnreadCounts(): Promise<Record<string, number>> {
   }
   return counts;
 }
+
+export interface ConversationSendState {
+  isRequest: boolean;
+  sentCount: number;
+  sendLimit: number;
+  canSend: boolean;
+  otherHasReplied: boolean;
+}
+
+function intValue(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return Math.round(value);
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return Math.round(parsed);
+  }
+  return 0;
+}
+
+/**
+ * Server-derived request state for one conversation.
+ *
+ * The trigger in M34 is still the only authority; this projection exists so the
+ * composer can explain the cap before a send is rejected. `null` means the RPC
+ * could not describe the thread, in which case the UI leaves the composer
+ * available and lets the database decide.
+ */
+export async function fetchConversationSendState(
+  matchId: string
+): Promise<ConversationSendState | null> {
+  if (!matchId) return null;
+
+  const { data, error } = await supabase
+    .rpc('conversation_send_state', { p_match_id: matchId })
+    .maybeSingle();
+
+  if (error) {
+    console.error('[messages] conversation_send_state failed:', error.message);
+    return null;
+  }
+  if (!isRecord(data)) return null;
+
+  const sendLimit = intValue(data.send_limit);
+  const sentCount = intValue(data.sent_count);
+  const otherHasReplied = data.other_has_replied === true;
+
+  return {
+    isRequest: data.is_request === true,
+    sentCount,
+    sendLimit: sendLimit > 0 ? sendLimit : 2,
+    canSend: data.can_send === true,
+    otherHasReplied,
+  };
+}

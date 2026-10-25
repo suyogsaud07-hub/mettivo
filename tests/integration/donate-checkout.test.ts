@@ -94,6 +94,7 @@ describe('POST /api/donate/checkout', () => {
       billing_address_collection: string;
       success_url: string;
       cancel_url: string;
+      metadata: Record<string, string>;
     };
 
     expect(params.mode).toBe('payment');
@@ -102,6 +103,13 @@ describe('POST /api/donate/checkout', () => {
     expect(params.billing_address_collection).toBe('required');
     expect(params.success_url).toContain('https://mettivo.test/auth?donation=success');
     expect(params.cancel_url).toBe('https://mettivo.test/donate?donation=canceled');
+    expect(params.metadata).toMatchObject({
+      kind: 'donation',
+      frequency: 'one-time',
+      source: 'mettivo-landing',
+    });
+    // The checkout route cannot trust a browser-supplied account id.
+    expect(params.metadata).not.toHaveProperty('user_id');
   });
 
   it('creates a monthly subscription for a custom amount', async () => {
@@ -111,12 +119,47 @@ describe('POST /api/donate/checkout', () => {
     const params = stripeMock.create.mock.calls[0][0] as {
       mode: string;
       line_items: { price_data: { unit_amount: number; recurring?: { interval: string } } }[];
-      metadata: { frequency: string };
+      metadata: { frequency: string; kind: string };
+      subscription_data: { metadata: Record<string, string> };
     };
     expect(params.mode).toBe('subscription');
     expect(params.line_items[0].price_data.unit_amount).toBe(1250);
     expect(params.line_items[0].price_data.recurring).toEqual({ interval: 'month' });
     expect(params.metadata.frequency).toBe('monthly');
+    expect(params.metadata.kind).toBe('donation');
+    // Recurring invoices must carry the same attribution as the first session.
+    expect(params.subscription_data.metadata).toEqual(params.metadata);
+  });
+
+  it('carries a verified optional display name without trusting the account id', async () => {
+    await post({
+      amount: 25,
+      currency: 'EUR',
+      frequency: 'one-time',
+      displayName: '  Ada\nLovelace  ',
+    });
+
+    const params = stripeMock.create.mock.calls[0][0] as {
+      metadata: Record<string, string>;
+      client_reference_id?: string;
+    };
+    expect(params.metadata['donor_display_name']).toBe('Ada Lovelace');
+    expect(params.metadata).not.toHaveProperty('user_id');
+    expect(params.client_reference_id).toBeUndefined();
+  });
+
+  it('bounds a display name at 40 visible characters', async () => {
+    await post({
+      amount: 5,
+      currency: 'EUR',
+      frequency: 'one-time',
+      displayName: 'x'.repeat(80),
+    });
+
+    const params = stripeMock.create.mock.calls[0][0] as {
+      metadata: Record<string, string>;
+    };
+    expect(params.metadata['donor_display_name']).toHaveLength(40);
   });
 
   it('normalises NPR and USD to lower-case minor units', async () => {

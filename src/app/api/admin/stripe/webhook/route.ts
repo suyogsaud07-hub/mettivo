@@ -166,6 +166,81 @@ function summarise(eventType: string, object: Record<string, unknown>): EventSum
   };
 }
 
+interface DonationSummary {
+  eventId: string;
+  checkoutSessionId: string | null;
+  paymentIntentId: string | null;
+  userId: string | null;
+  displayName: string | null;
+  amountMinor: number | null;
+  currency: string | null;
+  refundedMinor: number | null;
+}
+
+function objectId(value: unknown): string | null {
+  if (typeof value === 'string') return text(value, 200);
+  if (isRecord(value)) return text(value['id'], 200);
+  return null;
+}
+
+/**
+ * Donations are a separate ledger from subscriptions, so they need their own
+ * narrow event classification. Only a Checkout Session created by our donation
+ * route (`metadata.kind === 'donation'`) may enter the public supporters wall.
+ * A refund is matched through the stored payment-intent id and updates nothing
+ * when the charge was not a donation.
+ */
+function donationSummary(
+  eventType: string,
+  object: Record<string, unknown>
+): DonationSummary | null {
+  if (eventType === 'charge.refunded') {
+    return {
+      eventId: text(object['id'], 200) ?? '',
+      checkoutSessionId: null,
+      paymentIntentId: objectId(object['payment_intent']),
+      userId: null,
+      displayName: null,
+      amountMinor: null,
+      currency: null,
+      refundedMinor: integer(object['amount_refunded']),
+    };
+  }
+
+  if (
+    eventType !== 'checkout.session.completed' &&
+    eventType !== 'checkout.session.async_payment_succeeded'
+  ) {
+    return null;
+  }
+
+  const rootMeta = metadata(object['metadata']);
+  if (rootMeta['kind'] !== 'donation') return null;
+
+  // Async payment methods can complete the session before funds settle. The
+  // corresponding `async_payment_succeeded` event records the verified gift.
+  const paymentStatus = text(object['payment_status'], 32);
+  if (
+    eventType === 'checkout.session.completed' &&
+    paymentStatus !== null &&
+    paymentStatus !== 'paid' &&
+    paymentStatus !== 'no_payment_required'
+  ) {
+    return null;
+  }
+
+  return {
+    eventId: text(object['id'], 200) ?? '',
+    checkoutSessionId: text(object['id'], 200),
+    paymentIntentId: objectId(object['payment_intent']),
+    userId: uuidOrNull(rootMeta['user_id']) ?? uuidOrNull(object['client_reference_id']),
+    displayName: text(rootMeta['donor_display_name'], 40),
+    amountMinor: integer(object['amount_total']),
+    currency: text(object['currency'], 8)?.toLowerCase() ?? null,
+    refundedMinor: null,
+  };
+}
+
 function publicIds(object: Record<string, unknown>): Record<string, string> {
   const result: Record<string, string> = {};
   for (const key of ['id', 'customer', 'subscription', 'payment_intent', 'charge'] as const) {
@@ -250,7 +325,70 @@ export async function POST(request: Request): Promise<NextResponse> {
       );
     }
 
-    return NextResponse.json({ received: true, result: data });
+    const donation = donationSummary(event.type, object);
+    let donationResult: unknown = null;
+
+    if (donation) {
+      if (event.type === 'charge.refunded') {
+        if (donation.paymentIntentId) {
+          const { data: refunded, error: refundError } = await supabase.rpc(
+            'refund_donation',
+            {
+              p_secret: webhookSecret,
+              p_payment_intent_id: donation.paymentIntentId,
+              p_refunded_minor: donation.refundedMinor,
+            }
+          );
+          if (refundError) {
+            const status = refundError.code === '42501' ? 401 : 500;
+            return NextResponse.json(
+              {
+                error:
+                  status === 401
+                    ? 'webhook_secret_mismatch'
+                    : 'donation_refund_failed',
+              },
+              { status }
+            );
+          }
+          donationResult = refunded;
+        }
+      } else if (
+        donation.eventId &&
+        donation.amountMinor !== null &&
+        donation.amountMinor > 0 &&
+        donation.currency
+      ) {
+        const { data: recorded, error: donationError } = await supabase.rpc(
+          'record_verified_donation',
+          {
+            p_secret: webhookSecret,
+            p_event_id: donation.eventId,
+            p_checkout_session_id: donation.checkoutSessionId,
+            p_payment_intent_id: donation.paymentIntentId,
+            p_user_id: donation.userId,
+            p_display_name: donation.displayName,
+            p_amount_minor: donation.amountMinor,
+            p_currency: donation.currency,
+          }
+        );
+        if (donationError) {
+          const status = donationError.code === '42501' ? 401 : 500;
+          return NextResponse.json(
+            {
+              error:
+                status === 401
+                  ? 'webhook_secret_mismatch'
+                  : 'donation_ledger_write_failed',
+            },
+            { status }
+          );
+        }
+        donationResult = recorded;
+      }
+    }
+
+    return NextResponse.json({ received: true, result: data, donation: donationResult });
   } catch {
     return NextResponse.json({ error: 'ledger_unavailable' }, { status: 500 });
   }

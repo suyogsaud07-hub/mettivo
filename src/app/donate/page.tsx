@@ -1,13 +1,18 @@
 import Link from 'next/link';
 import DonationSection from '@/components/landing/DonationSection';
+import TopContributors from '@/app/components/landing/TopContributors';
 
 /**
  * `/donate` — the intermediate page between the landing CTA and auth.
  *
- * The "Support Mettivo!" card lived on the landing page; it now has its own
- * destination so a visitor can either donate through Stripe or skip straight to
- * signup/login without paying. Stripe's checkout redirects a successful payment
- * to `/auth` (see `src/app/api/donate/checkout/route.ts`).
+ * Donation is optional: the primary landing CTA now goes straight to `/signup`,
+ * and this page exists for visitors who choose to support the product. Stripe's
+ * checkout redirects a successful payment to `/auth` (see
+ * `src/app/api/donate/checkout/route.ts`), while the skip control goes to
+ * signup without taking a payment.
+ *
+ * The Top Contributors wall is a read-only projection of the verified donation
+ * ledger — never local state and never an unverified browser claim.
  */
 export default function DonatePage() {
   return (
@@ -25,14 +30,18 @@ export default function DonatePage() {
         <DonationSection
           afterDonate={
             <Link
-              href="/auth"
+              href="/signup"
               data-testid="donate-skip"
               className="block w-full text-center py-3.5 rounded-xl border border-[#3a303d]/60 text-[#F2E9E4]/80 text-sm font-medium transition-colors hover:border-[#D4B18A]/50 hover:text-[#F2E9E4]"
             >
-              Continue to signup or login without donation
+              Continue to signup without donation
             </Link>
           }
         />
+
+        <div className="w-full mt-4">
+          <TopContributors />
+        </div>
       </main>
     </div>
   );

@@ -26,9 +26,11 @@ test.describe('§3.3 — the landing page never redirects', () => {
     await expect(page.getByTestId('landing-primary-cta')).toBeVisible();
     // The primary CTA is the intermediate donation page — never the app, never
     // onboarding. Signup/login is one more explicit click from there.
-    await expect(page.getByTestId('landing-primary-cta')).toHaveAttribute('href', '/donate');
+    await expect(page.getByTestId('landing-primary-cta')).toHaveAttribute('href', '/signup');
     await expect(page.getByTestId('landing-primary-cta')).toHaveText(/let'?s get started/i);
-    // There is exactly ONE call to action: no dashboard button to bounce off.
+    // Donation is available, but only as an explicit secondary choice.
+    await expect(page.getByTestId('landing-donate-cta')).toHaveAttribute('href', '/donate');
+    // There is exactly ONE primary call to action: no dashboard button.
     await expect(page.getByTestId('landing-dashboard-link')).toHaveCount(0);
 
     // Stay put: give any redirect a chance to fire.
@@ -42,15 +44,8 @@ test.describe('§3.3 — the landing page never redirects', () => {
     await page.goto('/');
     await page.getByTestId('landing-primary-cta').click();
 
-    // The CTA lands on the donation page first…
-    await expect.poll(() => new URL(page.url()).pathname).toBe('/donate');
-    await expect(page.getByTestId('donation-section')).toBeVisible();
-
-    // …and "continue without donating" opens the auth surface, with the full
-    // method list: email, phone and the four social providers. A new visitor
-    // must meet this screen, not onboarding.
-    await page.getByTestId('donate-skip').click();
-    await expect.poll(() => new URL(page.url()).pathname).toBe('/auth');
+    // Get Started goes straight to the auth surface — donation is never a gate.
+    await expect.poll(() => new URL(page.url()).pathname).toBe('/signup');
     await expect(page.getByTestId('auth-panel')).toBeVisible();
     await expect(page.getByLabel('Email')).toBeVisible();
     await expect(page.getByRole('button', { name: /sign up with email/i })).toBeVisible();
@@ -63,7 +58,23 @@ test.describe('§3.3 — the landing page never redirects', () => {
 
     // No bounce onward: the member is on the auth surface until they choose.
     await page.waitForTimeout(1200);
-    expect(new URL(page.url()).pathname).toBe('/auth');
+    expect(new URL(page.url()).pathname).toBe('/signup');
+  });
+
+  test('donation stays available as an explicit secondary choice', async ({ page }) => {
+    await stubSupabase(page, { user: null, rpc: { donation_leaderboard: [] } });
+
+    await page.goto('/');
+    await page.getByTestId('landing-donate-cta').click();
+
+    await expect.poll(() => new URL(page.url()).pathname).toBe('/donate');
+    await expect(page.getByTestId('donation-section')).toBeVisible();
+    await expect(page.getByTestId('top-contributors')).toBeVisible();
+
+    // Skipping the optional payment lands on signup, not the generic auth page.
+    await page.getByTestId('donate-skip').click();
+    await expect.poll(() => new URL(page.url()).pathname).toBe('/signup');
+    await expect(page.getByTestId('auth-panel')).toBeVisible();
   });
 
   test('a signed-in member stays on / and still gets the signup CTA, with no dashboard button', async ({
@@ -83,7 +94,7 @@ test.describe('§3.3 — the landing page never redirects', () => {
     // The CTA is the same for a member: it opens the auth surface, where the
     // session choice and the sign-out live. No "Go to Dashboard" button.
     await expect(page.getByTestId('landing-primary-cta')).toHaveText(/let'?s get started/i);
-    await expect(page.getByTestId('landing-primary-cta')).toHaveAttribute('href', '/donate');
+    await expect(page.getByTestId('landing-primary-cta')).toHaveAttribute('href', '/signup');
     await expect(page.getByTestId('landing-dashboard-link')).toHaveCount(0);
 
     await page.waitForTimeout(1200);
@@ -98,17 +109,15 @@ test.describe('§3.3 — the landing page never redirects', () => {
 
     await page.goto('/');
     await page.getByTestId('landing-primary-cta').click();
-    await expect.poll(() => new URL(page.url()).pathname).toBe('/donate');
-    await page.getByTestId('donate-skip').click();
 
     // The auth surface renders, and because a session exists it asks first.
-    await expect.poll(() => new URL(page.url()).pathname).toBe('/auth');
+    await expect.poll(() => new URL(page.url()).pathname).toBe('/signup');
     await expect(page.getByTestId('session-choice')).toBeVisible();
     await expect(page.getByTestId('sign-out-here')).toBeVisible();
 
     // Nothing navigates on its own.
     await page.waitForTimeout(1500);
-    expect(new URL(page.url()).pathname).toBe('/auth');
+    expect(new URL(page.url()).pathname).toBe('/signup');
   });
 
   test('the app is still one deliberate choice away, through the auth surface', async ({ page }) => {
@@ -121,8 +130,6 @@ test.describe('§3.3 — the landing page never redirects', () => {
 
     await page.goto('/');
     await page.getByTestId('landing-primary-cta').click();
-    await expect.poll(() => new URL(page.url()).pathname).toBe('/donate');
-    await page.getByTestId('donate-skip').click();
     await expect(page.getByTestId('continue-session')).toBeVisible();
     await page.getByTestId('continue-session').click();
 
@@ -133,10 +140,10 @@ test.describe('§3.3 — the landing page never redirects', () => {
 
   test('browser Back from the donation page returns to the landing page', async ({ page }) => {
     await signedIn(page);
-    await stubSupabase(page, { user: null });
+    await stubSupabase(page, { user: null, rpc: { donation_leaderboard: [] } });
 
     await page.goto('/');
-    await page.getByTestId('landing-primary-cta').click();
+    await page.getByTestId('landing-donate-cta').click();
     await expect.poll(() => new URL(page.url()).pathname).toBe('/donate');
 
     await page.goBack();
@@ -183,7 +190,7 @@ test.describe('§3.3 — an unfinished profile is never trapped in onboarding', 
     await expect.poll(() => new URL(page.url()).pathname).toBe('/');
     // The session is gone, so this is the signed-out landing page.
     await expect(page.getByTestId('landing-dashboard-link')).toHaveCount(0);
-    await expect(page.getByTestId('landing-primary-cta')).toHaveAttribute('href', '/donate');
+    await expect(page.getByTestId('landing-primary-cta')).toHaveAttribute('href', '/signup');
   });
 });
 

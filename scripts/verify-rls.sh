@@ -87,6 +87,14 @@ TABLES=(
   # (including authenticated) has a table grant. Skipped until the migration is
   # applied to the project being checked.
   "profile_viewers"
+  # M32 administrative control center. Plans, subscriptions, the payment ledger
+  # and campaign drafts are staff-only; an anonymous caller must see zero rows.
+  # `admin_settings` is probed by the database test suite because its primary
+  # key is `key`, not `id`.
+  "subscription_plans"
+  "subscriptions"
+  "payment_events"
+  "notification_campaigns"
 )
 
 failures=0
