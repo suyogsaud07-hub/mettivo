@@ -4,37 +4,41 @@ import { useEffect, useRef, useState } from 'react';
 import PhotoCropperModal from '@/app/components/profile/PhotoCropperModal';
 
 /**
- * The final onboarding step: profile picture and gallery upload.
+ * Profile photo and optional gallery upload.
  *
- * One distinct profile picture (adjusted with the cropper) and exactly four
- * distinct gallery photos. Images are stored as data URLs by the profile
- * payload; no verification service is involved.
+ * One distinct profile picture is required to launch. Gallery photos are a
+ * progressive extra: four are recommended, never mandatory. Images are stored
+ * as data URLs by the profile payload; no verification service is involved.
  */
 
 interface PhotoUploadStepProps {
   initialAvatarUrl: string;
   initialPhotos: string[];
   onProgress: (next: { avatarUrl: string; photos: string[]; ready: boolean }) => void;
+  /** Gallery photos required to mark this step ready. Defaults to none. */
+  minimumGallery?: number;
+  /** Recommended gallery target. */
+  galleryTarget?: number;
 }
-
-const GALLERY_TARGET = 4;
 
 export default function PhotoUploadStep({
   initialAvatarUrl,
   initialPhotos,
   onProgress,
+  minimumGallery = 0,
+  galleryTarget = 4,
 }: PhotoUploadStepProps) {
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
 
   const [avatar, setAvatar] = useState<string>(initialAvatarUrl);
-  const [gallery, setGallery] = useState<string[]>(initialPhotos.slice(0, GALLERY_TARGET));
+  const [gallery, setGallery] = useState<string[]>(initialPhotos.slice(0, galleryTarget));
   const [cropperSrc, setCropperSrc] = useState<string | null>(null);
   const [busyAvatar, setBusyAvatar] = useState(false);
   const [busyGallery, setBusyGallery] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const ready = avatar.length > 0 && gallery.length === GALLERY_TARGET;
+  const ready = avatar.length > 0 && gallery.length >= minimumGallery;
 
   // Keep the callback in a ref so a parent re-render (which happens on every
   // `onProgress`) never re-fires this effect and loops. The report only fires
@@ -82,7 +86,7 @@ export default function PhotoUploadStep({
     try {
       const next = [...gallery];
       for (const file of selected) {
-        if (next.length >= GALLERY_TARGET) break;
+        if (next.length >= galleryTarget) break;
         let dataUrl: string;
         try {
           dataUrl = await fileToDataUrl(file);
@@ -96,7 +100,7 @@ export default function PhotoUploadStep({
         }
         next.push(dataUrl);
       }
-      setGallery(next.slice(0, GALLERY_TARGET));
+      setGallery(next.slice(0, galleryTarget));
     } finally {
       setBusyGallery(false);
     }
@@ -110,8 +114,8 @@ export default function PhotoUploadStep({
         Add your photos
       </div>
       <div style={{ fontSize: '14px', color: '#B58A83', lineHeight: 1.4 }}>
-        Upload one profile picture and exactly four gallery photos. You can adjust your profile
-        picture before saving.
+        Upload one profile picture to launch. You can adjust it before saving, and add
+        gallery photos now or later from your profile dashboard.
       </div>
 
       {/* Profile picture */}
@@ -154,7 +158,7 @@ export default function PhotoUploadStep({
       {/* Gallery */}
       <div>
         <label style={labelStyle}>
-          Gallery ({gallery.length}/{GALLERY_TARGET}) *
+          Gallery ({gallery.length}/{galleryTarget}){minimumGallery > 0 ? ' *' : ' — optional'}
         </label>
         <input
           type="file"
@@ -179,7 +183,7 @@ export default function PhotoUploadStep({
             </div>
           ))}
 
-          {gallery.length < GALLERY_TARGET && (
+          {gallery.length < galleryTarget && (
             <button
               type="button"
               aria-label="Add gallery photos"
@@ -192,10 +196,9 @@ export default function PhotoUploadStep({
           )}
         </div>
         <p style={{ fontSize: '12px', color: '#B58A83', marginTop: '8px' }}>
-          Exactly four distinct photos.{' '}
-          {gallery.length < GALLERY_TARGET
-            ? `${GALLERY_TARGET - gallery.length} to go.`
-            : 'All four photos added.'}
+          {gallery.length < galleryTarget
+            ? `${galleryTarget - gallery.length} more recommended. Gallery photos are optional.`
+            : 'Gallery complete.'}
         </p>
       </div>
 
@@ -210,7 +213,7 @@ export default function PhotoUploadStep({
           data-testid="photos-ready"
           style={{ color: '#34D399', fontSize: '13px', fontWeight: 700 }}
         >
-          Photos ready. You can finish now.
+          Profile photo ready. You can finish now.
         </div>
       )}
 

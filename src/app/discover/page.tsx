@@ -276,6 +276,7 @@ export default function DiscoverPage() {
     echoSubtitle: { fontSize: '13px', color: '#B58A83' },
     echoIcons: { display: 'flex', gap: '8px', alignItems: 'center' },
     echoIconBtn: { width: '40px', height: '40px', borderRadius: '50%', backgroundColor: isRecording ? '#EF4444' : '#29202D', display: 'flex', justifyContent: 'center', alignItems: 'center', color: isRecording ? '#FFFFFF' : '#D4B18A', cursor: 'pointer', transition: 'all 0.2s' },
+    exploreBanner: { background: 'linear-gradient(120deg, #4A1828 0%, #2A1C2C 58%, #1C1822 100%)', margin: '0 20px 20px 20px', borderRadius: '20px', padding: '18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: '1px solid #4A1828', boxShadow: '0 10px 24px rgba(0,0,0,0.25)', cursor: 'pointer', textAlign: 'left' as const, width: 'calc(100% - 40px)' },
     audioPlayer: { marginTop: '10px', width: '100%', height: '30px' },
     listContainer: { padding: '0 20px' },
     listItem: { display: 'flex', alignItems: 'center', padding: '16px 0', borderBottom: '1px solid #29202D', cursor: 'pointer' },
@@ -339,6 +340,26 @@ export default function DiscoverPage() {
           <div style={{ ...styles.echoIconBtn, backgroundColor: 'transparent' }}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#D4B18A" strokeWidth="2"><polyline points="9 18 15 12 9 6"></polyline></svg></div>
         </div>
       </div>
+
+      <button
+        type="button"
+        style={styles.exploreBanner}
+        onClick={() => router.push('/explore-more')}
+        aria-label="Explore More categories"
+      >
+        <div style={styles.echoLeft}>
+          <div style={styles.echoTitleRow}>
+            <span style={styles.echoTitle}>Explore More</span>
+            <span style={styles.echoBadge}>7 ways</span>
+          </div>
+          <span style={styles.echoSubtitle}>Dating goals, shared interests and new people</span>
+        </div>
+        <div style={{ ...styles.echoIconBtn, width: '44px', height: '44px' }} aria-hidden="true">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#D4B18A" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M5 12h14M13 6l6 6-6 6" />
+          </svg>
+        </div>
+      </button>
 
       {loading ? (
         <div style={{ textAlign: 'center', marginTop: '40px', color: '#B58A83' }}>Finding people for you...</div>

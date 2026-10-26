@@ -90,7 +90,9 @@ export default function ChatListPage() {
     }
   }, [router]);
 
+  // The fetch starts with an await; state is not set synchronously here.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadConversations();
   }, [loadConversations]);
 

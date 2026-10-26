@@ -75,6 +75,16 @@ describe('M25/M26 — disappearing chat media', () => {
         .then((res) => res.rows[0].r)
     );
 
+  // M34 caps an unanswered sender at two messages. A real recipient reply
+  // resets that window, so fixtures that send a third item must first reply.
+  const replyFromB = () =>
+    asUser(db, USER_B, () =>
+      db.exec(
+        `insert into public.messages (match_id, sender_id, content)
+         values ('${matchAb}','${USER_B}','reply')`
+      )
+    );
+
   beforeAll(async () => {
     db = await createTestDb();
     matchAb = await pair(USER_A, USER_B);
@@ -144,6 +154,7 @@ describe('M25/M26 — disappearing chat media', () => {
   });
 
   it('counts two recipient views and then exhausts the item', async () => {
+    await replyFromB();
     const sent = await send(USER_A, path(`${USER_A}/burn.jpg`), 2);
 
     const redeem = (viewer: string) =>
@@ -194,6 +205,7 @@ describe('M25/M26 — disappearing chat media', () => {
   });
 
   it('makes an expired item unavailable and unreadable', async () => {
+    await replyFromB();
     const sent = await send(USER_A, path(`${USER_A}/old.jpg`), 2, 60);
     await db.exec(
       `update public.chat_media set expires_at = now() - interval '1 minute' where id = '${sent.media_id}'`
@@ -213,6 +225,7 @@ describe('M25/M26 — disappearing chat media', () => {
   });
 
   it('refuses to redeem media from a conversation you are not in', async () => {
+    await replyFromB();
     const sent = await send(USER_A, path(`${USER_A}/nope.jpg`), 2);
     await expect(
       asUser(db, USER_C, () =>

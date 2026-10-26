@@ -355,6 +355,52 @@ export async function saveProfile(draft: ProfileDraft): Promise<void> {
   throw new ProfileError(saveFailureMessage(insertError?.code), insertError?.code);
 }
 
+/**
+ * Updates ONLY the supplied columns on the signed-in member's existing profile.
+ *
+ * Used by progressive section editors so saving Personality cannot overwrite a
+ * concurrent Interests edit with stale form state. Identity still comes from
+ * `auth.uid()`; the caller cannot address another row.
+ */
+export async function saveProfileFields(fields: Record<string, unknown>): Promise<void> {
+  const patch: Record<string, unknown> = { ...fields };
+  delete patch.id;
+  delete patch.onboarding_completed;
+
+  if (Object.keys(patch).length === 0) {
+    throw new ProfileError('There are no changes to save.');
+  }
+
+  const { data: authData, error: authError } = await supabase.auth.getUser();
+  const user = authData.user;
+
+  if (authError || !user) {
+    console.error('[profile] section save failed: no authenticated user', authError?.message);
+    throw new ProfileError(
+      'Your session has expired. Please sign in again to save your profile.',
+      authError?.code
+    );
+  }
+
+  const { data, error } = await supabase
+    .from('profiles')
+    .update(patch)
+    .eq('id', user.id)
+    .select('id')
+    .maybeSingle();
+
+  if (error) {
+    console.error('[profile] section save failed:', error.code, error.message);
+    throw new ProfileError(saveFailureMessage(error.code), error.code);
+  }
+
+  if (!data) {
+    throw new ProfileError(
+      'We could not update your profile. Refresh the page and try again.'
+    );
+  }
+}
+
 // `loadOwnProfile()` used to live here with a `select('*')`. It was imported by
 // nothing, and a wildcard select is now denied outright because `birth_date`
 // carries a column-level revoke. Removed rather than repaired: the two surfaces

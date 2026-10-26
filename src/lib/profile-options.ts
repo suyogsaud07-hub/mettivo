@@ -26,8 +26,8 @@ export interface ProfileOption {
 
 /** Declared intentions. Values are mirrored by `profiles_intention_set`. */
 export const PROFILE_INTENTION_OPTIONS: readonly ProfileOption[] = [
-  { value: 'friendship', label: 'Friendship & Networking' },
-  { value: 'dating', label: 'Long-term Relationship / Dating' },
+  { value: 'friendship', label: 'Friendship and Networking' },
+  { value: 'dating', label: 'Serious Relationship' },
   { value: 'both', label: 'Casual & Open to Options' },
 ];
 

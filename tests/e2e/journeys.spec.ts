@@ -190,7 +190,7 @@ async function completeStep(page: Page, step: number): Promise<void> {
   }
 
   if (step === 6) {
-    await page.getByRole('button', { name: 'Long-term Relationship / Dating' }).click();
+    await page.getByRole('button', { name: 'Serious Relationship' }).click();
   }
 
   if (step === 7) {

@@ -316,7 +316,7 @@ as $$
   where d.id = p_category_id and d.is_active;
 $$;
 
-revoke all on function public.explore_category_accepts(text, text[], text[], text[], text[]) from public, anon, authenticated;
+revoke all on function public.explore_category_accepts(text, text[], text[], text[], text) from public, anon, authenticated;
 
 create or replace function public.explore_category_hits(
   p_category_id text,

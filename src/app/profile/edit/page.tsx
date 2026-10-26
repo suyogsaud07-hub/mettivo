@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { Suspense, useState, useEffect } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import {
   MAX_BIO_LENGTH,
@@ -10,18 +10,23 @@ import {
   ProfileError,
   calculateAge,
   saveProfile,
+  saveProfileFields,
   validateProfileDraft,
   type ProfileDraft,
 } from '@/lib/profile';
 import { MAX_PROMPT_ANSWER_LENGTH, loadCatalogue, type Catalogue } from '@/lib/catalogue';
-import { PERSONALITY_OPTIONS, personalityLabel } from '@/lib/personality';
+import { PERSONALITY_OPTIONS } from '@/lib/personality';
 import { LOCALE_OPTIONS } from '@/lib/locales';
 import {
   FIELD_TO_STEP,
+  INITIAL_ONBOARDING_STEPS,
   ONBOARDING_GENDERS,
   ONBOARDING_TOTAL_STEPS,
+  profileSectionById,
   validateOnboardingStep,
+  type ProfileSectionSpec,
 } from '@/lib/onboarding-steps';
+import { buildProfileSectionPatch } from '@/lib/profile-sections';
 import PhotoUploadStep from '@/app/components/profile/PhotoUploadStep';
 import IdentityFields from '@/app/components/profile/IdentityFields';
 import {
@@ -95,7 +100,34 @@ interface FormState {
 }
 
 export default function EditProfileWizardPage() {
+  return (
+    <Suspense fallback={<WizardLoading />}>
+      <EditProfileWizardContent />
+    </Suspense>
+  );
+}
+
+function WizardLoading() {
+  return (
+    <div
+      style={{
+        minHeight: '100vh',
+        backgroundColor: '#0D0A10',
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'center',
+        color: '#D4B18A',
+      }}
+    >
+      Loading Onboarding Wizard...
+    </div>
+  );
+}
+
+function EditProfileWizardContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const requestedSection = profileSectionById(searchParams.get('section'));
   const [currentStep, setCurrentStep] = useState(1);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -140,10 +172,17 @@ export default function EditProfileWizardPage() {
     prompts: {},
   });
 
-  const totalSteps = ONBOARDING_TOTAL_STEPS;
-  const stepValidation = validateOnboardingStep(currentStep, formData);
   const [catalogue, setCatalogue] = useState<Catalogue | null>(null);
   const [promptSlots, setPromptSlots] = useState<{ id: string; answer: string }[]>([]);
+
+  const sectionMode = alreadyOnboarded && requestedSection !== null;
+  const section: ProfileSectionSpec | null = sectionMode ? requestedSection : null;
+  const onboardingPosition = Math.max(
+    1,
+    INITIAL_ONBOARDING_STEPS.findIndex((candidate) => candidate.step === currentStep) + 1
+  );
+  const isLastOnboardingStep = onboardingPosition === ONBOARDING_TOTAL_STEPS;
+  const stepValidation = validateOnboardingStep(currentStep, formData);
 
   const updatePromptSlots = (next: { id: string; answer: string }[]) => {
     setPromptSlots(next);
@@ -227,7 +266,11 @@ export default function EditProfileWizardPage() {
                 : {},
           }));
 
-          setAlreadyOnboarded(data.onboarding_completed === true);
+          const onboarded = data.onboarding_completed === true;
+          setAlreadyOnboarded(onboarded);
+          if (onboarded && requestedSection) {
+            setCurrentStep(requestedSection.step);
+          }
 
           const savedPrompts: Record<string, string> =
             typeof data.prompts === 'object' && data.prompts !== null
@@ -254,7 +297,13 @@ export default function EditProfileWizardPage() {
     return () => {
       isMounted = false;
     };
-  }, [router]);
+  }, [router, requestedSection]);
+
+  useEffect(() => {
+    if (!loading && alreadyOnboarded && !requestedSection) {
+      router.replace('/profile/dashboard#profile-sections');
+    }
+  }, [loading, alreadyOnboarded, requestedSection, router]);
 
   useEffect(() => {
     let isMounted = true;
@@ -287,7 +336,9 @@ export default function EditProfileWizardPage() {
   const handleNext = () => {
     setError(null);
 
-    if (currentStep >= totalSteps) return;
+    const index = INITIAL_ONBOARDING_STEPS.findIndex((step) => step.step === currentStep);
+    const next = index >= 0 ? INITIAL_ONBOARDING_STEPS[index + 1] : undefined;
+    if (!next) return;
 
     const validation = validateOnboardingStep(currentStep, formData);
     if (!validation.ok) {
@@ -295,14 +346,19 @@ export default function EditProfileWizardPage() {
       return;
     }
 
-    setCurrentStep((prev) => prev + 1);
+    setCurrentStep(next.step);
   };
 
   const handleBack = () => {
     setError(null);
-    if (currentStep > 1) {
-      setCurrentStep((prev) => prev - 1);
+    if (sectionMode) {
+      router.replace('/profile/dashboard#profile-sections');
+      return;
     }
+
+    const index = INITIAL_ONBOARDING_STEPS.findIndex((step) => step.step === currentStep);
+    const previous = index > 0 ? INITIAL_ONBOARDING_STEPS[index - 1] : undefined;
+    if (previous) setCurrentStep(previous.step);
   };
 
   const handleSubmit = async () => {
@@ -346,8 +402,8 @@ export default function EditProfileWizardPage() {
     };
 
     if (!alreadyOnboarded && !photosReady) {
-      setError('Please add one profile picture and four gallery photos before finishing.');
-      setCurrentStep(ONBOARDING_TOTAL_STEPS);
+      setError('Please add a profile picture before finishing. Gallery photos are optional.');
+      setCurrentStep(profileSectionById('photos')?.step ?? 17);
       return;
     }
 
@@ -384,6 +440,32 @@ export default function EditProfileWizardPage() {
     }
   };
 
+  const handleSaveSection = async (): Promise<void> => {
+    if (!section || saving) return;
+
+    const built = buildProfileSectionPatch(section.id, formData);
+    if (!built.ok) {
+      setError(built.message ?? 'Please check this section and try again.');
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    try {
+      await saveProfileFields(built.patch);
+      router.replace('/profile/dashboard#profile-sections');
+    } catch (err) {
+      console.error('[profile] section save failed:', err);
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'An unexpected error occurred. Please try again.'
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleSignOut = async (): Promise<void> => {
     setSigningOut(true);
     setError(null);
@@ -409,13 +491,15 @@ export default function EditProfileWizardPage() {
     );
   }
 
-  const progressPercent = Math.round((currentStep / totalSteps) * 100);
+  const progressPercent = sectionMode
+    ? 100
+    : Math.round((onboardingPosition / ONBOARDING_TOTAL_STEPS) * 100);
 
   const primaryProblem =
     stepValidation.problems.length > 0 ? stepValidation.problems[0].message : null;
-  const showStepError = primaryProblem !== null && currentStep < totalSteps;
+  const showStepError = primaryProblem !== null && (sectionMode || !isLastOnboardingStep);
   const showRecommended =
-    currentStep < totalSteps && stepValidation.missingRecommended.length > 0;
+    !sectionMode && !isLastOnboardingStep && stepValidation.missingRecommended.length > 0;
 
   const styles = {
     container: { minHeight: '100vh', backgroundColor: '#0D0A10', color: '#F2E9E4', fontFamily: 'system-ui', padding: '20px', display: 'flex', flexDirection: 'column' as const, justifyContent: 'space-between', boxSizing: 'border-box' as const },
@@ -456,8 +540,20 @@ export default function EditProfileWizardPage() {
     <div style={styles.container}>
       <div style={styles.header}>
         <div style={styles.topNav}>
-          <button style={{ background: 'none', border: 'none', color: '#B58A83', fontSize: '14px', cursor: 'pointer' }} onClick={() => router.back()}>✕ Cancel</button>
-          <span style={styles.stepCounter}>Step {currentStep} of {totalSteps}</span>
+          <button
+            style={{ background: 'none', border: 'none', color: '#B58A83', fontSize: '14px', cursor: 'pointer' }}
+            onClick={() => {
+              if (sectionMode) router.replace('/profile/dashboard#profile-sections');
+              else router.back();
+            }}
+          >
+            ✕ {sectionMode ? 'Close' : 'Cancel'}
+          </button>
+          <span style={styles.stepCounter}>
+            {sectionMode
+              ? section?.title ?? 'Edit profile'
+              : `Step ${onboardingPosition} of ${ONBOARDING_TOTAL_STEPS}`}
+          </span>
         </div>
         <div style={styles.progressBarBg}>
           <div style={{ ...styles.progressBarFill, width: `${progressPercent}%` }} />
@@ -959,85 +1055,109 @@ export default function EditProfileWizardPage() {
                   Clear selection
                 </button>
               )}
-              <button
-                type="button"
-                style={styles.escapeButton}
-                data-testid="religion-skip"
-                onClick={() => {
-                  setFormData((prev) => ({ ...prev, religion: '' }));
-                  handleNext();
-                }}
-              >
-                Skip for now
-              </button>
+              {!sectionMode && (
+                <button
+                  type="button"
+                  style={styles.escapeButton}
+                  data-testid="religion-skip"
+                  onClick={() => {
+                    setFormData((prev) => ({ ...prev, religion: '' }));
+                    handleNext();
+                  }}
+                >
+                  Skip for now
+                </button>
+              )}
             </div>
           </div>
         )}
 
         {currentStep === 17 && (
           <div>
-            <div style={styles.title}>Add your photos &amp; finish</div>
+            <div style={styles.title}>
+              {sectionMode ? 'Profile photos' : 'Add your profile photo & finish'}
+            </div>
             <div style={styles.subtitle}>
-              Choose one profile picture and four gallery photos for your profile.
+              {sectionMode
+                ? 'Update your profile picture or gallery. One profile picture is required; gallery photos are optional.'
+                : 'One profile picture is all you need to launch. Add gallery photos if you like — four are recommended.'}
             </div>
 
-            {!alreadyOnboarded && (
-              <div style={{ marginBottom: '24px' }}>
-                <PhotoUploadStep
-                  initialAvatarUrl={formData.avatarUrl}
-                  initialPhotos={formData.photos}
-                  onProgress={({ avatarUrl, photos, ready }) => {
-                    setFormData((prev) => ({ ...prev, avatarUrl, photos }));
-                    setPhotosReady(ready);
-                  }}
-                />
-              </div>
+            <div style={{ marginBottom: sectionMode ? 0 : '24px' }}>
+              <PhotoUploadStep
+                initialAvatarUrl={formData.avatarUrl}
+                initialPhotos={formData.photos}
+                onProgress={({ avatarUrl, photos, ready }) => {
+                  setFormData((prev) => ({ ...prev, avatarUrl, photos }));
+                  setPhotosReady(ready);
+                }}
+              />
+            </div>
+
+            {!sectionMode && (
+              <>
+                <div style={styles.subtitle}>Double check your details before saving your profile.</div>
+
+                <div style={{ maxHeight: '220px', overflowY: 'auto', paddingRight: '6px' }}>
+                  <div style={styles.summaryRow}><span>Name</span><span style={{ color: '#D4B18A' }}>{[formData.firstName, formData.hasLastName ? formData.lastName : ''].filter(Boolean).join(' ') || 'Not set'}</span></div>
+                  <div style={styles.summaryRow}><span>Username</span><span style={{ color: '#D4B18A' }}>{formData.username ? `@${formData.username.replace(/^@/, '')}` : 'Not set'}</span></div>
+                  <div style={styles.summaryRow}><span>Gender</span><span style={{ color: '#D4B18A' }}>{formData.gender || 'Not set'}</span></div>
+                  <div style={styles.summaryRow}><span>Age</span><span style={{ color: '#D4B18A' }}>{formData.age} years old</span></div>
+                  <div style={styles.summaryRow}><span>Location</span><span style={{ color: '#D4B18A' }}>{[formData.city, formData.country].filter(Boolean).join(', ') || 'Not set'}</span></div>
+                  <div style={styles.summaryRow}><span>Intention</span><span style={{ color: '#D4B18A' }}>{formData.intention || 'Not set'}</span></div>
+                  <div style={styles.summaryRow}><span>Looking to date</span><span style={{ color: '#D4B18A' }}>{formData.lookingFor.join(', ') || 'Not set'}</span></div>
+                  <div style={styles.summaryRow}><span>Bio</span><span style={{ color: '#D4B18A' }}>{formData.bio ? 'Added' : 'Not set'}</span></div>
+                  <div style={styles.summaryRow}><span>Gallery</span><span style={{ color: '#D4B18A' }}>{formData.photos.length ? `${formData.photos.length} added` : 'Optional'}</span></div>
+                </div>
+              </>
             )}
-
-            <div style={styles.subtitle}>Double check your details before saving your profile.</div>
-
-            <div style={{ maxHeight: '220px', overflowY: 'auto', paddingRight: '6px' }}>
-              <div style={styles.summaryRow}><span>Name</span><span style={{ color: '#D4B18A' }}>{[formData.firstName, formData.hasLastName ? formData.lastName : ''].filter(Boolean).join(' ') || 'Not set'}</span></div>
-              <div style={styles.summaryRow}><span>Username</span><span style={{ color: '#D4B18A' }}>{formData.username ? `@${formData.username.replace(/^@/, '')}` : 'Not set'}</span></div>
-              <div style={styles.summaryRow}><span>Gender</span><span style={{ color: '#D4B18A' }}>{formData.gender || 'Not set'}</span></div>
-              <div style={styles.summaryRow}><span>Age</span><span style={{ color: '#D4B18A' }}>{formData.age} years old</span></div>
-              <div style={styles.summaryRow}><span>Location</span><span style={{ color: '#D4B18A' }}>{formData.city}, {formData.country}</span></div>
-              <div style={styles.summaryRow}><span>Intention</span><span style={{ color: '#D4B18A' }}>{formData.intention || 'Not set'}</span></div>
-              <div style={styles.summaryRow}><span>MBTI</span><span style={{ color: '#D4B18A' }}>{personalityLabel(formData.mbti)}</span></div>
-              <div style={styles.summaryRow}><span>Religion</span><span style={{ color: '#D4B18A' }}>{formData.religion || 'Not specified'}</span></div>
-              <div style={styles.summaryRow}><span>Hobbies</span><span style={{ color: '#D4B18A' }}>{formData.hobbies.join(', ') || 'None selected'}</span></div>
-              <div style={styles.summaryRow}><span>Languages</span><span style={{ color: '#D4B18A' }}>{formData.languagesSpoken.join(', ') || 'None selected'}</span></div>
-              <div style={styles.summaryRow}><span>Photos</span><span style={{ color: '#D4B18A' }}>{formData.photos.length} added</span></div>
-            </div>
           </div>
         )}
       </div>
 
       <div style={styles.footerNav}>
-        {currentStep > 1 && (
-          <button type="button" style={styles.backBtn} onClick={handleBack} disabled={saving}>
-            ← Back
-          </button>
-        )}
-
-        {currentStep < totalSteps ? (
-          <button
-            type="button"
-            style={styles.nextBtn}
-            onClick={handleNext}
-            disabled={!stepValidation.ok}
-          >
-            Next →
-          </button>
+        {sectionMode ? (
+          <>
+            <button type="button" style={styles.backBtn} onClick={handleBack} disabled={saving}>
+              ← Back to profile
+            </button>
+            <button
+              type="button"
+              style={styles.submitBtn}
+              onClick={() => void handleSaveSection()}
+              disabled={saving || !stepValidation.ok}
+            >
+              {saving ? 'Saving…' : 'Save changes'}
+            </button>
+          </>
         ) : (
-          <button
-            type="button"
-            style={styles.submitBtn}
-            onClick={handleSubmit}
-            disabled={saving || (!alreadyOnboarded && !photosReady)}
-          >
-            {saving ? 'Saving Profile...' : 'Complete & Launch 🚀'}
-          </button>
+          <>
+            {onboardingPosition > 1 && (
+              <button type="button" style={styles.backBtn} onClick={handleBack} disabled={saving}>
+                ← Back
+              </button>
+            )}
+
+            {!isLastOnboardingStep ? (
+              <button
+                type="button"
+                style={styles.nextBtn}
+                onClick={handleNext}
+                disabled={!stepValidation.ok}
+              >
+                Next →
+              </button>
+            ) : (
+              <button
+                type="button"
+                style={styles.submitBtn}
+                onClick={() => void handleSubmit()}
+                disabled={saving || !photosReady}
+              >
+                {saving ? 'Saving Profile...' : 'Complete & Launch'}
+              </button>
+            )}
+          </>
         )}
       </div>
 

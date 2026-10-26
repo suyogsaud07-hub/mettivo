@@ -49,6 +49,7 @@ export interface DiscoveryCandidate extends MatchProfile {
   interests: string[];
   promptAnswers: Record<string, string>;
   online: boolean;
+  isVerified: boolean;
 }
 
 export interface DiscoveryFilters {
@@ -101,7 +102,7 @@ function stringRecord(value: unknown): Record<string, string> {
  * Narrows one RPC row. Returns `null` rather than casting, so a schema change
  * drops the row instead of putting `undefined` in front of a member.
  */
-function parseCandidate(row: unknown): DiscoveryCandidate | null {
+export function parseDiscoveryCandidate(row: unknown): DiscoveryCandidate | null {
   if (!isRecord(row)) return null;
   const id = str(row.id);
   if (!id) return null;
@@ -128,6 +129,7 @@ function parseCandidate(row: unknown): DiscoveryCandidate | null {
     interests: strArray(row.interests),
     promptAnswers: stringRecord(row.prompts),
     online: bool(row.is_online),
+    isVerified: row.is_verified === true,
   };
 }
 
@@ -175,7 +177,7 @@ export async function fetchDiscoveryCandidates(
   }
 
   const rows = Array.isArray(data) ? data : [];
-  return rows.map(parseCandidate).filter((row): row is DiscoveryCandidate => row !== null);
+  return rows.map(parseDiscoveryCandidate).filter((row): row is DiscoveryCandidate => row !== null);
 }
 
 /**

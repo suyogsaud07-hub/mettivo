@@ -65,28 +65,45 @@ describe('M36 — Explore More eligibility, counts, goals and pagination', () =>
         ('${USER_H}', 'hana@example.com'),
         ('${USER_J}', 'jon@example.com');
 
+      update public.profiles as p set
+        first_name = v.first_name, last_name = v.last_name,
+        has_last_name = v.has_last_name, username = v.username,
+        display_name = v.display_name, age = v.age, gender = v.gender,
+        city = v.city, country = v.country, avatar_url = v.avatar_url,
+        photos = v.photos, bio = v.bio, intention = v.intention,
+        looking_for = v.looking_for, hobbies = v.hobbies, pets = v.pets,
+        mbti = v.mbti, interests = v.interests, prompts = v.prompts,
+        is_verified = v.is_verified, onboarding_completed = v.onboarding_completed,
+        last_seen_at = v.last_seen_at
+      from (values
+        ('${USER_A}'::uuid, 'Ada', null::text, false, 'ada_e', 'Ada', 28, 'Woman', 'Kathmandu',
+         'Nepal', 'a.jpg', array['a.jpg'], 'Ada bio', 'both', array['Men'],
+         array['Coffee & Tea'], array[]::text[], 'INFJ',
+         array['coffee','hiking'], '{"simple-pleasures":"coffee"}'::jsonb, true, true, now()),
+        ('${USER_B}'::uuid, 'Bo', null::text, false, 'bo_e', 'Bo', 30, 'Man', 'Pokhara',
+         'Nepal', 'b.jpg', array['b.jpg'], 'Bo bio', 'dating', array['Women'],
+         array['Travel','Cooking'], array['Dog lover'], 'ENFP',
+         array['coffee','hiking','travel'], '{"simple-pleasures":"coffee"}'::jsonb, true, true, now()),
+        ('${USER_C}'::uuid, 'Cy', null::text, false, 'cy_e', 'Cy', 25, 'Woman', 'Lalitpur',
+         'Nepal', 'c.jpg', array['c.jpg'], 'Cy bio', 'friendship', array['Men'],
+         array['Gaming'], array[]::text[], 'INTP',
+         array['gaming'], '{}'::jsonb, false, true, now()),
+        ('${USER_D}'::uuid, 'Dee', null::text, false, 'dee_e', 'Dee', 32, 'Man', 'Nepalgunj',
+         'Nepal', 'd.jpg', array['d.jpg'], 'Dee bio', 'dating', array['Women'],
+         array[]::text[], array[]::text[], null,
+         array['coffee'], '{}'::jsonb, false, true, now())
+      ) as v(id, first_name, last_name, has_last_name, username, display_name, age,
+             gender, city, country, avatar_url, photos, bio, intention, looking_for,
+             hobbies, pets, mbti, interests, prompts, is_verified,
+             onboarding_completed, last_seen_at)
+      where p.id = v.id;
+
       insert into public.profiles
         (id, first_name, last_name, has_last_name, username, display_name, age,
          gender, city, country, avatar_url, photos, bio, intention, looking_for,
          hobbies, pets, mbti, interests, prompts, is_verified,
          onboarding_completed, last_seen_at)
       values
-        ('${USER_A}', 'Ada', null, false, 'ada_e', 'Ada', 28, 'Woman', 'Kathmandu',
-         'Nepal', 'a.jpg', array['a.jpg'], 'Ada bio', 'both', array['Men'],
-         array['Coffee & Tea'], array[]::text[], 'INFJ',
-         array['coffee','hiking'], '{"simple-pleasures":"coffee"}'::jsonb, true, true, now()),
-        ('${USER_B}', 'Bo', null, false, 'bo_e', 'Bo', 30, 'Man', 'Pokhara',
-         'Nepal', 'b.jpg', array['b.jpg'], 'Bo bio', 'dating', array['Women'],
-         array['Travel','Cooking'], array['Dog lover'], 'ENFP',
-         array['coffee','hiking','travel'], '{"simple-pleasures":"coffee"}'::jsonb, true, true, now()),
-        ('${USER_C}', 'Cy', null, false, 'cy_e', 'Cy', 25, 'Woman', 'Lalitpur',
-         'Nepal', 'c.jpg', array['c.jpg'], 'Cy bio', 'friendship', array['Men'],
-         array['Gaming'], array[]::text[], 'INTP',
-         array['gaming'], '{}'::jsonb, false, true, now()),
-        ('${USER_D}', 'Dee', null, false, 'dee_e', 'Dee', 32, 'Man', 'Nepalgunj',
-         'Nepal', 'd.jpg', array['d.jpg'], 'Dee bio', 'dating', array['Women'],
-         array[]::text[], array[]::text[], null,
-         array['coffee'], '{}'::jsonb, false, true, now()),
         ('${USER_E}', 'Eve', null, false, 'eve_e', 'Eve', 26, 'Man', 'Birgunj',
          'Nepal', 'e.jpg', array['e.jpg'], 'Eve bio', 'friendship', array['Women'],
          array['Gaming'], array['Cat lover'], 'ISTJ',
@@ -154,7 +171,7 @@ describe('M36 — Explore More eligibility, counts, goals and pagination', () =>
     expect(countFor(rows, 'pet-lovers')).toBe(2);
     expect(countFor(rows, 'travel-partners')).toBe(1);
     expect(countFor(rows, 'new-friends')).toBe(1);
-    expect(countFor(rows, 'dating-goals')).toBe(1);
+    expect(countFor(rows, 'dating-goals')).toBe(2);
 
     // Private D, suspended F, banned G, liked H, blocked J and the
     // gender-excluded C never contribute.
