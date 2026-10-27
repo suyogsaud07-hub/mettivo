@@ -147,8 +147,12 @@ const optional = (key: keyof OnboardingState, label: string): StepFieldSpec => (
 });
 
 /**
- * The authoritative registry. Essential sections come first, so a new member's
- * wizard is a contiguous eight-step path; progressive sections keep their
+ * The authoritative registry, in the original section order.
+ *
+ * Section numbers stay stable because older links and field mappings address
+ * them directly. The launch wizard follows `INITIAL_ONBOARDING_STEPS`, whose
+ * eight essential sections are not contiguous (1, 2, 3, 4, 6, 7, 15, 17); the
+ * UI reports its own position `x of 8`. Progressive sections keep their
  * original capabilities and are addressable by stable id from the dashboard.
  *
  * Every field named here must also be mapped in `FIELD_TO_STEP`; a test pins

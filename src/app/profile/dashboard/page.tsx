@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabase';
 import { MAX_BIO_LENGTH, MIN_AGE } from '@/lib/profile';
 import { PERSONALITY_OPTIONS } from '@/lib/personality';
 import { ONBOARDING_GENDERS } from '@/lib/onboarding-steps';
+import { buildProfileCompletion } from '@/lib/profile-completion';
 import {
   PROFILE_DRINKING_OPTIONS,
   PROFILE_HOBBIES_OPTIONS,
@@ -30,6 +31,7 @@ import { fetchProfileViewCount } from '@/lib/profile-views';
 import type { MomentAuthor, MomentFeedRow, MomentVisibility } from '@/lib/types';
 import MobileNav from '../../components/layout/MobileNav';
 import ProfileHeader from '../../components/profile/ProfileHeader';
+import ProfileCompletionPanel from '../../components/profile/ProfileCompletionPanel';
 import ProfileViewsIconButton from '../../components/profile/ProfileViewsIconButton';
 import ProfileTabs, { type ProfileTab } from '../../components/profile/ProfileTabs';
 import ProfileDetails from '../../components/profile/ProfileDetails';
@@ -60,10 +62,18 @@ interface Profile {
   looking_for: string[];
   hobbies: string[];
   pets: string[];
+  interests: string[] | null;
+  physical_attributes: string[] | null;
+  height: string | null;
+  prompts: Record<string, string> | null;
   mbti: string;
   religion: string;
   drinking: string;
   smoking: string;
+  exercise: string | null;
+  education: string | null;
+  profession: string | null;
+  languages_spoken: string[] | null;
   /** M22 short headline, shown under the name. Optional. */
   status: string | null;
   followers_count: number;
@@ -157,7 +167,7 @@ const EDITOR_FIELDS: Record<EditableKey, FieldConfig> = {
  *   readable on a partially migrated database.
  */
 const PROFILE_CORE_COLUMNS =
-  'id, first_name, last_name, has_last_name, username, display_name, age, gender, city, country, avatar_url, photos, bio, intention, looking_for, hobbies, pets, mbti, religion, drinking, smoking' as const;
+  'id, first_name, last_name, has_last_name, username, display_name, age, gender, city, country, avatar_url, photos, bio, intention, looking_for, hobbies, pets, interests, physical_attributes, height, prompts, mbti, religion, drinking, smoking, exercise, education, profession, languages_spoken' as const;
 
 /**
  * The M18 counters and the M22 status headline. Both are opt-in for the same
@@ -752,39 +762,6 @@ export default function ProfileDashboardPage() {
       normalizedQuery ? (post.caption ?? '').toLowerCase().includes(normalizedQuery) : true
     );
 
-  const calculateCompletion = () => {
-    if (!profile) return 0;
-
-    // Count the actual profile fields, not an assumed "verified" state. Empty
-    // arrays and whitespace-only text are not progress; the optional fields
-    // still count because they are part of profile strength, not onboarding.
-    const checks = [
-      profile.first_name?.trim(),
-      profile.last_name?.trim(),
-      profile.username?.trim(),
-      profile.age,
-      profile.gender?.trim(),
-      profile.city?.trim(),
-      profile.country?.trim(),
-      profile.avatar_url?.trim(),
-      profile.bio?.trim(),
-      profile.intention?.trim(),
-      profile.looking_for?.length,
-      profile.hobbies?.length,
-      profile.pets?.length,
-      profile.mbti?.trim(),
-      profile.religion?.trim(),
-      profile.drinking?.trim(),
-      profile.smoking?.trim(),
-    ];
-    const filled = checks.filter((value) =>
-      typeof value === 'number' ? value > 0 : Boolean(value)
-    ).length;
-
-    return Math.round((filled / checks.length) * 100);
-  };
-
-  const completionPercentage = calculateCompletion();
 
   if (loading) {
     return (
@@ -822,10 +799,34 @@ export default function ProfileDashboardPage() {
     );
   }
 
-  const radius = 20;
-  const circumference = 2 * Math.PI * radius;
-  const strokeDashoffset = circumference - (completionPercentage / 100) * circumference;
-  const isComplete = completionPercentage >= 100;
+  const completion = buildProfileCompletion({
+    firstName: profile.first_name,
+    lastName: profile.last_name,
+    hasLastName: profile.has_last_name,
+    username: profile.username,
+    age: profile.age,
+    gender: profile.gender,
+    city: profile.city,
+    country: profile.country,
+    avatarUrl: profile.avatar_url,
+    bio: profile.bio,
+    intention: profile.intention,
+    lookingFor: profile.looking_for ?? null,
+    hobbies: profile.hobbies ?? null,
+    interests: profile.interests ?? null,
+    physicalAttributes: profile.physical_attributes ?? null,
+    height: profile.height,
+    mbti: profile.mbti,
+    religion: profile.religion,
+    drinking: profile.drinking,
+    smoking: profile.smoking,
+    exercise: profile.exercise,
+    education: profile.education,
+    profession: profile.profession,
+    languagesSpoken: profile.languages_spoken ?? null,
+    pets: profile.pets ?? null,
+    prompts: profile.prompts,
+  });
 
   const author: MomentAuthor = {
     id: profile.id,
@@ -1170,7 +1171,12 @@ export default function ProfileDashboardPage() {
               <button
                 type="button"
                 className="pf-btn pf-btn-primary"
-                onClick={() => router.push('/profile/edit')}
+                onClick={() =>
+                  document.getElementById('profile-sections')?.scrollIntoView({
+                    behavior: 'smooth',
+                    block: 'start',
+                  })
+                }
               >
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <path d="M12 20h9" />
@@ -1222,50 +1228,7 @@ export default function ProfileDashboardPage() {
           </div>
         )}
 
-        {!viewAs && !isComplete && (
-          <div className="pf-overview pf-overview-single">
-            <section className="pf-card pf-completion" aria-labelledby="profile-strength-title">
-              <svg
-                className="pf-ring"
-                viewBox="0 0 50 50"
-                role="img"
-                aria-label={`Profile ${completionPercentage}% complete`}
-              >
-                <circle cx="25" cy="25" r={radius} fill="none" stroke="#34283F" strokeWidth="4" />
-                <circle
-                  cx="25"
-                  cy="25"
-                  r={radius}
-                  fill="none"
-                  stroke="#D8B38A"
-                  strokeWidth="4"
-                  strokeDasharray={circumference}
-                  strokeDashoffset={strokeDashoffset}
-                  strokeLinecap="round"
-                  transform="rotate(-90 25 25)"
-                />
-                <text x="25" y="28" textAnchor="middle" fill="#EAE2F0" fontSize="10" fontWeight="bold">
-                  {completionPercentage}%
-                </text>
-              </svg>
-              <div className="pf-completion-copy">
-                <h2 className="pf-completion-title" id="profile-strength-title">
-                  Profile strength
-                </h2>
-                <p className="pf-completion-text">
-                  {completionPercentage}% complete. Add a few details to help people find you.
-                </p>
-              </div>
-              <button
-                type="button"
-                className="pf-btn pf-btn-small pf-btn-primary"
-                onClick={() => router.push('/profile/edit')}
-              >
-                Finish
-              </button>
-            </section>
-          </div>
-        )}
+        {!viewAs && <ProfileCompletionPanel completion={completion} />}
 
         <ProfileTabs active={activeTab} onChange={setActiveTab} />
 

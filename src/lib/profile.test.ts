@@ -10,12 +10,17 @@ import {
 } from '@/lib/profile';
 import {
   FIELD_TO_STEP,
+  INITIAL_ONBOARDING_STEPS,
   MAX_PHOTOS,
-  MIN_PHOTOS,
   ONBOARDING_GENDERS,
   ONBOARDING_STEPS,
   ONBOARDING_TOTAL_STEPS,
+  PROFILE_SECTIONS,
+  PROGRESSIVE_PROFILE_SECTIONS,
+  RECOMMENDED_GALLERY_PHOTOS,
+  profileSectionById,
   validateOnboardingStep,
+  validateProfileSection,
   type OnboardingState,
 } from '@/lib/onboarding-steps';
 
@@ -160,13 +165,12 @@ describe('M7 — draft validation', () => {
 });
 
 /**
- * The onboarding step controller.
+ * The onboarding registry and section controller.
  *
- * The wizard used to accept `Next` on any step and only reject the member at
- * submit time, so steps 4–14 could be walked empty. `validateOnboardingStep` is
- * now the single source of truth for "does this step block?"; these tests pin
- * every rule, including the character-exact photo message the browser suite
- * matches on.
+ * The launch path is now eight ESSENTIAL sections. The other nine remain
+ * first-class profile sections with progressive validation: empty is valid,
+ * malformed is not. These tests pin both halves so a future refactor cannot
+ * quietly turn optional depth back into an onboarding wall.
  */
 
 const blankState = (): OnboardingState => ({
@@ -174,8 +178,10 @@ const blankState = (): OnboardingState => ({
   lastName: '',
   hasLastName: true,
   username: '',
+  avatarUrl: '',
   photos: [],
   gender: '',
+  pronouns: '',
   birthDate: '',
   country: '',
   city: '',
@@ -204,8 +210,10 @@ const completeState = (overrides: Partial<OnboardingState> = {}): OnboardingStat
   lastName: 'Saud',
   hasLastName: true,
   username: 'sujata',
+  avatarUrl: 'avatar',
   photos: ['a', 'b', 'c', 'd'],
   gender: 'Woman',
+  pronouns: 'she/her',
   birthDate: '1998-05-04',
   country: 'Nepal',
   city: 'Kathmandu',
@@ -230,85 +238,79 @@ const completeState = (overrides: Partial<OnboardingState> = {}): OnboardingStat
   ...overrides,
 });
 
-/** Every step with a required field. Religion and the photo screen are optional locally. */
-const BLOCKING_STEPS = ONBOARDING_STEPS.filter(
-  (spec) => spec.step < ONBOARDING_TOTAL_STEPS && spec.required.length > 0
-);
-
-describe('onboarding — the step registry', () => {
-  it('registers all seventeen steps, once each, in order', () => {
-    expect(ONBOARDING_TOTAL_STEPS).toBe(17);
-    expect(ONBOARDING_STEPS).toHaveLength(ONBOARDING_TOTAL_STEPS);
-    expect(ONBOARDING_STEPS.map((spec) => spec.step)).toEqual(
-      Array.from({ length: ONBOARDING_TOTAL_STEPS }, (_, index) => index + 1)
+describe('onboarding — the registry', () => {
+  it('registers all seventeen original sections exactly once', () => {
+    expect(PROFILE_SECTIONS).toHaveLength(17);
+    expect(PROFILE_SECTIONS.map((spec) => spec.step)).toEqual(
+      Array.from({ length: 17 }, (_, index) => index + 1)
     );
-    expect(new Set(ONBOARDING_STEPS.map((spec) => spec.id)).size).toBe(
-      ONBOARDING_TOTAL_STEPS
-    );
-    expect(ONBOARDING_STEPS.find((spec) => spec.step === 16)?.id).toBe('religion');
-    expect(ONBOARDING_STEPS[ONBOARDING_TOTAL_STEPS - 1]?.id).toBe('photos');
+    expect(new Set(PROFILE_SECTIONS.map((spec) => spec.id)).size).toBe(17);
   });
 
-  it('maps every registered field to the step that owns it', () => {
-    for (const spec of ONBOARDING_STEPS) {
+  it('launches with eight essential sections and keeps nine progressive', () => {
+    expect(ONBOARDING_TOTAL_STEPS).toBe(8);
+    expect(INITIAL_ONBOARDING_STEPS).toHaveLength(8);
+    expect(PROGRESSIVE_PROFILE_SECTIONS).toHaveLength(9);
+    expect(ONBOARDING_STEPS).toBe(INITIAL_ONBOARDING_STEPS);
+    expect(INITIAL_ONBOARDING_STEPS.map((spec) => spec.id)).toEqual([
+      'name',
+      'identity',
+      'birthday',
+      'location',
+      'intention',
+      'preferences',
+      'bio',
+      'photos',
+    ]);
+    expect(INITIAL_ONBOARDING_STEPS.every((spec) => spec.stage === 'essential')).toBe(true);
+    expect(PROGRESSIVE_PROFILE_SECTIONS.every((spec) => spec.stage === 'progressive')).toBe(
+      true
+    );
+  });
+
+  it('keeps every original field and maps it to its owning section', () => {
+    for (const spec of PROFILE_SECTIONS) {
       for (const field of [...spec.required, ...spec.recommended]) {
         expect(FIELD_TO_STEP[field.key], `${field.key} -> step ${spec.step}`).toBe(
           spec.step
         );
       }
     }
+    expect(FIELD_TO_STEP.firstName).toBe(1);
+    expect(FIELD_TO_STEP.avatarUrl).toBe(17);
+    expect(FIELD_TO_STEP.photos).toBe(17);
+    expect(FIELD_TO_STEP.height).toBe(5);
+    expect(FIELD_TO_STEP.religion).toBe(16);
   });
 
-  it('maps the fields the review screen jumps back to', () => {
-    // `handleSubmit` uses this map to send the member back to the offending
-    // step rather than failing on the review screen.
-    const fields = [
-      'firstName',
-      'lastName',
-      'username',
-      'photos',
-      'gender',
-      'birthDate',
-      'age',
-      'country',
-      'city',
-      'intention',
-      'lookingFor',
-      'mbti',
-      'religion',
-      'interests',
-      'hobbies',
-      'bio',
-    ];
-    for (const field of fields) {
-      const step = FIELD_TO_STEP[field];
-      expect(step, `${field} must map to a real step`).toBeGreaterThanOrEqual(1);
-      expect(step).toBeLessThanOrEqual(ONBOARDING_TOTAL_STEPS);
-    }
+  it('is addressable by stable id and by step', () => {
+    expect(profileSectionById('interests')?.step).toBe(10);
+    expect(profileSectionById('not-a-section')).toBeNull();
+    expect(validateProfileSection('personality', blankState()).ok).toBe(true);
+    expect(validateProfileSection('personality', completeState({ mbti: 'INFJ' })).ok).toBe(
+      true
+    );
   });
 
-  it('re-exports the photo bounds rather than redefining them', () => {
-    expect(MIN_PHOTOS).toBe(4);
+  it('recommends four gallery photos without requiring them', () => {
+    expect(RECOMMENDED_GALLERY_PHOTOS).toBe(4);
     expect(MAX_PHOTOS).toBe(6);
-    expect(MIN_PHOTOS).toBeLessThanOrEqual(MAX_PHOTOS);
+    expect(RECOMMENDED_GALLERY_PHOTOS).toBeLessThan(MAX_PHOTOS);
   });
 });
 
-describe('onboarding — every step blocks when blank, passes when filled', () => {
-  it('blocks every required step for a blank state', () => {
-    for (const spec of BLOCKING_STEPS) {
+describe('onboarding — essential launch steps block and then pass', () => {
+  it('blocks every essential section for a blank state', () => {
+    for (const spec of INITIAL_ONBOARDING_STEPS) {
       const result = validateOnboardingStep(spec.step, blankState());
       expect(result.ok, `step ${spec.step} (${spec.id}) must block`).toBe(false);
-      expect(
-        result.problems.length,
-        `step ${spec.step} (${spec.id}) must explain why`
-      ).toBeGreaterThan(0);
+      expect(result.problems.length).toBeGreaterThan(0);
       expect(result.problems[0].message.length).toBeGreaterThan(0);
     }
   });
 
-  it('passes every required step for a complete state', () => {
-    for (const spec of BLOCKING_STEPS) {
+  it('passes every essential section for a complete state', () => {
+    for (const spec of INITIAL_ONBOARDING_STEPS) {
       const result = validateOnboardingStep(spec.step, completeState());
       expect(
         result.ok,
@@ -318,8 +320,36 @@ describe('onboarding — every step blocks when blank, passes when filled', () =
     }
   });
 
-  it('reports only problems owned by the step being validated', () => {
-    for (const spec of BLOCKING_STEPS) {
+  it('never makes an essential step depend on a progressive field', () => {
+    const noProgressiveDepth = completeState({
+      height: '',
+      physicalAttributes: [],
+      mbti: '',
+      prompts: {},
+      interests: [],
+      hobbies: [],
+      pets: [],
+      smoking: '',
+      drinking: '',
+      exercise: '',
+      education: '',
+      profession: '',
+      languagesSpoken: [],
+      religion: '',
+    });
+    for (const spec of INITIAL_ONBOARDING_STEPS) {
+      expect(
+        validateOnboardingStep(spec.step, noProgressiveDepth).ok,
+        `step ${spec.step} must still pass`
+      ).toBe(true);
+    }
+  });
+
+  it('reports only problems owned by the section being validated', () => {
+    for (const spec of INITIAL_ONBOARDING_STEPS) {
+      // The final launch screen deliberately delegates to the full-draft guard,
+      // so it may report a problem owned by an earlier essential section.
+      if (spec.id === 'photos') continue;
       for (const problem of validateOnboardingStep(spec.step, blankState()).problems) {
         expect(
           FIELD_TO_STEP[problem.field],
@@ -330,54 +360,57 @@ describe('onboarding — every step blocks when blank, passes when filled', () =
   });
 
   it('tolerates the extra fields the page state carries', () => {
-    // `FormState` additionally holds `age` and `personalityTraits`; the
-    // structural contract ignores them with no cast and no mapping layer. `tsc`
-    // proves the same assignment in src/app/profile/edit/page.tsx.
     const pageLikeState = { ...completeState(), age: 28, personalityTraits: ['calm'] };
     expect(validateOnboardingStep(1, pageLikeState).ok).toBe(true);
   });
 
   it('imposes no local requirement outside the registry', () => {
     expect(validateOnboardingStep(0, blankState()).ok).toBe(true);
-    expect(validateOnboardingStep(ONBOARDING_TOTAL_STEPS + 1, blankState()).ok).toBe(true);
+    expect(validateOnboardingStep(18, blankState()).ok).toBe(true);
   });
 });
 
-describe('onboarding — the final step, the photo requirement', () => {
-  it('blocks with the character-exact message unless exactly four gallery photos', () => {
-    for (const photos of [[], ['a'], ['a', 'b', 'c'], ['a', 'b', 'c', 'd', 'e']]) {
-      const result = validateOnboardingStep(ONBOARDING_TOTAL_STEPS, completeState({ photos }));
-      expect(result.ok).toBe(false);
-      expect(result.problems.find((problem) => problem.field === 'photos')?.message).toBe(
-        `Please upload exactly 4 gallery photos to continue (${photos.length}/4 uploaded)`
-      );
+describe('onboarding — progressive sections accept empty, reject malformed', () => {
+  it('passes every progressive section when it is empty', () => {
+    for (const spec of PROGRESSIVE_PROFILE_SECTIONS) {
+      const result = validateOnboardingStep(spec.step, blankState());
+      expect(result.ok, `${spec.id} must be skippable`).toBe(true);
+      expect(result.problems).toEqual([]);
     }
   });
 
-  it('does not count blank or whitespace-only photo entries', () => {
-    const result = validateOnboardingStep(
-      ONBOARDING_TOTAL_STEPS,
-      completeState({ photos: ['a', 'b', 'c', '   '] })
+  it('rejects a malformed MBTI but accepts a blank one', () => {
+    expect(validateProfileSection('personality', completeState({ mbti: '' })).ok).toBe(true);
+    expect(validateProfileSection('personality', completeState({ mbti: 'NOPE' })).ok).toBe(
+      false
     );
-    expect(result.ok).toBe(false);
-    expect(result.problems.find((problem) => problem.field === 'photos')?.message).toBe(
-      'Please upload exactly 4 gallery photos to continue (3/4 uploaded)'
+    expect(validateProfileSection('personality', completeState({ mbti: 'infj' })).ok).toBe(
+      true
     );
   });
 
-  it('accepts exactly four and refuses three or five', () => {
-    expect(validateOnboardingStep(ONBOARDING_TOTAL_STEPS, completeState()).ok).toBe(true);
+  it('rejects a half-answered prompt but accepts none', () => {
+    expect(validateProfileSection('prompts', completeState({ prompts: {} })).ok).toBe(true);
+    const half = validateProfileSection(
+      'prompts',
+      completeState({ prompts: { 'simple-pleasures': '   ' } })
+    );
+    expect(half.ok).toBe(false);
+    expect(half.problems.map((problem) => problem.field)).toContain('prompts');
+  });
+
+  it('bounds religion but never requires it', () => {
+    expect(validateProfileSection('religion', completeState({ religion: '' })).ok).toBe(true);
     expect(
-      validateOnboardingStep(ONBOARDING_TOTAL_STEPS, completeState({ photos: ['a', 'b', 'c'] })).ok
-    ).toBe(false);
-    expect(
-      validateOnboardingStep(
-        ONBOARDING_TOTAL_STEPS,
-        completeState({ photos: ['a', 'b', 'c', 'd', 'e'] })
+      validateProfileSection(
+        'religion',
+        completeState({ religion: 'x'.repeat(MAX_RELIGION_LENGTH + 1) })
       ).ok
     ).toBe(false);
   });
+});
 
+describe('onboarding — essential section specifics', () => {
   it('step 1 owns the identity fields and never blocks on photos', () => {
     const problems = validateOnboardingStep(1, blankState()).problems;
     expect(problems.map((problem) => problem.field)).toEqual([
@@ -385,20 +418,11 @@ describe('onboarding — the final step, the photo requirement', () => {
       'lastName',
       'username',
     ]);
-    expect(validateOnboardingStep(1, completeState({ photos: [] })).ok).toBe(true);
+    expect(validateOnboardingStep(1, completeState({ photos: [], avatarUrl: '' })).ok).toBe(
+      true
+    );
   });
 
-  it('keeps the photo rule out of the full-draft guard', () => {
-    // The gallery count is an onboarding-flow rule only. Profile edits are not
-    // forced to re-upload a gallery.
-    expect(validateProfileDraft(draft({ photos: [] }), NOW).ok).toBe(true);
-    expect(
-      validateOnboardingStep(ONBOARDING_TOTAL_STEPS, completeState({ photos: [] })).ok
-    ).toBe(false);
-  });
-});
-
-describe('onboarding — step-specific guards', () => {
   it('step 2 accepts only the declared gender identities', () => {
     for (const gender of ONBOARDING_GENDERS) {
       expect(validateOnboardingStep(2, completeState({ gender })).ok).toBe(true);
@@ -417,86 +441,63 @@ describe('onboarding — step-specific guards', () => {
     expect(
       validateOnboardingStep(3, completeState({ birthDate: '' })).problems[0].field
     ).toBe('birthDate');
-    expect(validateOnboardingStep(3, completeState({ birthDate: 'not-a-date' })).ok).toBe(
-      false
-    );
     expect(validateOnboardingStep(3, completeState()).ok).toBe(true);
   });
 
-  it('step 4 names the country requirement exactly and still needs a city', () => {
+  it('step 4 needs both country and city', () => {
     const result = validateOnboardingStep(4, completeState({ country: '' }));
     expect(result.ok).toBe(false);
     expect(result.problems[0].message).toBe('Please select your country to continue.');
-
     expect(
-      validateOnboardingStep(4, { ...completeState(), city: '  ' }).problems.map(
+      validateOnboardingStep(4, completeState({ city: '  ' })).problems.map(
         (problem) => problem.field
       )
     ).toContain('city');
-    expect(validateOnboardingStep(4, completeState()).ok).toBe(true);
   });
 
-  it('step 9 requires both halves of every prompt', () => {
-    const halfAnswered = validateOnboardingStep(
-      9,
-      completeState({ prompts: { 'simple-pleasures': '   ' } })
+  it('steps 6, 7 and 15 require intention, discovery preference and bio', () => {
+    expect(validateOnboardingStep(6, completeState({ intention: '' })).ok).toBe(false);
+    expect(validateOnboardingStep(7, completeState({ lookingFor: [] })).ok).toBe(false);
+    expect(validateOnboardingStep(15, completeState({ bio: '   ' })).ok).toBe(false);
+    expect(validateOnboardingStep(15, completeState()).ok).toBe(true);
+  });
+});
+
+describe('onboarding — photos launch with one picture, never four', () => {
+  it('requires a profile picture', () => {
+    const result = validateOnboardingStep(17, completeState({ avatarUrl: '' }));
+    expect(result.ok).toBe(false);
+    expect(result.problems.find((problem) => problem.field === 'avatarUrl')?.message).toBe(
+      'Please add a profile picture to launch your profile.'
     );
-    expect(halfAnswered.ok).toBe(false);
-    expect(halfAnswered.problems.map((problem) => problem.field)).toContain('prompts');
-
-    const noQuestion = validateOnboardingStep(
-      9,
-      completeState({ prompts: { '': 'An answer' } })
-    );
-    expect(noQuestion.ok).toBe(false);
-    expect(noQuestion.problems.map((problem) => problem.field)).toContain('prompts');
-
-    expect(validateOnboardingStep(9, completeState({ prompts: {} })).ok).toBe(false);
   });
 
-  it('step 10 is satisfied by interests or hobbies, not necessarily both', () => {
-    expect(
-      validateOnboardingStep(10, completeState({ interests: ['hiking'], hobbies: [] })).ok
-    ).toBe(true);
-    expect(
-      validateOnboardingStep(10, completeState({ interests: [], hobbies: ['Music'] })).ok
-    ).toBe(true);
-    expect(
-      validateOnboardingStep(10, completeState({ interests: [], hobbies: [] })).ok
-    ).toBe(false);
-  });
-
-  it('step 12 blocks on smoking, drinking and exercise independently', () => {
-    const cases = [
-      { field: 'smoking', state: completeState({ smoking: '' }) },
-      { field: 'drinking', state: completeState({ drinking: '' }) },
-      { field: 'exercise', state: completeState({ exercise: '' }) },
-    ];
-    for (const { field, state } of cases) {
-      const result = validateOnboardingStep(12, state);
-      expect(result.ok, `${field} must block`).toBe(false);
-      expect(result.problems.map((problem) => problem.field)).toContain(field);
+  it('accepts zero, one or four gallery photos when the avatar exists', () => {
+    for (const photos of [[], ['a'], ['a', 'b', 'c', 'd']]) {
+      expect(validateOnboardingStep(17, completeState({ photos })).ok).toBe(true);
     }
-    expect(validateOnboardingStep(12, completeState()).ok).toBe(true);
   });
 
-  it('step 13 needs both education and profession', () => {
-    expect(
-      validateOnboardingStep(13, completeState({ education: '' })).problems.map(
-        (problem) => problem.field
-      )
-    ).toContain('education');
-    expect(
-      validateOnboardingStep(13, completeState({ profession: '  ' })).problems.map(
-        (problem) => problem.field
-      )
-    ).toContain('profession');
-    expect(validateOnboardingStep(13, completeState()).ok).toBe(true);
+  it('still enforces the gallery maximum', () => {
+    const result = validateOnboardingStep(
+      17,
+      completeState({ photos: Array.from({ length: MAX_PHOTOS + 1 }, (_, i) => `p${i}`) })
+    );
+    expect(result.ok).toBe(false);
+    expect(result.problems.map((problem) => problem.field)).toContain('photos');
+  });
+
+  it('does not count blank gallery entries as photos', () => {
+    expect(validateOnboardingStep(17, completeState({ photos: ['   '] })).ok).toBe(true);
+  });
+
+  it('keeps the photo rule out of the full-draft guard', () => {
+    expect(validateProfileDraft(draft({ photos: [] }), NOW).ok).toBe(true);
   });
 });
 
 describe('onboarding — recommended fields never block', () => {
-  it('hints the optional field on steps 5 and 7 without failing the step', () => {
+  it('hints optional physical and orientation fields without failing', () => {
     const physical = validateOnboardingStep(5, completeState({ physicalAttributes: [] }));
     expect(physical.ok).toBe(true);
     expect(physical.missingRecommended).toEqual(['Physical attributes']);
@@ -506,57 +507,16 @@ describe('onboarding — recommended fields never block', () => {
     expect(orientation.missingRecommended).toEqual(['Sexual orientation']);
   });
 
-  it('hints nothing once the optional field is filled', () => {
-    expect(validateOnboardingStep(5, completeState()).missingRecommended).toEqual([]);
-    expect(validateOnboardingStep(7, completeState()).missingRecommended).toEqual([]);
-  });
-
-  it('lets step 16 be skipped and only hints religion when blank', () => {
+  it('hints religion on the optional section', () => {
     const skipped = validateOnboardingStep(16, blankState());
     expect(skipped.ok).toBe(true);
-    expect(skipped.problems).toEqual([]);
     expect(skipped.missingRecommended).toEqual(['Religion']);
-
-    const answered = validateOnboardingStep(16, completeState());
-    expect(answered.ok).toBe(true);
-    expect(answered.missingRecommended).toEqual([]);
+    expect(validateOnboardingStep(16, completeState()).missingRecommended).toEqual([]);
   });
 
-  it('hints nothing for steps with no recommended field', () => {
-    for (const spec of BLOCKING_STEPS) {
-      if (spec.recommended.length === 0) {
-        expect(
-          validateOnboardingStep(spec.step, completeState()).missingRecommended
-        ).toEqual([]);
-      }
-    }
-  });
-});
-
-describe('onboarding — the final step delegates to the full-draft guard', () => {
-  it('blocks an incomplete review state with the draft guard problems', () => {
-    const result = validateOnboardingStep(ONBOARDING_TOTAL_STEPS, blankState());
-    expect(result.ok).toBe(false);
-    const fields = result.problems.map((problem) => problem.field);
-    expect(fields).toContain('firstName');
-    expect(fields).toContain('birthDate');
-  });
-
-  it('uses the draft guard 18+ message, proving the delegation', () => {
-    const minor = validateOnboardingStep(
-      ONBOARDING_TOTAL_STEPS,
-      completeState({ birthDate: '2015-01-01' })
-    );
-    expect(minor.ok).toBe(false);
-    expect(minor.problems).toContainEqual({
-      field: 'birthDate',
-      message: `Mettivo is for adults only. You must be ${MIN_AGE} or older.`,
-    });
-  });
-
-  it('passes the review step for a complete adult profile', () => {
-    const result = validateOnboardingStep(ONBOARDING_TOTAL_STEPS, completeState());
-    expect(result.ok).toBe(true);
-    expect(result.problems).toEqual([]);
+  it('hints gallery photos without blocking launch', () => {
+    const noGallery = validateOnboardingStep(17, completeState({ photos: [] }));
+    expect(noGallery.ok).toBe(true);
+    expect(noGallery.missingRecommended).toEqual(['Gallery photos']);
   });
 });

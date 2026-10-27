@@ -139,17 +139,8 @@ const PNG_PIXEL = Buffer.from(
   'base64'
 );
 
-/**
- * Four DISTINCT gallery images.
- *
- * The uploader rejects duplicates by data-URL identity, so reusing one buffer
- * four times would drop three photos. Each append makes the byte stream — and
- * therefore the data URL — unique.
- */
-const GALLERY_PNGS = [1, 2, 3, 4].map((n) => Buffer.concat([PNG_PIXEL, Buffer.from([n])]));
-
-/** The wizard starts on step 1 and reports its position in this exact format. */
-const STEP_LABEL = /Step (\d+) of 17/;
+/** The launch wizard contains eight essential sections, reported as a position. */
+const STEP_LABEL = /Step (\d+) of 8/;
 
 /**
  * Satisfies whichever requirement the current step enforces.
@@ -249,7 +240,7 @@ async function completeStep(page: Page, step: number): Promise<void> {
 }
 
 test.describe('§3.3 — the onboarding wizard', () => {
-  test('blocks every required step, allows an optional religion, then submits', async ({ page }) => {
+  test('launches after eight essential sections and one photo', async ({ page }) => {
     await signedIn(page);
 
     const stub = await stubSupabase(page, {
@@ -282,7 +273,7 @@ test.describe('§3.3 — the onboarding wizard', () => {
     const next = page.getByRole('button', { name: 'Next →' });
     const stepLabel = page.getByText(STEP_LABEL);
 
-    // --- step 1: first name, last name and username are required ---------------
+    // --- position 1 / section 1: first name, last name and username ----------
     await expect(next).toBeDisabled();
 
     await page.getByPlaceholder('First name').fill('Sujata');
@@ -290,64 +281,54 @@ test.describe('§3.3 — the onboarding wizard', () => {
     await page.getByPlaceholder('your_username').fill('sujata');
     await expect(next).toBeEnabled();
     await next.click();
-    await expect(stepLabel).toHaveText('Step 2 of 17');
+    await expect(stepLabel).toHaveText('Step 2 of 8');
 
-    // --- step 2: identity is mandatory, with no face/voice check --------------
+    // --- position 2 / section 2: identity is mandatory ----------------------
     await expect(next).toBeDisabled();
     await expect(page.getByText(/face & voice/i)).toHaveCount(0);
     await expect(page.getByRole('button', { name: /verify my face/i })).toHaveCount(0);
 
     await page.getByRole('button', { name: 'Woman', exact: true }).click();
-    await expect(next).toBeEnabled();
     await next.click();
-    await expect(stepLabel).toHaveText('Step 3 of 17');
+    await expect(stepLabel).toHaveText('Step 3 of 8');
 
-    // --- step 3: the age gate ---
+    // --- position 3 / section 3: the age gate -------------------------------
     await expect(page.getByText('When is your birthday?')).toBeVisible();
     await expect(next).toBeDisabled();
 
     const dob = page.locator('input[type="date"]');
-    await dob.fill('2015-01-01'); // 11 years old
+    await dob.fill('2015-01-01');
     await expect(next).toBeDisabled();
     await expect(page.getByText(/for adults only/i)).toBeVisible();
-    await expect(page.getByText('When is your birthday?')).toBeVisible();
 
-    await dob.fill('1998-05-04'); // adult
+    await dob.fill('1998-05-04');
     await next.click();
     await expect(page.getByText('Where are you based?')).toBeVisible();
 
-    // --- step 4: country and city are mandatory, and the dropdown must not
-    // auto-continue on its own ---
+    // --- position 4 / section 4: country and city ---------------------------
     await expect(next).toBeDisabled();
     await page.locator('select').first().selectOption('Nepal');
-    await expect(next).toBeDisabled(); // city still missing
+    await expect(next).toBeDisabled();
     await page.getByPlaceholder('e.g. Kathmandu, San Francisco').fill('Kathmandu');
     await next.click();
-    await expect(stepLabel).toHaveText('Step 5 of 17');
+    await expect(stepLabel).toHaveText('Step 5 of 8');
 
-    // --- steps 5..16: required steps block, religion is optional ------------
-    for (let step = 5; step <= 16; step += 1) {
-      await expect(stepLabel).toHaveText(`Step ${step} of 17`);
-      // Religion is the optional step; every other step refuses to advance
-      // while it is blank.
-      if (step === 16) {
-        await expect(next).toBeEnabled();
-      } else {
-        await expect(next).toBeDisabled();
-      }
-
-      await completeStep(page, step);
+    // --- positions 5–7 / sections 6, 7, 15: the rest of the essentials ------
+    const remainingEssentials = [6, 7, 15];
+    for (let index = 0; index < remainingEssentials.length; index += 1) {
+      const sectionStep = remainingEssentials[index];
+      await expect(stepLabel).toHaveText(`Step ${index + 5} of 8`);
+      await expect(next).toBeDisabled();
+      await completeStep(page, sectionStep);
       await next.click();
-      await expect(stepLabel).toHaveText(`Step ${step + 1} of 17`);
+      await expect(stepLabel).toHaveText(`Step ${index + 6} of 8`);
     }
 
-    // --- step 17: photos must be uploaded before submit ---------------------
-    await expect(page.getByText('Add your photos & finish')).toBeVisible();
+    // --- position 8 / section 17: one profile picture is enough -------------
+    await expect(page.getByText('Add your profile photo & finish')).toBeVisible();
     const submit = page.getByRole('button', { name: /Complete & Launch/ });
     await expect(submit).toBeDisabled();
 
-    // Profile picture: pick → crop → save. The cropper decodes the real PNG, so
-    // this also proves the "Save picture" path produces a usable data URL.
     await page.locator('input[type="file"]').nth(0).setInputFiles({
       name: 'avatar.png',
       mimeType: 'image/png',
@@ -355,21 +336,10 @@ test.describe('§3.3 — the onboarding wizard', () => {
     });
     await page.getByRole('button', { name: 'Save picture' }).click();
     await expect(page.getByRole('img', { name: 'Profile picture' })).toBeVisible();
-
-    // Gallery: exactly four DISTINCT photos.
-    await page
-      .locator('input[type="file"]')
-      .nth(1)
-      .setInputFiles(
-        GALLERY_PNGS.map((buffer, index) => ({
-          name: `gallery-${index}.png`,
-          mimeType: 'image/png',
-          buffer,
-        }))
-      );
     await expect(page.getByTestId('photos-ready')).toBeVisible();
-    await expect(submit).toBeEnabled();
 
+    // The gallery is optional: the profile can launch with the avatar alone.
+    await expect(submit).toBeEnabled();
     await submit.click();
 
     await expect
@@ -380,8 +350,7 @@ test.describe('§3.3 — the onboarding wizard', () => {
     const write = stub.writes.find((entry) => entry.table === 'profiles');
     const payload = write?.body as Record<string, unknown>;
 
-    // The persisted age is an ADULT age derived from the date of birth, never a
-    // clamped value, and onboarding is marked complete in the same write.
+    // Adult age from the date of birth, and launch marked complete in one write.
     expect(payload.age).toBeGreaterThanOrEqual(18);
     expect(payload.birth_date).toBe('1998-05-04');
     expect(payload.onboarding_completed).toBe(true);
@@ -390,27 +359,28 @@ test.describe('§3.3 — the onboarding wizard', () => {
     expect(payload.has_last_name).toBe(true);
     expect(payload.username).toBe('sujata');
     expect(payload.display_name).toBe('Sujata Saud');
-    expect(payload.mbti).toBe('INFJ');
-    expect(payload).not.toHaveProperty('personality');
-    expect(payload).not.toHaveProperty('politics');
+    expect(payload.intention).toBe('dating');
+    expect(payload.looking_for).toEqual(['Women']);
+    expect(payload.bio).toBe('Coffee, mountains and long conversations.');
 
-    // The mandatory four photos travelled with the payload — the step guard
-    // blocked on them, so they cannot be missing here.
+    // One picture satisfied the launch rule; no gallery photos were required.
+    expect(typeof payload.avatar_url).toBe('string');
+    expect((payload.avatar_url as string).startsWith('data:image/png')).toBe(true);
     expect(Array.isArray(payload.photos)).toBe(true);
-    expect(payload.photos).toHaveLength(4);
+    expect(payload.photos).toHaveLength(0);
 
-    // Government of the mandatory identity + location fields.
+    // Progressive depth is genuinely optional and can arrive later.
+    expect(payload.height).toBe('');
+    expect(payload.mbti).toBe('');
+    expect(payload.religion).toBe('');
+    expect(payload.interests).toEqual([]);
+    expect(payload.prompts).toEqual({});
+
+    // Mandatory identity and location fields still round-trip.
     expect(payload.gender).toBe('Woman');
     expect(payload.country).toBe('Nepal');
     expect(payload.city).toBe('Kathmandu');
-    expect(payload.religion).toBe('Hindu');
-
-    // M8: the curated prompt answer travelled with the payload.
-    expect(payload.prompts).toMatchObject({
-      'simple-pleasures': 'Coffee at sunrise and a good playlist',
-    });
-    // M8: interests are stored as catalogue ids, not labels.
-    expect(payload.interests).toContain('hiking');
+    expect(payload).not.toHaveProperty('politics');
   });
 });
 
