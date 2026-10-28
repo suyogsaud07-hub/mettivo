@@ -384,7 +384,10 @@ export default function PublicProfilePage({ params }: { params: Promise<{ userId
         }}
         navigableStats={['followers']}
         topAction={
-          !isOwn ? <ProfileViewsIconButton count={viewCount ?? null} /> : undefined
+          // The viewer list is private owner analytics. Showing this pill on
+          // another member's profile would imply their visitor identities are
+          // accessible, so it is rendered only when the route is your own row.
+          isOwn ? <ProfileViewsIconButton count={viewCount ?? null} /> : undefined
         }
         actions={
           !isOwn ? (

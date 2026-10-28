@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { isMissingRelationError } from '@/lib/postgrest-errors';
 import {
   parseDiscoveryCandidate,
   type DiscoveryCandidate,
@@ -230,6 +231,14 @@ export async function fetchExploreCounts(
 
   if (error) {
     console.error('[explore-more] explore_more_counts failed:', error.message);
+    if (isMissingRelationError(error)) {
+      // The deployed function is behind the client. Keep the operator detail in
+      // the console and give the member a safe, retryable message.
+      throw new ExploreMoreError(
+        'Explore More is temporarily unavailable. Please try again shortly.',
+        error.code
+      );
+    }
     throw new ExploreMoreError(
       'We could not load Explore More right now. Please try again.',
       error.code
@@ -288,6 +297,12 @@ export async function fetchExploreFeed(
 
   if (error) {
     console.error('[explore-more] explore_more_feed failed:', error.message);
+    if (isMissingRelationError(error)) {
+      throw new ExploreMoreError(
+        'Explore More is temporarily unavailable. Please try again shortly.',
+        error.code
+      );
+    }
     if (error.code === '28000') {
       throw new ExploreMoreError('You must be signed in to explore members.', error.code);
     }

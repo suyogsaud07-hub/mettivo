@@ -1,14 +1,17 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useEffect, useSyncExternalStore } from 'react';
 import { usePathname } from 'next/navigation';
 import { useLanguage } from '@/context/LanguageContext';
 import { supabase } from '@/lib/supabase';
 import {
-  fetchUnreadNotificationCount,
-  subscribeToNotificationChanges,
-} from '@/lib/notifications';
+  getNotificationUnreadServerSnapshot,
+  getNotificationUnreadSnapshot,
+  refreshNotificationUnreadCount,
+  subscribeToNotificationUnread,
+} from '@/lib/notification-badge';
+import { subscribeToNotificationChanges } from '@/lib/notifications';
 
 interface NavItem {
   name: string;
@@ -23,7 +26,13 @@ interface NavItem {
 export default function MobileNav() {
   const pathname = usePathname();
   const { t } = useLanguage();
-  const [unread, setUnread] = useState(0);
+  // The value lives in a shared store so the Notifications page can clear it
+  // the moment its bulk read succeeds, without a prop or provider chain.
+  const unread = useSyncExternalStore(
+    subscribeToNotificationUnread,
+    getNotificationUnreadSnapshot,
+    getNotificationUnreadServerSnapshot
+  );
 
   // Keep the notifications badge live. The count is derived from `auth.uid()`
   // under RLS, so it only ever reflects the signed-in member's own rows.
@@ -36,14 +45,9 @@ export default function MobileNav() {
       const user = data.user;
       if (cancelled || !user) return;
 
-      const refresh = async () => {
-        const count = await fetchUnreadNotificationCount();
-        if (!cancelled) setUnread(count);
-      };
-
-      await refresh();
+      await refreshNotificationUnreadCount();
       unsubscribe = subscribeToNotificationChanges(user.id, () => {
-        void refresh();
+        void refreshNotificationUnreadCount();
       });
     };
 

@@ -1,18 +1,19 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import MobileNav from '../components/layout/MobileNav';
 import { supabase } from '@/lib/supabase';
+import { setNotificationUnreadCount } from '@/lib/notification-badge';
 import type { NotificationActor, NotificationRow } from '@/lib/types';
 import {
   NOTIFICATION_TABS,
-  NotificationError,
   actionForNotification,
   describeNotification,
   fetchNotificationActors,
   fetchNotifications,
   formatRelativeTime,
+  markAllNotificationsRead,
   markNotificationRead,
   subscribeToNotifications,
   typesForTab,
@@ -32,8 +33,50 @@ export default function NotificationsPage() {
   const [actors, setActors] = useState<Record<string, NotificationActor>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [readError, setReadError] = useState<string | null>(null);
+  const [markingRead, setMarkingRead] = useState(false);
+
+  // The bulk read is a property of opening the page, not of every render or
+  // every realtime update. The ref keeps React Strict Mode's effect replay (and
+  // any later load) from issuing the same update twice.
+  const bulkReadStartedRef = useRef(false);
 
   const tabs: string[] = [...NOTIFICATION_TABS];
+
+  /**
+   * Marks the given currently-unread rows read, then clears the shared badge.
+   *
+   * The database is the source of truth: local rows are only changed after the
+   * update succeeds. A failure leaves them visibly unread and offers a retry.
+   */
+  const markUnreadRead = useCallback(async (ids: readonly string[]): Promise<boolean> => {
+    setMarkingRead(true);
+    try {
+      await markAllNotificationsRead();
+
+      const readAt = new Date().toISOString();
+      const idSet = new Set(ids);
+      setNotifications((previous) =>
+        previous.map((row) =>
+          idSet.has(row.id) && row.read_at === null ? { ...row, read_at: readAt } : row
+        )
+      );
+
+      // Bulk read succeeded, so the badge is now zero. Any notification that
+      // arrives concurrently triggers the realtime subscription and restores it.
+      setNotificationUnreadCount(0);
+      setReadError(null);
+      return true;
+    } catch (err) {
+      console.error('Failed to mark notifications read:', err);
+      // Database messages can name tables or policies. Log the detail, show a
+      // safe message the member can act on.
+      setReadError('We could not mark your notifications as read. Please try again.');
+      return false;
+    } finally {
+      setMarkingRead(false);
+    }
+  }, []);
 
   const loadNotifications = useCallback(async () => {
     try {
@@ -48,6 +91,15 @@ export default function NotificationsPage() {
 
       const rows = await fetchNotifications();
       setNotifications(rows);
+
+      if (!bulkReadStartedRef.current) {
+        bulkReadStartedRef.current = true;
+        const unreadIds = rows
+          .filter((row) => row.read_at === null)
+          .map((row) => row.id);
+        await markUnreadRead(unreadIds);
+      }
+
       setActors(
         await fetchNotificationActors(
           rows.map((row) => row.actor_id).filter((id): id is string => id !== null)
@@ -55,16 +107,20 @@ export default function NotificationsPage() {
       );
     } catch (err) {
       console.error('Failed to load notifications:', err);
-      setError(
-        err instanceof NotificationError
-          ? err.message
-          : 'Could not load your notifications.'
-      );
+      // Keep database detail in the console; the member gets one safe message.
+      setError('Could not load your notifications.');
     } finally {
       // Always leaves the loading state, even on failure.
       setLoading(false);
     }
-  }, [router]);
+  }, [markUnreadRead, router]);
+
+  const retryMarkRead = useCallback(() => {
+    const unreadIds = notifications
+      .filter((row) => row.read_at === null)
+      .map((row) => row.id);
+    void markUnreadRead(unreadIds);
+  }, [markUnreadRead, notifications]);
 
   // Initial load + live updates for new notifications.
   useEffect(() => {
@@ -162,7 +218,9 @@ export default function NotificationsPage() {
     // Action Button
     actionBtn: { padding: '8px 16px', borderRadius: '20px', backgroundColor: '#D4B18A', color: '#17121C', fontSize: '12px', fontWeight: '700', border: 'none', cursor: 'pointer' },
     empty: { padding: '48px 24px', textAlign: 'center' as const, color: '#B58A83', fontSize: '14px' },
-    error: { margin: '16px 20px', backgroundColor: '#3B1220', border: '1px solid #7F1D2E', color: '#FCA5B5', borderRadius: '14px', padding: '12px 16px', fontSize: '13px', lineHeight: 1.5 }
+    error: { margin: '16px 20px', backgroundColor: '#3B1220', border: '1px solid #7F1D2E', color: '#FCA5B5', borderRadius: '14px', padding: '12px 16px', fontSize: '13px', lineHeight: 1.5 },
+    readError: { margin: '16px 20px', backgroundColor: '#2A2318', border: '1px solid #6B542F', color: '#E8CFA8', borderRadius: '14px', padding: '12px 16px', fontSize: '13px', lineHeight: 1.5, display: 'flex', alignItems: 'center', gap: '12px', justifyContent: 'space-between' },
+    readRetry: { backgroundColor: '#D4B18A', color: '#17121C', border: 'none', borderRadius: '18px', padding: '7px 14px', fontSize: '12px', fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' as const }
   };
 
   return (
@@ -194,6 +252,20 @@ export default function NotificationsPage() {
       {error && (
         <div role="alert" style={styles.error}>
           {error}
+        </div>
+      )}
+
+      {readError && (
+        <div role="alert" style={styles.readError}>
+          <span>{readError}</span>
+          <button
+            type="button"
+            style={styles.readRetry}
+            onClick={retryMarkRead}
+            disabled={markingRead}
+          >
+            {markingRead ? 'Trying…' : 'Try again'}
+          </button>
         </div>
       )}
 

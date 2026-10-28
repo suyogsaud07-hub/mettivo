@@ -130,7 +130,9 @@ test.describe('profile view analytics', () => {
       .toBe(true);
   });
 
-  test('records a genuine visit on another profile and shows its count', async ({ page }) => {
+  test('records a genuine visit on another profile without exposing its viewer analytics', async ({
+    page,
+  }) => {
     const stub = await stubSupabase(page, {
       tables: {
         public_profiles: otherProfile,
@@ -154,11 +156,11 @@ test.describe('profile view analytics', () => {
     await page.goto(`/profile/${E2E_OTHER_USER_ID}`);
 
     await expect(page.getByRole('button', { name: 'Like Profile' })).toBeVisible();
-    const countPill = page.locator('.pf-hero-top .pf-views-pill');
-    await expect(countPill).toBeVisible();
-    await expect(countPill).toHaveText('4');
-    await expect(countPill).toHaveAttribute('aria-label', '4 profile viewers. View visitors.');
+    // The visit is still recorded, but the owner-only analytics control must
+    // never appear on somebody else's profile.
+    await expect(page.locator('.pf-views-pill')).toHaveCount(0);
     await expect(page.locator('.pf-views-meta')).toHaveCount(0);
+    await expect(page.locator('a[href="/profile/stats/views"]')).toHaveCount(0);
     await expect
       .poll(() =>
         stub.writes.some(
@@ -264,37 +266,38 @@ test.describe('profile view analytics', () => {
     ).toBe(true);
   });
 
-  test('opens the existing analytics from the icon-only eye above the actions', async ({
-    page,
-  }) => {
+  test('opens the owner analytics from their own public profile', async ({ page }) => {
+    const selfProfile = {
+      ...otherProfile,
+      id: E2E_USER_ID,
+      first_name: 'Ada',
+      last_name: 'Lovelace',
+      username: 'ada',
+      display_name: 'Ada Lovelace',
+      bio: 'Mine',
+    };
+
     await stubSupabase(page, {
       tables: {
-        public_profiles: otherProfile,
+        public_profiles: selfProfile,
         follows: [],
         likes: [],
         matches: [],
         moment_feed: [],
       },
       rpc: {
-        record_profile_view: {
-          recorded: true,
-          is_new_viewer: true,
-          unique_viewers: 4,
-          total_visits: 9,
-          viewer_visits: 1,
-        },
-        profile_view_count: 4,
+        profile_view_count: 5,
         profile_view_summary: summary,
         list_profile_viewers: [viewer],
       },
     });
 
-    await page.goto(`/profile/${E2E_OTHER_USER_ID}`);
+    await page.goto(`/profile/${E2E_USER_ID}`);
 
     const eye = page.locator('.pf-hero-top .pf-views-pill');
     await expect(eye).toBeVisible();
-    await expect(eye).toHaveText('4');
-    await expect(eye).toHaveAttribute('aria-label', '4 profile viewers. View visitors.');
+    await expect(eye).toHaveText('5');
+    await expect(eye).toHaveAttribute('aria-label', '5 profile viewers. View visitors.');
     await expect(eye).toHaveAttribute('title', 'Profile views');
 
     // One control only: the old text count below the bio is gone.
@@ -303,25 +306,11 @@ test.describe('profile view analytics', () => {
 
     // The bio is part of the header, not a separate card.
     const bio = page.locator('.pf-hero .pf-hero-bio');
-    await expect(bio).toHaveText('Hello');
+    await expect(bio).toHaveText('Mine');
     await expect(page.getByRole('heading', { name: 'Bio', exact: true })).toHaveCount(0);
 
-    // Four counters in one inline row, then the action buttons.
+    // Four counters in one inline row.
     await expect(page.locator('.pf-hero .pf-stat')).toHaveCount(4);
-    const statsBox = await page.locator('.pf-stats').boundingBox();
-    const actionsBox = await page.locator('.pf-actions').boundingBox();
-    const pillBox = await eye.boundingBox();
-    const bioBox = await bio.boundingBox();
-    expect(pillBox).not.toBeNull();
-    expect(bioBox).not.toBeNull();
-    expect(statsBox).not.toBeNull();
-    expect(actionsBox).not.toBeNull();
-    expect(pillBox!.y + pillBox!.height).toBeLessThan(bioBox!.y);
-    expect(bioBox!.y + bioBox!.height).toBeLessThan(statsBox!.y);
-    expect(statsBox!.y + statsBox!.height).toBeLessThan(actionsBox!.y);
-
-    // The inline row is not the old bordered panel.
-    await expect(page.locator('.pf-stats')).toHaveCSS('border-top-width', '0px');
 
     await eye.click();
 

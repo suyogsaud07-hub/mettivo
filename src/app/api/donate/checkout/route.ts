@@ -76,7 +76,10 @@ async function signedInUserId(): Promise<string | null> {
 /** Optional public name, trimmed and bounded before it reaches Stripe metadata. */
 function donorDisplayName(value: unknown): string | null {
   if (typeof value !== 'string') return null;
-  const cleaned = value.replace(/[\u0000-\u001f\u007f]/g, '').replace(/\s+/g, ' ').trim();
+  const cleaned = value
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
   return cleaned ? cleaned.slice(0, 40) : null;
 }
 

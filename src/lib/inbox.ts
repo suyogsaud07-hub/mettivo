@@ -1,3 +1,4 @@
+import { isMissingRelationError } from '@/lib/postgrest-errors';
 import { supabase } from '@/lib/supabase';
 import {
   parseRelationshipState,
@@ -88,7 +89,11 @@ export async function fetchInbox(): Promise<InboxConversation[]> {
 
   if (error) {
     console.error('[inbox] conversation_summaries failed:', error.message);
-    throw new Error('Your conversations could not be loaded.');
+    throw new Error(
+      isMissingRelationError(error)
+        ? 'Your inbox is temporarily unavailable. Please try again shortly.'
+        : 'Your conversations could not be loaded.'
+    );
   }
 
   return (Array.isArray(data) ? data : [])

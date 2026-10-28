@@ -194,6 +194,25 @@ RPC_SPECS=(
   "is_blocked_pair|{\"a\":\"${RPC_ZERO}\",\"b\":\"${RPC_ZERO}\"}"
   "record_like|{\"target_user\":\"${RPC_ZERO}\",\"is_like_value\":true}"
   "mark_conversation_read|{\"p_match_id\":\"${RPC_ZERO}\"}"
+  # Messaging contract. Both entry points are SECURITY DEFINER and derive the
+  # caller from auth.uid(); an anonymous caller must be refused, never 404.
+  # Their absence is exactly the 'Could not find the function … in the schema
+  # cache' class of outage this script exists to catch.
+  "start_conversation|{\"p_target\":\"${RPC_ZERO}\"}"
+  "conversation_summaries|{}"
+  "conversation_send_state|{\"p_match_id\":\"${RPC_ZERO}\"}"
+  "respond_to_conversation_request|{\"p_match_id\":\"${RPC_ZERO}\",\"p_accept\":true}"
+  "set_conversation_archived|{\"p_match_id\":\"${RPC_ZERO}\",\"p_archived\":true}"
+  # Explore More. Counts and feed share explore_eligible_profiles(), so both
+  # must exist together or a count could describe cards the feed cannot return.
+  "explore_more_counts|{\"p_min_age\":18,\"p_max_age\":99}"
+  "explore_more_feed|{\"p_category_id\":\"coffee-food\",\"p_goal\":null,\"p_cursor\":null,\"p_limit\":12,\"p_min_age\":18,\"p_max_age\":99,\"p_exclude_ids\":[]}"
+  # Profile-view analytics are RPC-only (the table has no client grants), so a
+  # missing function makes the viewer list look permanently empty.
+  "record_profile_view|{\"p_viewed_id\":\"${RPC_ZERO}\"}"
+  "profile_view_count|{\"p_profile_id\":\"${RPC_ZERO}\"}"
+  "profile_view_summary|{}"
+  "list_profile_viewers|{\"p_limit\":30,\"p_offset\":0,\"p_search\":null}"
   "admin_resolve_report|{\"p_report_id\":\"${RPC_ZERO}\",\"p_status\":\"dismissed\"}"
   # M21 — universal moderation. `file_report` is the client entry point; the
   # predicates are what every surface reads to show a restriction notice. All are

@@ -1,3 +1,4 @@
+import { isMissingRelationError } from '@/lib/postgrest-errors';
 import { supabase } from '@/lib/supabase';
 
 /**
@@ -71,6 +72,15 @@ function parseConnection(value: unknown): ConversationConnection | null {
   const conversationId = value.conversation_id;
   if (typeof conversationId !== 'string' || !conversationId) return null;
 
+  // Both state fields are part of the documented contract. A response missing
+  // them is a deployment mismatch, not a conversation with unknown state.
+  if (
+    typeof value.relationship_state !== 'string' ||
+    typeof value.request_status !== 'string'
+  ) {
+    return null;
+  }
+
   return {
     conversationId,
     relationshipState: parseRelationshipState(value.relationship_state),
@@ -95,6 +105,15 @@ export async function startConversation(targetUserId: string): Promise<Conversat
 
   if (error) {
     console.error('[conversations] start_conversation failed:', error.message);
+    if (isMissingRelationError(error)) {
+      // PGRST202 means the deployed function is missing or its argument names
+      // differ. That is an operator problem, not something this member can fix,
+      // so never echo the schema-cache detail into the UI.
+      throw new ConversationError(
+        'Messaging is temporarily unavailable. Please try again shortly.',
+        error.code
+      );
+    }
     throw new ConversationError(
       error.code === '42501' || error.code === '22023'
         ? error.message
@@ -124,6 +143,12 @@ export async function respondToConversationRequest(
 
   if (error) {
     console.error('[conversations] respond_to_conversation_request failed:', error.message);
+    if (isMissingRelationError(error)) {
+      throw new ConversationError(
+        'Messaging is temporarily unavailable. Please try again shortly.',
+        error.code
+      );
+    }
     throw new ConversationError(
       error.code === '42501' || error.code === '22023'
         ? error.message

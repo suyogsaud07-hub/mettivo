@@ -231,11 +231,34 @@ export async function fetchNotificationActors(
   return actors;
 }
 
+/**
+ * The trusted session identity for a notification write.
+ *
+ * RLS already scopes `notifications_update_own` to `auth.uid()`, but naming the
+ * owner in the predicate as well keeps the intent explicit: a notification id
+ * supplied by the browser can never be used to update somebody else's row.
+ */
+async function requireNotificationOwner(): Promise<string> {
+  const {
+    data: { user },
+    error,
+  } = await supabase.auth.getUser();
+
+  if (error || !user) {
+    throw new NotificationError('You must be signed in to update notifications.', '28000');
+  }
+  return user.id;
+}
+
 export async function markNotificationRead(notificationId: string): Promise<void> {
+  if (!notificationId) throw new NotificationError('A notification is required.');
+
+  const userId = await requireNotificationOwner();
   const { error } = await supabase
     .from('notifications')
     .update({ read_at: new Date().toISOString() })
     .eq('id', notificationId)
+    .eq('user_id', userId)
     .is('read_at', null);
 
   if (error) {
@@ -244,10 +267,19 @@ export async function markNotificationRead(notificationId: string): Promise<void
   }
 }
 
+/**
+ * Marks every currently-unread notification for the signed-in member read.
+ *
+ * Used when the Notifications page opens. The `user_id` predicate and the RLS
+ * policy both scope this to the caller, so no client-supplied id can widen it.
+ * Already-read rows are not rewritten, which avoids needless realtime events.
+ */
 export async function markAllNotificationsRead(): Promise<void> {
+  const userId = await requireNotificationOwner();
   const { error } = await supabase
     .from('notifications')
     .update({ read_at: new Date().toISOString() })
+    .eq('user_id', userId)
     .is('read_at', null);
 
   if (error) {
