@@ -125,8 +125,8 @@ export interface LikeRow {
 /** A row from the `matches` table (canonically ordered unordered pair). */
 export interface MatchRow {
   id: string;
-  user_a: string;
-  user_b: string;
+  user_a_id: string;
+  user_b_id: string;
   kind: 'match' | 'mutual_follow' | 'request' | 'closed';
   request_status: 'not_applicable' | 'pending' | 'accepted' | 'rejected';
   requested_by: string | null;

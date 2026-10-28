@@ -138,13 +138,23 @@ export async function createLiveLikeDb(): Promise<PGlite> {
 
   await db.exec(BASE_SCHEMA.replace('match_id text,', 'match_id uuid,'));
 
-  // The live project already has a `matches` table (an older shape): only `id`
-  // and `created_at`, with `user_a`/`user_b` added by the M10 migration.
+  // The live project already has the canonical participant columns and the
+  // legacy nullable columns. M40 is responsible for reconciling the two.
   await db.exec(`
     create table if not exists public.matches (
       id         uuid primary key default gen_random_uuid(),
-      created_at timestamptz not null default now()
+      user_a_id  uuid not null,
+      user_b_id  uuid not null,
+      status     text not null default 'pending',
+      created_at timestamptz not null default now(),
+      user_a     uuid,
+      user_b     uuid
     );
+
+    create unique index if not exists matches_user_a_id_user_b_id_key
+      on public.matches (user_a_id, user_b_id);
+    create unique index if not exists matches_user_pair_key
+      on public.matches (user_a, user_b);
   `);
 
   return db;

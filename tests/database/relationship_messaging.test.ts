@@ -143,10 +143,13 @@ describe('M38 — same-gender mutual follows can chat without a romantic match',
     await follow(db, USER_C, USER_A);
   });
 
-  it('creates no romantic match and no count for the pair', async () => {
-    expect(
-      await scalarAs(db, USER_A, `select count(*)::int as n from public.matches`)
-    ).toBe(0);
+  it('creates a chat-enabled mutual-follow row but no romantic match or count', async () => {
+    const rows = await queryAs<{ kind: string }>(
+      db,
+      USER_A,
+      `select kind from public.matches`
+    );
+    expect(rows).toEqual([{ kind: 'mutual_follow' }]);
     expect(await matchesCount(db, USER_A)).toBe(0);
     expect(await matchesCount(db, USER_C)).toBe(0);
   });
@@ -307,7 +310,7 @@ describe('M38 — rejecting a request is permanent', () => {
   });
 });
 
-describe('M38 — request creation requires a follow and an eligible recipient', () => {
+describe('M40 — any eligible authenticated member may initiate contact', () => {
   let db: PGlite;
 
   beforeAll(async () => {
@@ -315,13 +318,48 @@ describe('M38 — request creation requires a follow and an eligible recipient',
     await seed(db, `update public.profiles set onboarding_completed = true`);
   });
 
-  it('refuses a request before the sender follows the recipient', async () => {
-    expect(await isRejected(db, USER_A, `select public.start_conversation('${USER_B}'::uuid)`)).toBe(true);
+  it('creates a pending request without requiring a follow', async () => {
+    const result = await start(db, USER_A, USER_B);
+    expect(result.relationship_state).toBe('MESSAGE_REQUEST_PENDING');
+    expect(result.request_status).toBe('pending');
+    expect(result.requested_by_me).toBe(true);
+    expect(await matchesCount(db, USER_A)).toBe(0);
+    expect(await matchesCount(db, USER_B)).toBe(0);
+  });
+
+  it('is idempotent and never creates a second row for the pair', async () => {
+    const first = await start(db, USER_A, USER_B);
+    const second = await start(db, USER_A, USER_B);
+    expect(second.conversation_id).toBe(first.conversation_id);
+    expect(
+      await scalarAs(db, USER_A, `select count(*)::int as n from public.matches`)
+    ).toBe(1);
+  });
+
+  it('does not treat the recipient opening the thread as acceptance', async () => {
+    const opened = await start(db, USER_B, USER_A);
+    expect(opened.relationship_state).toBe('MESSAGE_REQUEST_PENDING');
+    expect(opened.requested_by_me).toBe(false);
   });
 
   it('refuses a recipient who has not completed onboarding', async () => {
-    await follow(db, USER_A, USER_B);
-    await seed(db, `update public.profiles set onboarding_completed = false where id = '${USER_B}'`);
+    await seed(
+      db,
+      `update public.profiles set onboarding_completed = false where id = '${USER_B}'`
+    );
+    expect(await isRejected(db, USER_A, `select public.start_conversation('${USER_B}'::uuid)`)).toBe(true);
+  });
+
+  it('refuses a blocked pair', async () => {
+    await seed(
+      db,
+      `update public.profiles set onboarding_completed = true where id = '${USER_B}'`
+    );
+    await seed(
+      db,
+      `insert into public.blocked_users (blocker_id, blocked_user_id)
+       values ('${USER_B}','${USER_A}')`
+    );
     expect(await isRejected(db, USER_A, `select public.start_conversation('${USER_B}'::uuid)`)).toBe(true);
   });
 });

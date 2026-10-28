@@ -106,10 +106,15 @@ describe('M23 — same-gender pairs never match', () => {
     db = await createTestDb();
   });
 
-  it('pushes back against a reciprocal same-gender follow', async () => {
+  it('creates a mutual-follow chat but never a romantic match', async () => {
     await follow(db, USER_A, USER_C); // Woman -> Woman
     await follow(db, USER_C, USER_A);
-    expect(await rowCount(db, 'matches')).toBe(0);
+    const rows = await queryAs<{ kind: string }>(
+      db,
+      USER_A,
+      `select kind from public.matches`
+    );
+    expect(rows).toEqual([{ kind: 'mutual_follow' }]);
   });
 
   it('refuses to match a mutual same-gender like', async () => {
@@ -123,7 +128,12 @@ describe('M23 — same-gender pairs never match', () => {
 
     expect((await like(USER_A, USER_C)).matched).toBe(false);
     expect((await like(USER_C, USER_A)).matched).toBe(false);
-    expect(await rowCount(db, 'matches')).toBe(0);
+    expect(
+      await systemicCount(
+        db,
+        `select count(*)::int as n from public.matches where kind = 'match'`
+      )
+    ).toBe(0);
   });
 });
 

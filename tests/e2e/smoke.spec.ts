@@ -151,7 +151,13 @@ test.describe('§3.3 — protected navigation and routes (R-12)', () => {
   test('lists a mutual match and links it to the conversation', async ({ page }) => {
     await stubSupabase(page, {
       tables: {
-        matches: [{ id: 'match-1', user_a: E2E_USER_ID, user_b: E2E_OTHER_USER_ID }],
+        matches: [
+          {
+            id: 'match-1',
+            user_a_id: E2E_USER_ID,
+            user_b_id: E2E_OTHER_USER_ID,
+          },
+        ],
         public_profiles: [
           {
             id: E2E_OTHER_USER_ID,

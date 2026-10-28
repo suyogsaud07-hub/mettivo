@@ -216,12 +216,13 @@ export default function ChatPage({
 
       const { data: matchRow } = await supabase
         .from('matches')
-        .select('user_a, user_b')
+        .select('user_a_id, user_b_id')
         .eq('id', matchId)
         .maybeSingle();
 
       if (!isMounted || !matchRow) return;
-      const other = matchRow.user_a === user.id ? matchRow.user_b : matchRow.user_a;
+      const other =
+        matchRow.user_a_id === user.id ? matchRow.user_b_id : matchRow.user_a_id;
       if (other) applyOtherUserId(other);
     };
 

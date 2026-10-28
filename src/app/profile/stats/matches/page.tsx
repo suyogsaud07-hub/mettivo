@@ -49,15 +49,16 @@ export default function MatchesPage() {
 
         const { data: matchRows, error: matchError } = await supabase
           .from('matches')
-          .select('id, user_a, user_b')
+          .select('id, user_a_id, user_b_id')
           .eq('kind', 'match')
-          .or(`user_a.eq.${user.id},user_b.eq.${user.id}`);
+          .or(`user_a_id.eq.${user.id},user_b_id.eq.${user.id}`);
 
         if (matchError) throw new Error(matchError.message);
 
         const pairs = (matchRows ?? []).map((row) => ({
           matchId: row.id as string,
-          otherId: (row.user_a === user.id ? row.user_b : row.user_a) as string,
+          otherId:
+            (row.user_a_id === user.id ? row.user_b_id : row.user_a_id) as string,
         }));
 
         if (pairs.length === 0) {
