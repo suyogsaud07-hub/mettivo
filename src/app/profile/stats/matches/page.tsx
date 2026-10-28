@@ -50,6 +50,7 @@ export default function MatchesPage() {
         const { data: matchRows, error: matchError } = await supabase
           .from('matches')
           .select('id, user_a, user_b')
+          .eq('kind', 'match')
           .or(`user_a.eq.${user.id},user_b.eq.${user.id}`);
 
         if (matchError) throw new Error(matchError.message);

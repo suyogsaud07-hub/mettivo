@@ -1,5 +1,11 @@
 import { supabase } from '@/lib/supabase';
 import type { RealtimeChannel } from '@supabase/supabase-js';
+import {
+  parseRelationshipState,
+  parseRequestStatus,
+  type RelationshipState,
+  type RequestStatus,
+} from '@/lib/conversations';
 
 /**
  * M11 — one-to-one messaging, client side.
@@ -315,7 +321,11 @@ export async function fetchUnreadCounts(): Promise<Record<string, number>> {
 }
 
 export interface ConversationSendState {
+  relationshipState: RelationshipState;
+  requestStatus: RequestStatus;
   isRequest: boolean;
+  requestedByMe: boolean;
+  canRespond: boolean;
   sentCount: number;
   sendLimit: number;
   canSend: boolean;
@@ -332,12 +342,12 @@ function intValue(value: unknown): number {
 }
 
 /**
- * Server-derived request state for one conversation.
+ * Server-derived relationship and request state for one conversation.
  *
- * The trigger in M34 is still the only authority; this projection exists so the
- * composer can explain the cap before a send is rejected. `null` means the RPC
- * could not describe the thread, in which case the UI leaves the composer
- * available and lets the database decide.
+ * The M38 trigger remains the only authority; this projection exists so the
+ * composer and request banner can explain the state before a send is rejected.
+ * `null` means the RPC could not describe the thread, in which case the UI
+ * leaves the composer available and lets the database decide.
  */
 export async function fetchConversationSendState(
   matchId: string
@@ -359,9 +369,13 @@ export async function fetchConversationSendState(
   const otherHasReplied = data.other_has_replied === true;
 
   return {
+    relationshipState: parseRelationshipState(data.relationship_state),
+    requestStatus: parseRequestStatus(data.request_status),
     isRequest: data.is_request === true,
+    requestedByMe: data.requested_by_me === true,
+    canRespond: data.can_respond === true,
     sentCount,
-    sendLimit: sendLimit > 0 ? sendLimit : 2,
+    sendLimit: sendLimit > 0 ? sendLimit : 3,
     canSend: data.can_send === true,
     otherHasReplied,
   };

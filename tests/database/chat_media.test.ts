@@ -75,8 +75,9 @@ describe('M25/M26 — disappearing chat media', () => {
         .then((res) => res.rows[0].r)
     );
 
-  // M34 caps an unanswered sender at two messages. A real recipient reply
-  // resets that window, so fixtures that send a third item must first reply.
+  // M38 caps a pending-request sender at three messages until the recipient
+  // accepts. `pair()` creates a romantic match, so these media fixtures are not
+  // subject to the request cap.
   const replyFromB = () =>
     asUser(db, USER_B, () =>
       db.exec(

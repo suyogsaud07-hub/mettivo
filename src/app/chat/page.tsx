@@ -434,7 +434,13 @@ export default function ChatListPage() {
                           ? conversation.lastMessageIsMine
                             ? `You: ${conversation.lastMessage}`
                             : conversation.lastMessage
-                          : 'New match — say hello.'}
+                          : conversation.relationshipState === 'MESSAGE_REQUEST_PENDING'
+                            ? conversation.requestedByMe
+                              ? 'Request sent'
+                              : 'New message request'
+                            : conversation.relationshipState === 'MUTUAL_FOLLOW_CHAT'
+                              ? 'You can chat now — say hello.'
+                              : 'New match — say hello.'}
                       </p>
 
                       <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
@@ -452,6 +458,21 @@ export default function ChatListPage() {
                             Message request
                           </span>
                         )}
+                        {!conversation.isRequest &&
+                          conversation.relationshipState === 'MESSAGE_REQUEST_PENDING' && (
+                            <span
+                              style={{
+                                backgroundColor: '#3A2A18',
+                                color: '#D4B18A',
+                                borderRadius: '10px',
+                                padding: '2px 10px',
+                                fontSize: '11px',
+                                fontWeight: 700,
+                              }}
+                            >
+                              Request sent
+                            </span>
+                          )}
                         {conversation.unreadCount > 0 && (
                           <span
                             style={{

@@ -734,11 +734,18 @@ describe('M14 — moderation and abuse controls', () => {
     expect(allowed).toBeLessThanOrEqual(2);
   });
 
-  it('shows the audit log only to moderators', async () => {
+  it('shows the audit log only to super admins', async () => {
+    await seed(
+      db,
+      `insert into public.user_roles (user_id, role) values ('${USER_D}','admin')
+       on conflict (user_id) do update set role = excluded.role`
+    );
+
     const auditCount = (userId: string) =>
       scalarAs(db, userId, `select count(*)::int as n from public.admin_audit_log`);
 
-    expect(await auditCount(MODERATOR)).toBeGreaterThan(0);
+    expect(await auditCount(USER_D)).toBeGreaterThan(0);
+    expect(await auditCount(MODERATOR)).toBe(0);
     expect(await auditCount(USER_C)).toBe(0);
   });
 });

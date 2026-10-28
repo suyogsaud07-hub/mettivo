@@ -13,6 +13,10 @@ import {
   type ConversationSendState,
 } from '@/lib/messages';
 import { blockMember, BlockingError } from '@/lib/blocking';
+import {
+  ConversationError,
+  respondToConversationRequest,
+} from '@/lib/conversations';
 import { type MessageRow } from '@/lib/types';
 import {
   fetchChatMedia,
@@ -83,6 +87,7 @@ export default function ChatPage({
   const [disappearing, setDisappearing] = useState<number | null>(null);
   const [togglingDisappearing, setTogglingDisappearing] = useState(false);
   const [sendState, setSendState] = useState<ConversationSendState | null>(null);
+  const [responding, setResponding] = useState(false);
   const mediaInputRef = useRef<HTMLInputElement | null>(null);
 
   /**
@@ -155,8 +160,9 @@ export default function ChatPage({
       const myRestrictions = await fetchMyRestrictions();
       if (isMounted) setRestrictions(myRestrictions);
 
-      // M34: the two-message request cap is enforced by a BEFORE INSERT
-      // trigger. This projection only lets the composer explain it in advance.
+      // M38: request state and the three-message cap are enforced by a
+      // BEFORE INSERT trigger. This projection only lets the composer and the
+      // accept/decline banner explain it in advance.
       const requestState = await fetchConversationSendState(matchId);
       if (isMounted) setSendState(requestState);
 
@@ -252,8 +258,8 @@ export default function ChatPage({
           if (inserted.sender_id !== currentUserIdRef.current) {
             void markMessagesDelivered(matchId);
             markConversationRead(matchId).catch(() => undefined);
-            // Their reply lifts the request cap; refresh so the composer
-            // unlocks without a reload.
+            // A recipient reply auto-accepts a pending request; refresh so the
+            // composer unlocks without a reload.
             void fetchConversationSendState(matchId).then((state) => {
               if (state) setSendState(state);
             });
@@ -363,6 +369,26 @@ export default function ChatPage({
     if (nextState) setSendState(nextState);
   };
 
+  const handleRespond = async (accept: boolean) => {
+    if (responding) return;
+    setResponding(true);
+    setError(null);
+
+    try {
+      await respondToConversationRequest(matchId, accept);
+      const nextState = await fetchConversationSendState(matchId);
+      if (nextState) setSendState(nextState);
+    } catch (err) {
+      setError(
+        err instanceof ConversationError
+          ? err.message
+          : 'The request could not be updated. Please try again.'
+      );
+    } finally {
+      setResponding(false);
+    }
+  };
+
   const handleMediaPicked = async (event: React.ChangeEvent<HTMLInputElement>) => {
     // Snapshot BEFORE clearing: emptying `value` clears the live FileList.
     const files = event.target.files ? Array.from(event.target.files) : [];
@@ -469,10 +495,16 @@ export default function ChatPage({
   };
 
   const restrictionMessage = describeRestriction(restrictions);
-  const requestBlocked = sendState !== null && !sendState.canSend;
-  const canSend = restrictionMessage === null && !blocked && !requestBlocked;
+  const requestPending = sendState?.relationshipState === 'MESSAGE_REQUEST_PENDING';
+  const conversationClosed =
+    sendState?.relationshipState === 'UNAVAILABLE' ||
+    sendState?.relationshipState === 'BLOCKED';
+  const requestBlocked =
+    sendState !== null && !sendState.canSend && !conversationClosed;
+  const canSend =
+    restrictionMessage === null && !blocked && !conversationClosed && !requestBlocked;
   const remainingRequests =
-    sendState && !sendState.otherHasReplied
+    sendState && requestPending && sendState.requestedByMe
       ? Math.max(0, sendState.sendLimit - sendState.sentCount)
       : null;
 
@@ -653,12 +685,13 @@ export default function ChatPage({
         </div>
       )}
 
-      {!blocked && sendState?.isRequest && !sendState.otherHasReplied && (
+      {!blocked && requestPending && sendState?.requestedByMe && (
         <div
           role="status"
           className="mb-3 rounded-xl border border-amber-700/40 bg-amber-950/20 p-3 text-center text-xs text-amber-200"
         >
-          Message requests are limited to two messages until {conversationName} replies.
+          Message request pending. You can send three messages until{' '}
+          {conversationName} accepts.
           {remainingRequests !== null
             ? ` ${remainingRequests} ${
                 remainingRequests === 1 ? 'message' : 'messages'
@@ -667,13 +700,52 @@ export default function ChatPage({
         </div>
       )}
 
+      {!blocked && requestPending && sendState?.canRespond && (
+        <div
+          role="status"
+          className="mb-3 rounded-xl border border-amber-700/40 bg-amber-950/20 p-3 text-xs text-amber-200"
+        >
+          <p className="mb-3 text-center">
+            {conversationName} sent you a message request.
+          </p>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => void handleRespond(true)}
+              disabled={responding}
+              className="flex-1 rounded-lg bg-amber-400 px-3 py-2 font-semibold text-neutral-950 disabled:opacity-50"
+            >
+              {responding ? 'Saving…' : 'Accept'}
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleRespond(false)}
+              disabled={responding}
+              className="flex-1 rounded-lg border border-amber-700/60 px-3 py-2 font-semibold text-amber-100 disabled:opacity-50"
+            >
+              Decline
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!blocked && conversationClosed && (
+        <div
+          role="alert"
+          className="mb-3 rounded-xl border border-neutral-700 bg-neutral-900 p-3 text-center text-xs text-neutral-300"
+        >
+          This conversation is closed. You can read the history, but no new
+          messages can be sent.
+        </div>
+      )}
+
       {!blocked && requestBlocked && (
         <div
           role="alert"
           className="mb-3 rounded-xl border border-rose-800/50 bg-rose-950/30 p-3 text-center text-xs text-rose-200"
         >
-          You have sent {sendState.sentCount} messages. Wait for {conversationName} to
-          reply before sending more.
+          You have sent {sendState?.sentCount ?? 0} messages. Wait for{' '}
+          {conversationName} to accept your request before sending more.
         </div>
       )}
 
@@ -710,11 +782,13 @@ export default function ChatPage({
           value={newMessage}
           onChange={(e) => setNewMessage(e.target.value)}
           placeholder={
-            requestBlocked
-              ? 'Request limit reached — wait for a reply'
-              : canSend
-                ? 'Type a message...'
-                : 'Messaging is paused'
+            conversationClosed
+              ? 'This conversation is closed'
+              : requestBlocked
+                ? 'Request limit reached — wait for acceptance'
+                : canSend
+                  ? 'Type a message...'
+                  : 'Messaging is paused'
           }
           aria-label="Message"
           disabled={!canSend}

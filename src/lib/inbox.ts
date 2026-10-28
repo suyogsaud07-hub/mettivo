@@ -1,4 +1,10 @@
 import { supabase } from '@/lib/supabase';
+import {
+  parseRelationshipState,
+  parseRequestStatus,
+  type RelationshipState,
+  type RequestStatus,
+} from '@/lib/conversations';
 
 /**
  * Inbox projection, client side.
@@ -22,6 +28,9 @@ export interface InboxConversation {
   isArchived: boolean;
   isRequest: boolean;
   isOnline: boolean;
+  relationshipState: RelationshipState;
+  requestStatus: RequestStatus;
+  requestedByMe: boolean;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -67,6 +76,9 @@ function parseConversation(row: unknown): InboxConversation | null {
     isArchived: bool(row.is_archived),
     isRequest: bool(row.is_request),
     isOnline: bool(row.is_online),
+    relationshipState: parseRelationshipState(row.relationship_state),
+    requestStatus: parseRequestStatus(row.request_status),
+    requestedByMe: bool(row.requested_by_me),
   };
 }
 

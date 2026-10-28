@@ -127,7 +127,13 @@ export interface MatchRow {
   id: string;
   user_a: string;
   user_b: string;
+  kind: 'match' | 'mutual_follow' | 'request' | 'closed';
+  request_status: 'not_applicable' | 'pending' | 'accepted' | 'rejected';
+  requested_by: string | null;
+  requested_at: string | null;
+  responded_at: string | null;
   created_at: string;
+  updated_at: string;
 }
 
 /** A row from the `user_roles` table. */

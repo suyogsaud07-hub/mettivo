@@ -21,6 +21,21 @@ Permissions are declared once in `public.has_permission(text)` in migration
 `20261015480000_m32_admin_control_center.sql`. The sidebar reads
 `admin_me().permissions`; the RPCs independently enforce the same names.
 
+M37 hardens the table layer behind those RPCs:
+
+- `admin_settings` has **no client SELECT grant**. `admin_settings_get()` is the
+  only read path and masks the webhook secret as `{ configured: boolean }`.
+- `payment_events.payload` is not granted to any client role. Finance can read
+  reconciliation columns; raw payload review stays in the SQL Editor.
+- `admin_audit_log` direct reads require `audit.view` (admin only). The M14
+  moderator policy was removed.
+- Direct `user_roles` reads return the caller's own role, or every role for a
+  super admin.
+- Moderators cannot suspend, warn, or moderation-action another staff account.
+  Automated report thresholds also skip staff. A super admin may still act.
+- Role changes take an advisory lock before the last-super-admin check, so two
+  concurrent demotions cannot leave zero admins.
+
 ## Bootstrap the first super admin
 
 Registration must never grant staff access. Sign the intended operator up

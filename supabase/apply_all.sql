@@ -14252,3 +14252,2069 @@ from public.explore_categories
 where is_active;
 
 
+-- ############################################################################
+-- # 20261015530000_m37_admin_security_hardening.sql
+-- ############################################################################
+
+-- =============================================================================
+-- M37 · Administrative control center security hardening
+-- =============================================================================
+-- WHY
+--   M32 built the admin console on SECURITY DEFINER RPCs, but three client
+--   table privileges still let a staff member bypass those RPCs:
+--     * `admin_settings` was directly SELECTable, so an admin bearer token could
+--       read the Stripe webhook secret that also authenticates the payment-event
+--       writer.
+--     * `payment_events` was directly SELECTable by finance, including the raw
+--       `payload` column that M32 explicitly intended to keep admin-only.
+--     * `admin_audit_log` still carried M14's moderator SELECT policy, so a
+--       moderator could read the whole audit trail directly even though
+--       `audit.view` is admin-only.
+--
+--   The same pass closes two staff-safety holes:
+--     * A moderator could suspend, warn, or moderation-action another staff
+--       member (including a super admin) through the older moderation RPCs.
+--     * Two concurrent `admin_set_role()` calls could each observe two admins
+--       and both demote one, leaving zero super admins.
+--
+-- WHAT
+--   * Revoke every client DML privilege from admin tables and re-grant only the
+--     reads the product actually needs. `admin_settings` becomes RPC-only and
+--     `payment_events.payload` is not granted to any client role.
+--   * Make audit-log reads admin-only, and role reads self-or-admin.
+--   * Add one internal staff predicate and use it in every account-enforcement
+--     path. Automated moderation silently skips staff; a moderator gets an
+--     explicit error; a super admin may still act.
+--   * Serialise role changes with a transaction advisory lock before counting
+--     the last super admin.
+--   * Add indexes used by user-detail audit lookups and report-target counts.
+--
+-- NOT CHANGED
+--   No payment provider is selected or changed here. The existing provider
+--   column and webhook contract are untouched.
+--
+-- SAFE TO RE-RUN: `create or replace`, `drop policy if exists`, idempotent
+-- index creation and repeatable grants/revokes.
+-- DEPENDS ON: M13, M14, M21, M25, M32, M35.
+-- =============================================================================
+
+-- ---------------------------------------------------------------------------
+-- 1. Internal staff predicate
+-- ---------------------------------------------------------------------------
+-- Not executable by any client role. The SECURITY DEFINER functions below run
+-- as the owner and can still call it.
+create or replace function public.is_staff_user(p_user_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+  select p_user_id is not null and exists (
+    select 1
+    from public.user_roles r
+    where r.user_id = p_user_id
+      and r.role <> 'user'
+  );
+$$;
+
+revoke all on function public.is_staff_user(uuid) from public, anon, authenticated;
+
+comment on function public.is_staff_user(uuid) is
+  'Internal predicate: true when the target holds a staff role. Not executable by client roles.';
+
+-- ---------------------------------------------------------------------------
+-- 2. Admin table privileges — least privilege, no direct secret or payload read
+-- ---------------------------------------------------------------------------
+alter table public.user_roles            enable row level security;
+alter table public.admin_audit_log       enable row level security;
+alter table public.admin_settings        enable row level security;
+alter table public.subscription_plans    enable row level security;
+alter table public.subscriptions         enable row level security;
+alter table public.payment_events        enable row level security;
+alter table public.notification_campaigns enable row level security;
+
+-- Start from zero for both client roles. Supabase default privileges can grant
+-- INSERT/UPDATE/DELETE (and, on some projects, TRUNCATE) to `authenticated`
+-- even where RLS has no write policy; revoking makes the intent explicit.
+revoke all on public.user_roles             from anon, authenticated;
+revoke all on public.admin_audit_log        from anon, authenticated;
+revoke all on public.admin_settings         from anon, authenticated;
+revoke all on public.subscription_plans     from anon, authenticated;
+revoke all on public.subscriptions          from anon, authenticated;
+revoke all on public.payment_events         from anon, authenticated;
+revoke all on public.notification_campaigns from anon, authenticated;
+
+grant select on public.user_roles             to authenticated;
+grant select on public.admin_audit_log        to authenticated;
+-- Deliberately no SELECT on admin_settings. `admin_settings_get()` is the only
+-- read path and it masks the webhook secret as `{ configured: boolean }`.
+grant select on public.subscription_plans     to authenticated;
+grant select on public.subscriptions          to authenticated;
+grant select on public.notification_campaigns to authenticated;
+
+-- Payment metadata is staff-readable only with `payments.view`, but `payload`
+-- must never leave PostgreSQL through PostgREST. The admin payment RPC does not
+-- select it; raw reconciliation stays in the SQL Editor.
+grant select (
+  id,
+  provider,
+  event_id,
+  event_type,
+  status,
+  user_id,
+  subscription_id,
+  amount_minor,
+  fee_minor,
+  refunded_minor,
+  currency,
+  error,
+  received_at,
+  processed_at
+) on public.payment_events to authenticated;
+
+comment on table public.admin_settings is
+  'RPC-only administrative settings. No client table grant: admin_settings_get() masks the webhook secret.';
+comment on column public.payment_events.payload is
+  'Minimal pseudonymous provider summary. Never granted to a client role; read through the SQL Editor only.';
+
+-- ---------------------------------------------------------------------------
+-- 3. RLS policy corrections
+-- ---------------------------------------------------------------------------
+drop policy if exists "audit_log_moderators_read" on public.admin_audit_log;
+drop policy if exists "audit_log_admin_read" on public.admin_audit_log;
+create policy "audit_log_admin_read"
+  on public.admin_audit_log for select to authenticated
+  using (public.has_permission('audit.view'));
+
+drop policy if exists "user_roles_select_own_or_moderator" on public.user_roles;
+drop policy if exists "user_roles_select_own_or_admin" on public.user_roles;
+create policy "user_roles_select_own_or_admin"
+  on public.user_roles for select to authenticated
+  using (auth.uid() = user_id or public.has_permission('staff.manage'));
+
+-- ---------------------------------------------------------------------------
+-- 4. Indexes for the console's actual lookups
+-- ---------------------------------------------------------------------------
+create index if not exists admin_audit_log_target_user_idx
+  on public.admin_audit_log (target_user_id)
+  where target_user_id is not null;
+
+create index if not exists admin_audit_log_target_report_idx
+  on public.admin_audit_log (target_report_id)
+  where target_report_id is not null;
+
+create index if not exists reports_target_idx
+  on public.reports (target_type, target_id)
+  where target_id is not null;
+
+-- ---------------------------------------------------------------------------
+-- 5. Role changes — serialise the last-super-admin check
+-- ---------------------------------------------------------------------------
+create or replace function public.admin_set_role(
+  p_user_id uuid,
+  p_role    text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  me            uuid := auth.uid();
+  previous_role text;
+  admin_count   integer;
+begin
+  if not public.has_permission('staff.manage') then
+    raise exception 'Staff management access required' using errcode = '42501';
+  end if;
+  if p_role not in ('user','moderator','support','finance','admin') then
+    raise exception 'Unknown role' using errcode = '22023';
+  end if;
+  if not exists (select 1 from auth.users u where u.id = p_user_id) then
+    raise exception 'Member not found' using errcode = 'P0002';
+  end if;
+  if p_user_id = me and p_role <> 'admin' then
+    raise exception 'You cannot demote yourself' using errcode = '22023';
+  end if;
+
+  -- Two concurrent demotions of different admins must not both pass the
+  -- "last admin" check. One key for all role changes is correct here.
+  perform pg_advisory_xact_lock(hashtext('public.user_roles:admin')::bigint);
+
+  select coalesce(r.role, 'user') into previous_role
+  from public.user_roles r where r.user_id = p_user_id;
+  previous_role := coalesce(previous_role, 'user');
+
+  if previous_role = 'admin' and p_role <> 'admin' then
+    select count(*)::int into admin_count from public.user_roles where role = 'admin';
+    if admin_count <= 1 then
+      raise exception 'The last super admin cannot be demoted' using errcode = '22023';
+    end if;
+  end if;
+
+  if p_role = 'user' then
+    delete from public.user_roles where user_id = p_user_id;
+  else
+    insert into public.user_roles (user_id, role, granted_by)
+    values (p_user_id, p_role, me)
+    on conflict (user_id) do update
+      set role = excluded.role,
+          granted_at = now(),
+          granted_by = excluded.granted_by;
+  end if;
+
+  insert into public.admin_audit_log (actor_id, action, target_user_id, details)
+  values (me, 'staff.role_changed', p_user_id,
+          jsonb_build_object('from', previous_role, 'to', p_role));
+
+  return jsonb_build_object('ok', true, 'user_id', p_user_id, 'role', p_role);
+end;
+$$;
+
+revoke all on function public.admin_set_role(uuid, text) from public, anon;
+grant execute on function public.admin_set_role(uuid, text) to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- 6. Account management — no moderator may act on another staff account
+-- ---------------------------------------------------------------------------
+create or replace function public.admin_set_user_status(
+  p_user_id uuid,
+  p_status  text,
+  p_reason  text default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  me uuid := auth.uid();
+begin
+  if not public.has_permission('users.manage') then
+    raise exception 'User management access required' using errcode = '42501';
+  end if;
+  if p_user_id is null then
+    raise exception 'A target member is required' using errcode = '22023';
+  end if;
+  if p_user_id = me then
+    raise exception 'You cannot change your own account status' using errcode = '22023';
+  end if;
+  if p_status not in ('active','suspended','banned') then
+    raise exception 'Invalid account status' using errcode = '22023';
+  end if;
+  if p_reason is not null and char_length(p_reason) > 1000 then
+    raise exception 'The reason is too long' using errcode = '22023';
+  end if;
+  if not exists (select 1 from public.profiles p where p.id = p_user_id) then
+    raise exception 'Member not found' using errcode = 'P0002';
+  end if;
+  if public.is_staff_user(p_user_id) and not public.is_admin() then
+    raise exception 'Only a super admin can change a staff account' using errcode = '42501';
+  end if;
+
+  perform set_config('mettivo.moderation_action', 'on', true);
+
+  if p_status = 'active' then
+    update public.profiles
+       set is_suspended = false,
+           suspended_at = null,
+           suspension_reason = null,
+           banned_until = null,
+           ban_reason = null
+     where id = p_user_id;
+  elsif p_status = 'suspended' then
+    update public.profiles
+       set is_suspended = true,
+           suspended_at = now(),
+           suspension_reason = p_reason,
+           banned_until = null,
+           ban_reason = null
+     where id = p_user_id;
+  else
+    update public.profiles
+       set is_suspended = true,
+           suspended_at = now(),
+           suspension_reason = p_reason,
+           banned_until = 'infinity'::timestamptz,
+           ban_reason = p_reason
+     where id = p_user_id;
+  end if;
+
+  perform set_config('mettivo.moderation_action', 'off', true);
+
+  insert into public.admin_audit_log (actor_id, action, target_user_id, details)
+  values (me, 'user.status_changed', p_user_id,
+          jsonb_build_object('status', p_status, 'reason', p_reason));
+
+  return jsonb_build_object('ok', true, 'user_id', p_user_id, 'status', p_status);
+end;
+$$;
+
+revoke all on function public.admin_set_user_status(uuid, text, text) from public, anon;
+grant execute on function public.admin_set_user_status(uuid, text, text) to authenticated;
+
+create or replace function public.admin_warn_user(
+  p_user_id uuid,
+  p_reason  text
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  me      uuid := auth.uid();
+  warning uuid;
+  message text;
+begin
+  if not public.has_permission('users.manage') then
+    raise exception 'User management access required' using errcode = '42501';
+  end if;
+  if p_user_id is null or p_user_id = me then
+    raise exception 'Choose another member' using errcode = '22023';
+  end if;
+  if p_reason is null or trim(p_reason) = '' then
+    raise exception 'A warning reason is required' using errcode = '22023';
+  end if;
+  if char_length(p_reason) > 1000 then
+    raise exception 'The warning is too long' using errcode = '22023';
+  end if;
+  if public.is_staff_user(p_user_id) and not public.is_admin() then
+    raise exception 'Only a super admin can warn a staff account' using errcode = '42501';
+  end if;
+
+  message := 'Mettivo safety notice: ' || trim(p_reason);
+
+  insert into public.notifications (user_id, actor_id, type, body)
+  values (p_user_id, null, 'warning', message)
+  returning id into warning;
+
+  insert into public.admin_audit_log (actor_id, action, target_user_id, details)
+  values (me, 'user.warned', p_user_id,
+          jsonb_build_object('reason', trim(p_reason), 'notification_id', warning));
+
+  return warning;
+end;
+$$;
+
+revoke all on function public.admin_warn_user(uuid, text) from public, anon;
+grant execute on function public.admin_warn_user(uuid, text) to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- 7. Legacy moderation RPCs still used by /admin/moderation
+-- ---------------------------------------------------------------------------
+create or replace function public.admin_suspend_user(
+  p_target_user uuid,
+  p_reason      text default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  if not public.is_moderator() then
+    raise exception 'Moderator access required' using errcode = '42501';
+  end if;
+
+  if p_target_user is null then
+    raise exception 'p_target_user is required' using errcode = '22023';
+  end if;
+
+  if p_target_user = auth.uid() then
+    raise exception 'You cannot suspend yourself' using errcode = '22023';
+  end if;
+
+  if public.is_staff_user(p_target_user) and not public.is_admin() then
+    raise exception 'Only a super admin can suspend a staff account' using errcode = '42501';
+  end if;
+
+  update public.profiles
+     set is_suspended      = true,
+         suspended_at      = now(),
+         suspension_reason = p_reason
+   where id = p_target_user;
+
+  insert into public.admin_audit_log (actor_id, action, target_user_id, details)
+  values (auth.uid(), 'user.suspended', p_target_user,
+          jsonb_build_object('reason', p_reason));
+
+  return jsonb_build_object('ok', true, 'user_id', p_target_user, 'suspended', true);
+end;
+$$;
+
+create or replace function public.admin_unsuspend_user(p_target_user uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  if not public.is_moderator() then
+    raise exception 'Moderator access required' using errcode = '42501';
+  end if;
+
+  if p_target_user is null then
+    raise exception 'p_target_user is required' using errcode = '22023';
+  end if;
+
+  if public.is_staff_user(p_target_user) and not public.is_admin() then
+    raise exception 'Only a super admin can restore a staff account' using errcode = '42501';
+  end if;
+
+  update public.profiles
+     set is_suspended      = false,
+         suspended_at      = null,
+         suspension_reason = null
+   where id = p_target_user;
+
+  insert into public.admin_audit_log (actor_id, action, target_user_id)
+  values (auth.uid(), 'user.unsuspended', p_target_user);
+
+  return jsonb_build_object('ok', true, 'user_id', p_target_user, 'suspended', false);
+end;
+$$;
+
+revoke all on function public.admin_suspend_user(uuid, text) from public, anon;
+revoke all on function public.admin_unsuspend_user(uuid) from public, anon;
+grant execute on function public.admin_suspend_user(uuid, text) to authenticated;
+grant execute on function public.admin_unsuspend_user(uuid) to authenticated;
+
+create or replace function public.admin_apply_moderation_action(
+  p_target_user uuid,
+  p_category    text,
+  p_scope       text,
+  p_note        text default null
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  if not public.is_moderator() then
+    raise exception 'Moderator access required' using errcode = '42501';
+  end if;
+  if p_target_user is null then
+    raise exception 'A target member is required' using errcode = '22023';
+  end if;
+  if p_target_user = auth.uid() then
+    raise exception 'You cannot restrict yourself' using errcode = '22023';
+  end if;
+  if public.is_staff_user(p_target_user) and not public.is_admin() then
+    raise exception 'Only a super admin can restrict a staff account' using errcode = '42501';
+  end if;
+  return public.apply_moderation_action(
+    p_target_user, p_category, p_scope, 'moderator', null, null, p_note, auth.uid());
+end;
+$$;
+
+revoke all on function public.admin_apply_moderation_action(uuid, text, text, text) from public, anon;
+grant execute on function public.admin_apply_moderation_action(uuid, text, text, text) to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- 8. The single moderation writer — skip staff unless a super admin is acting
+-- ---------------------------------------------------------------------------
+-- This is the last line of defence for the report-action trigger, threshold
+-- evaluation, and AI verdict paths. A non-admin caller gets no enforcement row,
+-- no warning, no notification, and no profile suspension for a staff target.
+create or replace function public.apply_moderation_action(
+  p_user      uuid,
+  p_category  text,
+  p_scope     text,
+  p_source    text,
+  p_report_id uuid default null,
+  p_scan_id   uuid default null,
+  p_note      text default null,
+  p_actor     uuid default null
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  days         integer;
+  action_label text := 'account_suspended';
+  message      text;
+  subject      text;
+  warning_id   uuid;
+  email_addr   text;
+  existing_id  uuid;
+begin
+  if p_user is null then
+    raise exception 'A target member is required' using errcode = '22023';
+  end if;
+  if p_scope not in ('chat','video','account') then
+    raise exception 'Invalid scope: %', p_scope using errcode = '22023';
+  end if;
+  if p_source not in ('auto_threshold','ai','moderator') then
+    raise exception 'Invalid source: %', p_source using errcode = '22023';
+  end if;
+
+  if public.is_staff_user(p_user) and not public.is_admin() then
+    return null;
+  end if;
+
+  -- One active pause at a time. A second action while one is running is a
+  -- no-op that returns the existing warning, which is what makes running the
+  -- threshold check on every report safe.
+  select s.id into existing_id from public.suspensions s
+   where s.user_id = p_user and s.active and s.ends_at > now()
+   limit 1;
+
+  if existing_id is not null then
+    select w.id into warning_id
+    from public.moderation_warnings w
+    where w.user_id = p_user
+    order by w.created_at desc limit 1;
+    return warning_id;
+  end if;
+
+  days := public.moderation_suspension_days(p_category);
+
+  insert into public.suspensions (user_id, category, reason, source, report_id, scan_id, ends_at, created_by)
+  values (p_user, p_category, p_note, p_source, p_report_id, p_scan_id,
+          now() + make_interval(days => days), p_actor);
+
+  -- Mirror into the account flag the rest of the app already enforces. The
+  -- transaction-local flag tells M14's guard this write is enforcement, not a
+  -- member self-serving an edit to their own suspension columns.
+  perform set_config('mettivo.moderation_action', 'on', true);
+  update public.profiles
+     set is_suspended = true,
+         suspended_at = now(),
+         suspension_reason = coalesce(p_note, public.moderation_category_phrase(p_category))
+   where id = p_user;
+  perform set_config('mettivo.moderation_action', 'off', true);
+
+  message := format(
+    'Your account has been paused for %s days after our safety review found %s. You can sign in and read, but you cannot post, send messages, or go live until the pause ends. If you believe this is a mistake, contact support.',
+    days, public.moderation_category_phrase(p_category));
+  subject := 'Mettivo: your account has been paused';
+
+  insert into public.moderation_warnings (user_id, report_id, scan_id, category, scope, action, message, created_by)
+  values (p_user, p_report_id, p_scan_id, p_category, p_scope, action_label, message, p_actor)
+  returning id into warning_id;
+
+  insert into public.notifications (user_id, actor_id, type, entity_id, body)
+  values (p_user, null, 'warning', warning_id, message);
+
+  select u.email into email_addr from auth.users u where u.id = p_user;
+  insert into public.moderation_emails (user_id, recipient, subject, body, status)
+  values (p_user, email_addr, subject, message, case when email_addr is null then 'skipped' else 'pending' end);
+
+  if p_report_id is not null then
+    update public.reports set action_taken = action_label, updated_at = now() where id = p_report_id;
+  end if;
+
+  insert into public.admin_audit_log (actor_id, action, target_user_id, target_report_id, details)
+  values (
+    p_actor,
+    'moderation.' || action_label,
+    p_user,
+    p_report_id,
+    jsonb_build_object('category', p_category, 'scope', 'account', 'requested_scope', p_scope,
+                       'source', p_source, 'days', days, 'scan_id', p_scan_id, 'warning_id', warning_id)
+  );
+
+  return warning_id;
+end;
+$$;
+
+revoke all on function public.apply_moderation_action(uuid, text, text, text, uuid, uuid, text, uuid)
+  from public, anon, authenticated;
+
+create or replace function public.evaluate_report_thresholds(p_reported uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  cfg          record;
+  win          interval;
+  c_text       integer;
+  c_media      integer;
+  c_live       integer;
+  c_underage   integer;
+  ai_minor     boolean;
+  next_cat     text;
+begin
+  if p_reported is null then
+    return jsonb_build_object('applied', false);
+  end if;
+
+  -- Staff accounts are protected from report-count enforcement. Only a super
+  -- admin can act on them, through the explicit audited RPCs.
+  if public.is_staff_user(p_reported) then
+    return jsonb_build_object('applied', false, 'reason', 'protected_staff');
+  end if;
+
+  -- Already paused: nothing to stack.
+  if exists (
+    select 1 from public.suspensions s
+    where s.user_id = p_reported and s.active and s.ends_at > now()
+  ) then
+    return jsonb_build_object('applied', false, 'reason', 'already_suspended');
+  end if;
+
+  select * into cfg from public.moderation_settings where id;
+  win := make_interval(days => cfg.report_window_days);
+
+  select count(distinct r.reporter_id), bool_or(r.ai_flagged) into c_underage, ai_minor
+  from public.reports r
+  where r.reported_user_id = p_reported
+    and r.category = 'underage'
+    and r.status in ('pending','reviewed','actioned')
+    and r.created_at > now() - win;
+
+  select count(distinct r.reporter_id) into c_live
+  from public.reports r
+  where r.reported_user_id = p_reported
+    and r.category = 'indecent_live'
+    and r.status in ('pending','reviewed','actioned')
+    and r.created_at > now() - win;
+
+  select count(distinct r.reporter_id) into c_media
+  from public.reports r
+  where r.reported_user_id = p_reported
+    and r.category in ('explicit_media','nudity')
+    and r.status in ('pending','reviewed','actioned')
+    and r.created_at > now() - win;
+
+  select count(distinct r.reporter_id) into c_text
+  from public.reports r
+  where r.reported_user_id = p_reported
+    and r.category in ('abuse_text','harassment','spam','other')
+    and r.status in ('pending','reviewed','actioned')
+    and r.created_at > now() - win;
+
+  if c_underage >= cfg.underage_report_threshold
+     and (not cfg.underage_requires_ai or coalesce(ai_minor, false)) then
+    next_cat := 'underage';
+  elsif c_live >= cfg.video_report_threshold then
+    next_cat := 'indecent_live';
+  elsif c_media >= cfg.video_report_threshold then
+    next_cat := 'explicit_media';
+  elsif c_text >= cfg.chat_report_threshold then
+    next_cat := 'abuse_text';
+  else
+    return jsonb_build_object('applied', false);
+  end if;
+
+  perform public.apply_moderation_action(p_reported, next_cat, 'account', 'auto_threshold');
+
+  return jsonb_build_object('applied', true, 'scope', 'account', 'category', next_cat);
+end;
+$$;
+
+revoke all on function public.evaluate_report_thresholds(uuid) from public, anon, authenticated;
+
+-- ---------------------------------------------------------------------------
+-- 9. Posture report
+-- ---------------------------------------------------------------------------
+select
+  c.relname as table_name,
+  c.relrowsecurity as rls_enabled,
+  count(p.policyname) as policy_count,
+  has_table_privilege('authenticated', c.oid, 'SELECT') as authenticated_can_select,
+  has_table_privilege('authenticated', c.oid, 'INSERT') as authenticated_can_insert,
+  has_table_privilege('authenticated', c.oid, 'UPDATE') as authenticated_can_update,
+  has_table_privilege('authenticated', c.oid, 'DELETE') as authenticated_can_delete
+from pg_class c
+join pg_namespace n on n.oid = c.relnamespace
+left join pg_policies p
+       on p.schemaname = 'public' and p.tablename = c.relname
+where n.nspname = 'public'
+  and c.relkind = 'r'
+  and c.relname in (
+    'user_roles','admin_audit_log','admin_settings',
+    'subscription_plans','subscriptions','payment_events',
+    'notification_campaigns'
+  )
+group by c.relname, c.relrowsecurity, c.oid
+order by c.relname;
+
+
+-- ############################################################################
+-- # 20261015540000_m38_relationship_messaging.sql
+-- ############################################################################
+
+-- =============================================================================
+-- M38 · Relationship-aware messaging
+-- =============================================================================
+-- WHY
+--   A match row is also the conversation container, but the product needs three
+--   different relationships on top of it:
+--
+--   * a reciprocal, eligible cross-gender follow is a romantic MATCH;
+--   * a reciprocal follow that is not match-eligible may still chat;
+--   * a one-way follow may start a MESSAGE REQUEST with a three-message cap
+--     until the recipient accepts or rejects it.
+--
+--   M34's two-message cap keyed off "the other person has replied", so a request
+--   could not be explicitly accepted or rejected. This migration keeps the
+--   existing `matches` row as the conversation id (messages, media, receipts and
+--   archives all reference it), and adds the relationship state to that row.
+--
+-- SECURITY
+--   `matches` still has no client INSERT/UPDATE policy. Request creation and
+--   acceptance go through participant-checking SECURITY DEFINER RPCs. The
+--   three-message cap remains a BEFORE INSERT trigger so a modified client
+--   cannot bypass it.
+--
+-- SAFE TO RE-RUN: additive column guards, replaceable functions, and
+-- `drop ... if exists` before triggers/functions that change return type.
+-- DEPENDS ON: M10 (matches), M11 (messages), M23 (pair_should_match),
+--             M26 (expiry helpers), M33 (sync_match_for_pair), M34 (inbox).
+-- =============================================================================
+
+-- ---------------------------------------------------------------------------
+-- 1. Relationship state on the conversation row
+-- ---------------------------------------------------------------------------
+alter table public.matches add column if not exists kind text;
+alter table public.matches add column if not exists request_status text;
+alter table public.matches add column if not exists requested_by uuid references auth.users(id) on delete set null;
+alter table public.matches add column if not exists requested_at timestamptz;
+alter table public.matches add column if not exists responded_at timestamptz;
+alter table public.matches add column if not exists updated_at timestamptz not null default now();
+
+update public.matches
+   set kind = coalesce(kind, 'match'),
+       request_status = coalesce(request_status, 'not_applicable'),
+       updated_at = coalesce(updated_at, created_at, now());
+
+alter table public.matches alter column kind set default 'match';
+alter table public.matches alter column kind set not null;
+alter table public.matches alter column request_status set default 'not_applicable';
+alter table public.matches alter column request_status set not null;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'matches_kind_check'
+  ) then
+    alter table public.matches
+      add constraint matches_kind_check
+      check (kind in ('match', 'mutual_follow', 'request', 'closed'));
+  end if;
+
+  if not exists (
+    select 1 from pg_constraint where conname = 'matches_request_status_check'
+  ) then
+    alter table public.matches
+      add constraint matches_request_status_check
+      check (request_status in ('not_applicable', 'pending', 'accepted', 'rejected'));
+  end if;
+end $$;
+
+create index if not exists matches_kind_idx on public.matches (kind);
+create index if not exists matches_requested_by_idx on public.matches (requested_by)
+  where requested_by is not null;
+
+comment on column public.matches.kind is
+  'match = romantic cross-gender mutual follow; mutual_follow = chat-enabled reciprocal follow; request = one-way message request; closed = retained history without chat access.';
+comment on column public.matches.request_status is
+  'Only meaningful when kind = request. A rejected request remains as a tombstone so it cannot silently reopen.';
+
+-- ---------------------------------------------------------------------------
+-- 2. One state vocabulary shared by the RPCs and the client
+-- ---------------------------------------------------------------------------
+create or replace function public.connection_relationship_state(
+  p_kind text,
+  p_request_status text,
+  p_blocked boolean
+)
+returns text
+language sql
+immutable
+as $$
+  select case
+    when coalesce(p_blocked, false) then 'BLOCKED'
+    when p_kind = 'match' then 'MATCHED'
+    when p_kind = 'mutual_follow' then 'MUTUAL_FOLLOW_CHAT'
+    when p_kind = 'request' and p_request_status = 'pending' then 'MESSAGE_REQUEST_PENDING'
+    when p_kind = 'request' and p_request_status = 'accepted' then 'MESSAGE_REQUEST_ACCEPTED'
+    else 'UNAVAILABLE'
+  end;
+$$;
+
+revoke all on function public.connection_relationship_state(text, text, boolean)
+  from public, anon, authenticated;
+
+-- ---------------------------------------------------------------------------
+-- 3. Reconcile follow changes without losing chat history
+-- ---------------------------------------------------------------------------
+create or replace function public.sync_match_for_pair(a uuid, b uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  lo uuid;
+  hi uuid;
+  conn public.matches%rowtype;
+  mutual boolean := false;
+  one_way boolean := false;
+  keeps_request boolean := false;
+  has_messages boolean := false;
+begin
+  if a is null or b is null or a = b then
+    return;
+  end if;
+
+  lo := least(a, b);
+  hi := greatest(a, b);
+
+  perform pg_advisory_xact_lock(hashtext(lo::text || ':' || hi::text));
+
+  select * into conn
+  from public.matches m
+  where m.user_a = lo and m.user_b = hi;
+
+  if public.is_blocked_pair(lo, hi) then
+    if conn.id is null then
+      return;
+    end if;
+
+    select exists (
+      select 1 from public.messages msg where msg.match_id::text = conn.id::text
+    ) into has_messages;
+
+    if has_messages then
+      update public.matches
+         set kind = 'closed',
+             request_status = 'not_applicable',
+             updated_at = now()
+       where id = conn.id;
+    else
+      delete from public.matches where id = conn.id;
+    end if;
+    return;
+  end if;
+
+  if public.pair_should_match(lo, hi) then
+    insert into public.matches (
+      user_a, user_b, kind, request_status, requested_by, requested_at, responded_at
+    )
+    values (lo, hi, 'match', 'not_applicable', null, null, null)
+    on conflict (user_a, user_b) do update
+      set kind = 'match',
+          request_status = 'not_applicable',
+          requested_by = null,
+          requested_at = null,
+          responded_at = null,
+          updated_at = now();
+    return;
+  end if;
+
+  if conn.id is null then
+    return;
+  end if;
+
+  mutual := exists (
+    select 1 from public.follows f
+    where f.follower_id = lo and f.following_id = hi
+  ) and exists (
+    select 1 from public.follows f
+    where f.follower_id = hi and f.following_id = lo
+  );
+
+  if mutual then
+    update public.matches
+       set kind = 'mutual_follow',
+           request_status = 'not_applicable',
+           requested_by = null,
+           requested_at = null,
+           responded_at = null,
+           updated_at = now()
+     where id = conn.id;
+    return;
+  end if;
+
+  -- A rejection is a tombstone: it must not be deleted (which would allow a new
+  -- request) or upgraded by a later one-way follow. A new mutual follow is
+  -- consent for the separate mutual-follow chat handled above.
+  if conn.kind = 'request' and conn.request_status = 'rejected' then
+    return;
+  end if;
+
+  one_way := exists (
+    select 1 from public.follows f
+    where (f.follower_id = lo and f.following_id = hi)
+       or (f.follower_id = hi and f.following_id = lo)
+  );
+
+  if one_way and conn.kind = 'request' and conn.request_status = 'pending'
+     and conn.requested_by in (lo, hi) then
+    keeps_request := exists (
+      select 1 from public.follows f
+      where f.follower_id = conn.requested_by
+        and f.following_id = case when conn.requested_by = lo then hi else lo end
+    );
+    if keeps_request then
+      return;
+    end if;
+  end if;
+
+  if one_way then
+    select exists (
+      select 1 from public.messages msg where msg.match_id::text = conn.id::text
+    ) into has_messages;
+
+    if has_messages then
+      update public.matches
+         set kind = 'closed',
+             request_status = 'not_applicable',
+             updated_at = now()
+       where id = conn.id;
+    else
+      delete from public.matches where id = conn.id;
+    end if;
+    return;
+  end if;
+
+  select exists (
+    select 1 from public.messages msg where msg.match_id::text = conn.id::text
+  ) into has_messages;
+
+  if has_messages then
+    update public.matches
+       set kind = 'closed',
+           request_status = 'not_applicable',
+           updated_at = now()
+     where id = conn.id;
+  else
+    delete from public.matches where id = conn.id;
+  end if;
+end;
+$$;
+
+revoke all on function public.sync_match_for_pair(uuid, uuid) from public, anon, authenticated;
+
+comment on function public.sync_match_for_pair(uuid, uuid) is
+  'Reconciles a canonical pair: romantic match, chat-enabled mutual follow, retained closed history, or no row. Internal trigger helper.';
+
+-- ---------------------------------------------------------------------------
+-- 4. Count only romantic matches
+-- ---------------------------------------------------------------------------
+create or replace function public.sync_match_counts()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  if tg_op = 'INSERT' then
+    if new.kind = 'match' then
+      update public.profiles
+        set matches_count = matches_count + 1
+        where id in (new.user_a, new.user_b);
+    end if;
+  elsif tg_op = 'DELETE' then
+    if old.kind = 'match' then
+      update public.profiles
+        set matches_count = greatest(matches_count - 1, 0)
+        where id in (old.user_a, old.user_b);
+    end if;
+  elsif tg_op = 'UPDATE' then
+    if old.kind = 'match' and new.kind <> 'match' then
+      update public.profiles
+        set matches_count = greatest(matches_count - 1, 0)
+        where id in (old.user_a, old.user_b);
+    elsif old.kind <> 'match' and new.kind = 'match' then
+      update public.profiles
+        set matches_count = matches_count + 1
+        where id in (new.user_a, new.user_b);
+    end if;
+  end if;
+
+  return null;
+end;
+$$;
+
+drop trigger if exists matches_sync_counts_trg on public.matches;
+create trigger matches_sync_counts_trg
+  after insert or update of kind or delete on public.matches
+  for each row execute function public.sync_match_counts();
+
+-- ---------------------------------------------------------------------------
+-- 5. Notify only when a romantic match is created or upgraded
+-- ---------------------------------------------------------------------------
+create or replace function public.notify_on_match()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  if new.kind <> 'match' then
+    return new;
+  end if;
+  if tg_op = 'UPDATE' and old.kind = 'match' then
+    return new;
+  end if;
+
+  begin
+    insert into public.notifications (user_id, actor_id, type, entity_id)
+    values (new.user_a, new.user_b, 'match', new.id),
+           (new.user_b, new.user_a, 'match', new.id);
+  exception when others then
+    null;
+  end;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists notify_on_match_trg on public.matches;
+create trigger notify_on_match_trg
+  after insert or update of kind on public.matches
+  for each row execute function public.notify_on_match();
+
+-- ---------------------------------------------------------------------------
+-- 6. Start a conversation: match, mutual-follow chat, or message request
+-- ---------------------------------------------------------------------------
+create or replace function public.start_conversation(p_target uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  me uuid := auth.uid();
+  lo uuid;
+  hi uuid;
+  conn public.matches%rowtype;
+  target_available boolean := false;
+  is_mutual boolean := false;
+  blocked boolean := false;
+begin
+  if me is null then
+    raise exception 'Authentication required' using errcode = '28000';
+  end if;
+  if p_target is null or p_target = me then
+    raise exception 'Choose another member to message.' using errcode = '22023';
+  end if;
+
+  lo := least(me, p_target);
+  hi := greatest(me, p_target);
+
+  select exists (
+    select 1 from public.profiles p
+    where p.id = p_target
+      and coalesce(p.onboarding_completed, false)
+      and not coalesce(p.is_suspended, false)
+      and (p.banned_until is null or p.banned_until <= now())
+  ) into target_available;
+
+  if not target_available then
+    raise exception 'This member is unavailable.' using errcode = '42501';
+  end if;
+
+  select public.is_blocked_pair(lo, hi) into blocked;
+  if blocked then
+    raise exception 'You cannot message this member.' using errcode = '42501';
+  end if;
+
+  perform public.sync_match_for_pair(lo, hi);
+
+  select * into conn
+  from public.matches m
+  where m.user_a = lo and m.user_b = hi;
+
+  if conn.id is null then
+    if not exists (
+      select 1 from public.follows f
+      where f.follower_id = me and f.following_id = p_target
+    ) then
+      raise exception 'Follow this member before sending a message request.'
+        using errcode = '42501';
+    end if;
+
+    is_mutual := exists (
+      select 1 from public.follows f
+      where f.follower_id = p_target and f.following_id = me
+    );
+
+    if is_mutual then
+      insert into public.matches (
+        user_a, user_b, kind, request_status, requested_by, requested_at, responded_at
+      )
+      values (lo, hi, 'mutual_follow', 'not_applicable', null, null, null)
+      on conflict (user_a, user_b) do nothing;
+    else
+      insert into public.matches (
+        user_a, user_b, kind, request_status, requested_by, requested_at, responded_at
+      )
+      values (lo, hi, 'request', 'pending', me, now(), null)
+      on conflict (user_a, user_b) do nothing;
+    end if;
+
+    select * into conn
+    from public.matches m
+    where m.user_a = lo and m.user_b = hi;
+  end if;
+
+  if conn.id is null then
+    raise exception 'The conversation could not be started.' using errcode = '42501';
+  end if;
+
+  if conn.kind = 'closed'
+     or (conn.kind = 'request' and conn.request_status = 'rejected') then
+    raise exception 'This conversation is no longer available.' using errcode = '42501';
+  end if;
+
+  return jsonb_build_object(
+    'conversation_id', conn.id,
+    'relationship_state', public.connection_relationship_state(conn.kind, conn.request_status, false),
+    'request_status', conn.request_status,
+    'requested_by_me', coalesce(conn.requested_by = me, false)
+  );
+end;
+$$;
+
+revoke all on function public.start_conversation(uuid) from public, anon;
+grant execute on function public.start_conversation(uuid) to authenticated;
+
+comment on function public.start_conversation(uuid) is
+  'Idempotently opens the connection row for the signed-in member and a target. Creates a pending request only for a one-way follow.';
+
+-- ---------------------------------------------------------------------------
+-- 7. Accept or reject a pending request
+-- ---------------------------------------------------------------------------
+create or replace function public.respond_to_conversation_request(
+  p_match_id uuid,
+  p_accept boolean
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  me uuid := auth.uid();
+  conn public.matches%rowtype;
+  next_status text;
+begin
+  if me is null then
+    raise exception 'Authentication required' using errcode = '28000';
+  end if;
+
+  perform pg_advisory_xact_lock(hashtext(p_match_id::text || ':request'));
+
+  select * into conn from public.matches m where m.id = p_match_id;
+  if conn.id is null or (conn.user_a <> me and conn.user_b <> me) then
+    raise exception 'Conversation not found' using errcode = '42501';
+  end if;
+  if public.is_blocked_pair(conn.user_a, conn.user_b) then
+    raise exception 'This conversation is unavailable.' using errcode = '42501';
+  end if;
+  if conn.kind <> 'request' then
+    raise exception 'This conversation is not a message request.' using errcode = '22023';
+  end if;
+  if conn.requested_by = me then
+    raise exception 'Only the recipient can respond to this request.' using errcode = '42501';
+  end if;
+  if conn.request_status = 'accepted' then
+    return jsonb_build_object(
+      'conversation_id', conn.id,
+      'relationship_state', 'MESSAGE_REQUEST_ACCEPTED',
+      'request_status', 'accepted'
+    );
+  end if;
+  if conn.request_status = 'rejected' then
+    raise exception 'This request has already been declined.' using errcode = '22023';
+  end if;
+  if conn.request_status <> 'pending' then
+    raise exception 'This conversation is not awaiting a response.' using errcode = '22023';
+  end if;
+
+  next_status := case when coalesce(p_accept, false) then 'accepted' else 'rejected' end;
+
+  update public.matches
+     set request_status = next_status,
+         responded_at = now(),
+         updated_at = now()
+   where id = conn.id;
+
+  return jsonb_build_object(
+    'conversation_id', conn.id,
+    'relationship_state', public.connection_relationship_state('request', next_status, false),
+    'request_status', next_status
+  );
+end;
+$$;
+
+revoke all on function public.respond_to_conversation_request(uuid, boolean) from public, anon;
+grant execute on function public.respond_to_conversation_request(uuid, boolean) to authenticated;
+
+comment on function public.respond_to_conversation_request(uuid, boolean) is
+  'Recipient-only accept/reject for a pending message request. Acceptance unlocks unlimited replies; rejection is permanent.';
+
+-- ---------------------------------------------------------------------------
+-- 8. Three-message cap while a request is pending
+-- ---------------------------------------------------------------------------
+create or replace function public.enforce_message_request_limit()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  other_user uuid;
+  conn_kind text;
+  conn_status text;
+  requester uuid;
+  sent_count integer := 0;
+begin
+  select case
+           when m.user_a = new.sender_id then m.user_b
+           when m.user_b = new.sender_id then m.user_a
+           else null
+         end,
+         m.kind,
+         m.request_status,
+         m.requested_by
+    into other_user, conn_kind, conn_status, requester
+  from public.matches m
+  where m.id::text = new.match_id::text
+  limit 1;
+
+  -- Synthetic fixture ids are still governed by the M11 participation trigger.
+  if other_user is null then
+    return new;
+  end if;
+
+  if public.is_blocked_pair(new.sender_id, other_user) then
+    raise exception 'You cannot message this member.' using errcode = '42501';
+  end if;
+
+  if conn_kind in ('match', 'mutual_follow') then
+    return new;
+  end if;
+
+  if conn_kind <> 'request' then
+    raise exception 'This conversation is no longer available.' using errcode = '42501';
+  end if;
+
+  if conn_status = 'accepted' then
+    return new;
+  end if;
+
+  if conn_status = 'rejected' then
+    raise exception 'This message request was declined.' using errcode = '42501';
+  end if;
+
+  if conn_status <> 'pending' then
+    raise exception 'This conversation is no longer available.' using errcode = '42501';
+  end if;
+
+  perform pg_advisory_xact_lock(hashtext(new.match_id::text || ':request'));
+
+  if requester = new.sender_id then
+    if not exists (
+      select 1 from public.follows f
+      where f.follower_id = new.sender_id and f.following_id = other_user
+    ) then
+      raise exception 'Follow this member to keep this message request open.'
+        using errcode = '42501';
+    end if;
+
+    select count(*)::int into sent_count
+    from public.messages msg
+    where msg.match_id::text = new.match_id::text
+      and msg.sender_id = new.sender_id;
+
+    if sent_count >= 3 then
+      raise exception
+        'You can send three messages until this member accepts your request.'
+        using errcode = '42501';
+    end if;
+  else
+    -- The recipient replying is an acceptance in the same transaction.
+    update public.matches
+       set request_status = 'accepted',
+           responded_at = now(),
+           updated_at = now()
+     where id::text = new.match_id::text;
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists enforce_message_request_limit_trg on public.messages;
+create trigger enforce_message_request_limit_trg
+  before insert on public.messages
+  for each row execute function public.enforce_message_request_limit();
+
+revoke all on function public.enforce_message_request_limit() from public, anon, authenticated;
+
+comment on function public.enforce_message_request_limit() is
+  'Caps a pending-request sender at three messages. A recipient reply auto-accepts and lifts the cap.';
+
+-- ---------------------------------------------------------------------------
+-- 9. Send-state projection for the thread
+-- ---------------------------------------------------------------------------
+drop function if exists public.conversation_send_state(uuid);
+
+create or replace function public.conversation_send_state(p_match_id uuid)
+returns table (
+  relationship_state text,
+  request_status     text,
+  is_request         boolean,
+  requested_by_me    boolean,
+  can_respond        boolean,
+  sent_count         integer,
+  send_limit         integer,
+  can_send           boolean,
+  other_has_replied  boolean
+)
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+  with me as (
+    select auth.uid() as uid
+  ),
+  participant as (
+    select
+      m.id,
+      m.kind,
+      m.request_status,
+      m.requested_by,
+      case when m.user_a = me.uid then m.user_b else m.user_a end as other_user_id,
+      public.is_blocked_pair(m.user_a, m.user_b) as is_blocked
+    from public.matches m, me
+    where me.uid is not null
+      and m.id = p_match_id
+      and (m.user_a = me.uid or m.user_b = me.uid)
+  ),
+  stats as (
+    select
+      count(msg.id) filter (where msg.sender_id = (select uid from me))::int as sent_count,
+      count(msg.id) filter (where msg.sender_id = participant.other_user_id)::int as received_count
+    from participant
+    left join public.messages msg on msg.match_id::text = participant.id::text
+    group by participant.other_user_id
+  )
+  select
+    public.connection_relationship_state(
+      participant.kind, participant.request_status, participant.is_blocked
+    ) as relationship_state,
+    participant.request_status,
+    (participant.kind = 'request' and participant.request_status = 'pending'
+      and participant.requested_by <> (select uid from me)) as is_request,
+    coalesce(participant.requested_by = (select uid from me), false) as requested_by_me,
+    (participant.kind = 'request' and participant.request_status = 'pending'
+      and participant.requested_by <> (select uid from me)
+      and not participant.is_blocked) as can_respond,
+    coalesce(stats.sent_count, 0) as sent_count,
+    3 as send_limit,
+    case
+      when participant.is_blocked then false
+      when participant.kind in ('match', 'mutual_follow') then true
+      when participant.kind = 'request' and participant.request_status = 'accepted' then true
+      when participant.kind = 'request' and participant.request_status = 'pending'
+        then participant.requested_by <> (select uid from me)
+             or coalesce(stats.sent_count, 0) < 3
+      else false
+    end as can_send,
+    (coalesce(stats.received_count, 0) > 0) as other_has_replied
+  from participant
+  left join stats on true;
+$$;
+
+revoke all on function public.conversation_send_state(uuid) from public, anon;
+grant execute on function public.conversation_send_state(uuid) to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- 10. Inbox projection with request direction
+-- ---------------------------------------------------------------------------
+drop function if exists public.conversation_summaries();
+
+create or replace function public.conversation_summaries()
+returns table (
+  match_id        uuid,
+  other_user_id   uuid,
+  other_display_name text,
+  other_username  text,
+  other_avatar_url text,
+  last_message    text,
+  last_message_at timestamptz,
+  last_sender_id  uuid,
+  last_message_is_mine boolean,
+  unread_count    integer,
+  is_archived     boolean,
+  is_request      boolean,
+  is_online       boolean,
+  relationship_state text,
+  request_status  text,
+  requested_by_me boolean
+)
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+  with me as (
+    select auth.uid() as uid
+  ),
+  mine as (
+    select
+      m.id,
+      m.created_at as match_created_at,
+      m.kind,
+      m.request_status,
+      m.requested_by,
+      public.is_blocked_pair(m.user_a, m.user_b) as is_blocked,
+      case when m.user_a = me.uid then m.user_b else m.user_a end as other_user_id
+    from public.matches m, me
+    where me.uid is not null
+      and (m.user_a = me.uid or m.user_b = me.uid)
+      and not (m.kind = 'closed')
+      and not (m.kind = 'request' and m.request_status = 'rejected')
+  ),
+  alive_messages as (
+    select
+      msg.id,
+      msg.match_id,
+      msg.sender_id,
+      msg.content,
+      msg.created_at
+    from public.messages msg
+    join mine on mine.id::text = msg.match_id::text
+    where public.message_is_alive(msg.match_id::text, msg.created_at)
+  ),
+  last_message as (
+    select distinct on (msg.match_id)
+      msg.match_id::text as match_key,
+      msg.content,
+      msg.created_at,
+      msg.sender_id
+    from alive_messages msg
+    order by msg.match_id, msg.created_at desc, msg.id desc
+  ),
+  counts as (
+    select
+      mine.id as match_id,
+      count(msg.id) filter (
+        where msg.sender_id = (select uid from me)
+      )::int as my_count,
+      count(msg.id) filter (
+        where msg.sender_id = mine.other_user_id
+      )::int as their_count
+    from mine
+    left join alive_messages msg on msg.match_id::text = mine.id::text
+    group by mine.id, mine.other_user_id
+  ),
+  unread as (
+    select
+      mine.id as match_id,
+      count(msg.id) filter (
+        where msg.sender_id = mine.other_user_id
+          and msg.created_at > coalesce(rs.last_read_at, 'epoch'::timestamptz)
+      )::int as unread_count
+    from mine
+    left join public.match_read_state rs
+      on rs.match_id = mine.id and rs.user_id = (select uid from me)
+    left join alive_messages msg on msg.match_id::text = mine.id::text
+    group by mine.id, mine.other_user_id, rs.last_read_at
+  )
+  select
+    mine.id as match_id,
+    mine.other_user_id,
+    p.display_name as other_display_name,
+    p.username as other_username,
+    p.avatar_url as other_avatar_url,
+    lm.content as last_message,
+    lm.created_at as last_message_at,
+    lm.sender_id as last_sender_id,
+    coalesce(lm.sender_id = (select uid from me), false) as last_message_is_mine,
+    coalesce(u.unread_count, 0) as unread_count,
+    (ca.archived_at is not null) as is_archived,
+    (mine.kind = 'request' and mine.request_status = 'pending'
+      and mine.requested_by <> (select uid from me)) as is_request,
+    coalesce(
+      case
+        when coalesce(pref.show_online_status, true) = false then false
+        when p.last_seen_at is not null
+          then p.last_seen_at >= now() - interval '2 minutes'
+        else coalesce(p.is_online, false)
+      end,
+      false
+    ) as is_online,
+    public.connection_relationship_state(mine.kind, mine.request_status, mine.is_blocked)
+      as relationship_state,
+    mine.request_status,
+    coalesce(mine.requested_by = (select uid from me), false) as requested_by_me
+  from mine
+  left join last_message lm on lm.match_key = mine.id::text
+  left join counts c on c.match_id = mine.id
+  left join unread u on u.match_id = mine.id
+  left join public.conversation_archive ca
+    on ca.match_id = mine.id and ca.user_id = (select uid from me)
+  left join public.profiles p on p.id = mine.other_user_id
+  left join public.user_preferences pref on pref.user_id = mine.other_user_id
+  order by coalesce(lm.created_at, mine.match_created_at) desc, mine.id;
+$$;
+
+revoke all on function public.conversation_summaries() from public, anon;
+grant execute on function public.conversation_summaries() to authenticated;
+
+comment on function public.conversation_summaries() is
+  'Inbox rows for the signed-in member with relationship state, request direction, last visible message, unread count, archive state and privacy-aware online state.';
+
+-- ---------------------------------------------------------------------------
+-- 11. Repair existing counters after the kind column arrives
+-- ---------------------------------------------------------------------------
+update public.profiles p
+   set matches_count = (
+     select count(*)::int
+     from public.matches m
+     where m.kind = 'match'
+       and (m.user_a = p.id or m.user_b = p.id)
+   );
+
+
+-- ############################################################################
+-- # 20261015550000_m39_explore_metadata.sql
+-- ############################################################################
+
+-- =============================================================================
+-- M39 · Explore More metadata hardening
+-- =============================================================================
+-- WHY
+--   M36 already ships the seven categories and derives every feed from live
+--   profile signals. Two metadata gaps remained:
+--
+--   * the three Dating Goals were hardcoded in SQL `CASE`/`VALUES` expressions,
+--     so an operator could not inspect, reorder, rename or disable them without
+--     editing a function;
+--   * category metadata had no update timestamp and no admin-managed write path.
+--     It was readable but immutable through the product.
+--
+--   This migration normalises the three goals into a child table, keeps the
+--   stored `profiles.intention` values (`friendship` / `dating` / `both`)
+--   unchanged, and makes the existing feed/count functions read that table.
+--
+-- SECURITY
+--   Metadata is public to signed-in members, but disabled rows are visible only
+--   to administrators with `settings.manage`. There is no client DML grant:
+--   writes go through two SECURITY DEFINER RPCs that re-check the permission.
+--   Profile intention writes remain owner-only under the existing profiles RLS.
+--
+-- NOT CHANGED
+--   No profile rows, swipes, likes, matches, blocks or existing goals are
+--   rewritten. The category IDs and three goal keys stay stable.
+--
+-- SAFE TO RE-RUN: additive columns/tables, guarded indexes/constraints,
+-- replaceable functions, and idempotent goal seeds.
+-- DEPENDS ON: M7 (intention set), M32 (permission map), M36 (categories/feed).
+-- =============================================================================
+
+-- ---------------------------------------------------------------------------
+-- 1. Category metadata timestamps and integrity
+-- ---------------------------------------------------------------------------
+alter table public.explore_categories add column if not exists updated_at timestamptz;
+
+update public.explore_categories
+   set updated_at = created_at
+ where updated_at is null;
+
+alter table public.explore_categories alter column updated_at set default now();
+alter table public.explore_categories alter column updated_at set not null;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'explore_categories_no_serious_top_level'
+  ) then
+    alter table public.explore_categories
+      add constraint explore_categories_no_serious_top_level
+      check (lower(btrim(title)) <> 'serious relationship');
+  end if;
+end $$;
+
+create unique index if not exists explore_categories_title_key
+  on public.explore_categories (lower(title));
+
+-- ---------------------------------------------------------------------------
+-- 2. Normalised Dating Goals child table
+-- ---------------------------------------------------------------------------
+create table if not exists public.explore_dating_goals (
+  category_id    text not null default 'dating-goals'
+                 references public.explore_categories(id)
+                 on update cascade on delete cascade,
+  goal_key       text not null
+                 check (goal_key in ('friendship', 'serious', 'casual')),
+  title          text not null
+                 check (char_length(btrim(title)) between 1 and 60),
+  description    text not null default ''
+                 check (char_length(description) <= 240),
+  intention_value text not null
+                 check (intention_value in ('friendship', 'dating', 'both')),
+  sort_order     integer not null,
+  is_active      boolean not null default true,
+  created_at     timestamptz not null default now(),
+  updated_at     timestamptz not null default now(),
+
+  primary key (category_id, goal_key),
+  constraint explore_dating_goals_parent_check
+    check (category_id = 'dating-goals'),
+  unique (category_id, intention_value)
+);
+
+alter table public.explore_dating_goals
+  add column if not exists category_id text not null default 'dating-goals';
+alter table public.explore_dating_goals
+  add column if not exists goal_key text;
+alter table public.explore_dating_goals
+  add column if not exists title text;
+alter table public.explore_dating_goals
+  add column if not exists description text not null default '';
+alter table public.explore_dating_goals
+  add column if not exists intention_value text;
+alter table public.explore_dating_goals
+  add column if not exists sort_order integer;
+alter table public.explore_dating_goals
+  add column if not exists is_active boolean not null default true;
+alter table public.explore_dating_goals
+  add column if not exists created_at timestamptz not null default now();
+alter table public.explore_dating_goals
+  add column if not exists updated_at timestamptz not null default now();
+
+create index if not exists explore_dating_goals_order_idx
+  on public.explore_dating_goals (category_id, sort_order);
+
+create unique index if not exists explore_dating_goals_title_key
+  on public.explore_dating_goals (category_id, lower(title));
+
+alter table public.explore_dating_goals enable row level security;
+
+drop policy if exists "explore_dating_goals_select_authenticated"
+  on public.explore_dating_goals;
+create policy "explore_dating_goals_select_authenticated"
+  on public.explore_dating_goals for select to authenticated
+  using (is_active or public.has_permission('settings.manage'));
+
+revoke all on public.explore_dating_goals from anon, authenticated;
+grant select on public.explore_dating_goals to authenticated;
+
+comment on table public.explore_dating_goals is
+  'Stable goal keys under the Dating Goals category. intention_value maps each goal to the existing profiles.intention value; no profile data is stored here.';
+
+-- ---------------------------------------------------------------------------
+-- 3. Admin-only metadata reads and writes
+-- ---------------------------------------------------------------------------
+drop policy if exists "explore_categories_select_authenticated" on public.explore_categories;
+create policy "explore_categories_select_authenticated"
+  on public.explore_categories for select to authenticated
+  using (is_active or public.has_permission('settings.manage'));
+
+create or replace function public.touch_explore_metadata_updated_at()
+returns trigger
+language plpgsql
+set search_path = public, pg_temp
+as $$
+begin
+  new.updated_at := now();
+  return new;
+end;
+$$;
+
+revoke all on function public.touch_explore_metadata_updated_at() from public, anon, authenticated;
+
+drop trigger if exists explore_categories_touch_updated_at_trg on public.explore_categories;
+create trigger explore_categories_touch_updated_at_trg
+  before update on public.explore_categories
+  for each row execute function public.touch_explore_metadata_updated_at();
+
+drop trigger if exists explore_dating_goals_touch_updated_at_trg on public.explore_dating_goals;
+create trigger explore_dating_goals_touch_updated_at_trg
+  before update on public.explore_dating_goals
+  for each row execute function public.touch_explore_metadata_updated_at();
+
+create or replace function public.admin_upsert_explore_category(
+  p_id text,
+  p_title text,
+  p_description text,
+  p_interest_ids text[] default '{}',
+  p_hobby_labels text[] default '{}',
+  p_pet_labels text[] default '{}',
+  p_intention_values text[] default '{}',
+  p_sort_order integer default 0,
+  p_is_active boolean default true
+)
+returns void
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  if not public.has_permission('settings.manage') then
+    raise exception 'Settings access required' using errcode = '42501';
+  end if;
+
+  insert into public.explore_categories (
+    id, title, description, interest_ids, hobby_labels, pet_labels,
+    intention_values, sort_order, is_active
+  )
+  values (
+    p_id, btrim(p_title), btrim(p_description),
+    coalesce(p_interest_ids, '{}'), coalesce(p_hobby_labels, '{}'),
+    coalesce(p_pet_labels, '{}'), coalesce(p_intention_values, '{}'),
+    coalesce(p_sort_order, 0), coalesce(p_is_active, true)
+  )
+  on conflict (id) do update set
+    title = excluded.title,
+    description = excluded.description,
+    interest_ids = excluded.interest_ids,
+    hobby_labels = excluded.hobby_labels,
+    pet_labels = excluded.pet_labels,
+    intention_values = excluded.intention_values,
+    sort_order = excluded.sort_order,
+    is_active = excluded.is_active,
+    updated_at = now();
+end;
+$$;
+
+revoke all on function public.admin_upsert_explore_category(
+  text, text, text, text[], text[], text[], text[], integer, boolean
+) from public, anon;
+grant execute on function public.admin_upsert_explore_category(
+  text, text, text, text[], text[], text[], text[], integer, boolean
+) to authenticated;
+
+create or replace function public.admin_upsert_explore_goal(
+  p_goal_key text,
+  p_title text,
+  p_description text,
+  p_intention_value text,
+  p_sort_order integer default 0,
+  p_is_active boolean default true
+)
+returns void
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  if not public.has_permission('settings.manage') then
+    raise exception 'Settings access required' using errcode = '42501';
+  end if;
+
+  insert into public.explore_dating_goals (
+    category_id, goal_key, title, description, intention_value,
+    sort_order, is_active
+  )
+  values (
+    'dating-goals', p_goal_key, btrim(p_title), btrim(p_description),
+    p_intention_value, coalesce(p_sort_order, 0), coalesce(p_is_active, true)
+  )
+  on conflict (category_id, goal_key) do update set
+    title = excluded.title,
+    description = excluded.description,
+    intention_value = excluded.intention_value,
+    sort_order = excluded.sort_order,
+    is_active = excluded.is_active,
+    updated_at = now();
+end;
+$$;
+
+revoke all on function public.admin_upsert_explore_goal(
+  text, text, text, text, integer, boolean
+) from public, anon;
+grant execute on function public.admin_upsert_explore_goal(
+  text, text, text, text, integer, boolean
+) to authenticated;
+
+comment on function public.admin_upsert_explore_category(
+  text, text, text, text[], text[], text[], text[], integer, boolean
+) is
+  'Admin-only idempotent category metadata upsert. Disabling is preferred over deleting.';
+comment on function public.admin_upsert_explore_goal(
+  text, text, text, text, integer, boolean
+) is
+  'Admin-only idempotent Dating Goals metadata upsert. goal_key is stable; intention_value maps to profiles.intention.';
+
+-- ---------------------------------------------------------------------------
+-- 4. Seed the three goals without overwriting an existing disabled state
+-- ---------------------------------------------------------------------------
+insert into public.explore_dating_goals
+  (category_id, goal_key, title, description, intention_value, sort_order)
+values
+  ('dating-goals', 'friendship', 'Friendship and Networking',
+   'People who explicitly want friendship first.', 'friendship', 10),
+  ('dating-goals', 'serious', 'Serious Relationship',
+   'People who explicitly want a committed relationship.', 'dating', 20),
+  ('dating-goals', 'casual', 'Casual & Open to Options',
+   'People who are open to whatever develops naturally.', 'both', 30)
+on conflict (category_id, goal_key) do update set
+  title = excluded.title,
+  description = excluded.description,
+  intention_value = excluded.intention_value,
+  sort_order = excluded.sort_order,
+  updated_at = now();
+
+-- ---------------------------------------------------------------------------
+-- 5. Read the goal mapping from the table
+-- ---------------------------------------------------------------------------
+create or replace function public.explore_category_accepts(
+  p_category_id text,
+  p_interests text[],
+  p_hobbies text[],
+  p_pets text[],
+  p_intention text
+)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+  select case
+    when d.id = 'dating-goals' then
+      exists (
+        select 1
+        from public.explore_dating_goals g
+        where g.category_id = d.id
+          and g.is_active
+          and g.intention_value = p_intention
+      )
+    else
+      (cardinality(d.interest_ids) > 0 and coalesce(p_interests, '{}') && d.interest_ids)
+      or (
+        cardinality(d.hobby_labels) > 0
+        and exists (
+          select 1 from unnest(coalesce(p_hobbies, '{}')) h
+          where lower(h) = any (d.hobby_labels)
+        )
+      )
+      or (
+        cardinality(d.pet_labels) > 0
+        and exists (
+          select 1 from unnest(coalesce(p_pets, '{}')) pet
+          where lower(pet) = any (d.pet_labels)
+        )
+      )
+      or (
+        cardinality(d.intention_values) > 0
+        and p_intention = any (d.intention_values)
+      )
+  end
+  from public.explore_categories d
+  where d.id = p_category_id and d.is_active;
+$$;
+
+revoke all on function public.explore_category_accepts(text, text[], text[], text[], text)
+  from public, anon, authenticated;
+
+drop function if exists public.explore_more_counts(integer, integer);
+
+create or replace function public.explore_more_counts(
+  p_min_age integer default 18,
+  p_max_age integer default 99
+)
+returns table (
+  category_id text,
+  goal_key text,
+  profile_count integer
+)
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+  with eligible as materialized (
+    select * from public.explore_eligible_profiles(p_min_age, p_max_age)
+  )
+  select d.id as category_id, null::text as goal_key, count(e.id)::int as profile_count
+  from public.explore_categories d
+  left join eligible e
+    on public.explore_category_accepts(
+         d.id, e.interests, e.hobbies, e.pets, e.intention
+       )
+  where d.is_active
+  group by d.id, d.sort_order
+  union all
+  select g.category_id, g.goal_key, count(e.id)::int
+  from public.explore_dating_goals g
+  left join eligible e on e.intention = g.intention_value
+  where g.category_id = 'dating-goals' and g.is_active
+  group by g.category_id, g.goal_key, g.sort_order
+  order by 1, 2 nulls first;
+$$;
+
+revoke all on function public.explore_more_counts(integer, integer) from public, anon;
+grant execute on function public.explore_more_counts(integer, integer) to authenticated;
+
+comment on function public.explore_more_counts(integer, integer) is
+  'Counts for active Explore categories and active Dating Goals, computed from the exact eligible set the feeds use.';
+
+drop function if exists public.explore_more_feed(text, text, text, integer, integer, integer, uuid[]);
+
+create or replace function public.explore_more_feed(
+  p_category_id text,
+  p_goal text default null,
+  p_cursor text default null,
+  p_limit integer default 20,
+  p_min_age integer default 18,
+  p_max_age integer default 99,
+  p_exclude_ids uuid[] default '{}'
+)
+returns table (
+  id uuid,
+  first_name text,
+  last_name text,
+  has_last_name boolean,
+  username text,
+  display_name text,
+  age integer,
+  gender text,
+  city text,
+  country text,
+  avatar_url text,
+  photos text[],
+  bio text,
+  intention text,
+  looking_for text[],
+  hobbies text[],
+  pets text[],
+  mbti text,
+  interests text[],
+  prompts jsonb,
+  is_online boolean,
+  is_verified boolean,
+  match_score integer,
+  category_hits integer
+)
+language plpgsql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  viewer uuid := auth.uid();
+  category_exists boolean;
+  mapped_goal text;
+  cursor_score integer;
+  cursor_id uuid;
+begin
+  if viewer is null then
+    raise exception 'Authentication is required' using errcode = '28000';
+  end if;
+
+  select exists (
+    select 1 from public.explore_categories c
+    where c.id = p_category_id and c.is_active
+  ) into category_exists;
+
+  if not category_exists then
+    raise exception 'Unknown Explore category' using errcode = '22023';
+  end if;
+
+  if p_category_id = 'dating-goals' then
+    select g.intention_value into mapped_goal
+    from public.explore_dating_goals g
+    where g.category_id = 'dating-goals'
+      and g.goal_key = p_goal
+      and g.is_active;
+
+    if mapped_goal is null then
+      raise exception 'A valid dating goal is required' using errcode = '22023';
+    end if;
+  end if;
+
+  if p_cursor is not null and btrim(p_cursor) <> '' then
+    if p_cursor !~ '^[0-9]{1,9}:[0-9a-fA-F-]{36}$' then
+      raise exception 'Invalid pagination cursor' using errcode = '22023';
+    end if;
+    cursor_score := split_part(p_cursor, ':', 1)::integer;
+    cursor_id := split_part(p_cursor, ':', 2)::uuid;
+  end if;
+
+  return query
+  with eligible as materialized (
+    select * from public.explore_eligible_profiles(p_min_age, p_max_age)
+  ),
+  scored as (
+    select
+      e.*,
+      public.explore_category_hits(
+        p_category_id, e.interests, e.hobbies, e.pets
+      ) as hits,
+      (
+        public.explore_category_hits(
+          p_category_id, e.interests, e.hobbies, e.pets
+        ) * 8
+        + case
+            when p_category_id = 'dating-goals' then 20
+            when e.viewer_intention is null then 0
+            when e.intention = e.viewer_intention then 10
+            when e.intention = 'both' or e.viewer_intention = 'both' then 5
+            else 0
+          end
+        + case when e.candidate_accepts_viewer then 6 else 0 end
+        + case when e.is_online then 4 else 0 end
+        + case
+            when e.avatar_url is not null then 2 else 0
+          end
+        + case when coalesce(e.bio, '') <> '' then 2 else 0 end
+        + case when coalesce(array_length(e.photos, 1), 0) > 0 then 2 else 0 end
+        + case when coalesce(array_length(e.interests, 1), 0) > 0 then 2 else 0 end
+        + case when e.mbti is not null then 1 else 0 end
+        + case when e.prompts is not null and e.prompts <> '{}'::jsonb then 1 else 0 end
+        + case when e.city is not null then 1 else 0 end
+        + case when e.is_verified then 1 else 0 end
+      )::integer as rank_score
+    from eligible e
+    where (
+      p_category_id <> 'dating-goals'
+      and public.explore_category_accepts(
+        p_category_id, e.interests, e.hobbies, e.pets, e.intention
+      )
+    ) or (
+      p_category_id = 'dating-goals'
+      and e.intention = mapped_goal
+    )
+  )
+  select
+    s.id, s.first_name, s.last_name, s.has_last_name, s.username,
+    s.display_name, s.age, s.gender, s.city, s.country,
+    s.avatar_url, s.photos, s.bio, s.intention, s.looking_for,
+    s.hobbies, s.pets, s.mbti, s.interests, s.prompts,
+    s.is_online, s.is_verified, s.rank_score, s.hits
+  from scored s
+  where not (s.id = any (coalesce(p_exclude_ids, '{}'::uuid[])))
+    and (
+      cursor_score is null
+      or s.rank_score < cursor_score
+      or (s.rank_score = cursor_score and s.id > cursor_id)
+    )
+  order by s.rank_score desc, s.id asc
+  limit greatest(1, least(coalesce(p_limit, 20), 50));
+end;
+$$;
+
+revoke all on function public.explore_more_feed(text, text, text, integer, integer, integer, uuid[])
+  from public, anon;
+grant execute on function public.explore_more_feed(text, text, text, integer, integer, integer, uuid[])
+  to authenticated;
+
+comment on function public.explore_more_feed(text, text, text, integer, integer, integer, uuid[]) is
+  'One ranked Explore feed. Reads the active Dating Goals mapping, the shared eligible set, and returns public profile fields only.';
+
+-- ---------------------------------------------------------------------------
+-- 6. Posture report
+-- ---------------------------------------------------------------------------
+select
+  (select count(*)::int from public.explore_categories where is_active) as active_categories,
+  (select count(*)::int from public.explore_dating_goals where is_active) as active_goals;
+
+

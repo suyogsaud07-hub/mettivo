@@ -144,36 +144,3 @@ export async function fetchMyFollowingIds(): Promise<Set<string>> {
     return new Set();
   }
 }
-
-/**
- * The match id shared with `targetUserId`, or `null` when there is none.
- *
- * A match is a reciprocal cross-gender follow (M23) and it is the only thing
- * that unlocks messaging. Likes never create matches. `matches` is RLS-scoped
- * to its participants, so a failure simply means "not connected"; the public
- * profile uses `null` to offer a follow instead of a chat.
- */
-export async function findMatchId(targetUserId: string): Promise<string | null> {
-  try {
-    const me = await requireUserId();
-    if (me === targetUserId) return null;
-
-    const { data, error } = await supabase
-      .from('matches')
-      .select('id')
-      .or(
-        `and(user_a.eq.${me},user_b.eq.${targetUserId}),and(user_a.eq.${targetUserId},user_b.eq.${me})`
-      )
-      .maybeSingle();
-
-    if (error) {
-      console.error('[follows] match lookup failed:', error.message);
-      return null;
-    }
-
-    return data?.id ?? null;
-  } catch (err) {
-    console.error('[follows] match lookup failed:', err);
-    return null;
-  }
-}

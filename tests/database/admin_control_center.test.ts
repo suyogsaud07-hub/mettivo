@@ -317,4 +317,93 @@ describe('M32 — administrative control center', () => {
     expect(secret.configured).toBe(true);
     expect(secret.secret).toBeUndefined();
   });
+
+  it('blocks direct reads of admin settings and payment payloads', async () => {
+    expect(
+      await isRejected(db, ADMIN, 'select value from public.admin_settings')
+    ).toBe(true);
+
+    expect(
+      await isRejected(db, ADMIN, 'select payload from public.payment_events')
+    ).toBe(true);
+
+    // Finance may read reconciliation columns, but never the raw payload.
+    expect(
+      await scalarAs(
+        db,
+        USER_B,
+        `select count(event_id)::int as n from public.payment_events`
+      )
+    ).toBeGreaterThan(0);
+
+    expect(
+      await isRejected(db, USER_B, 'select payload from public.payment_events')
+    ).toBe(true);
+  });
+
+  it('does not expose the audit trail directly to moderators or support', async () => {
+    expect(
+      await scalarAs(db, ADMIN, 'select count(*)::int as n from public.admin_audit_log')
+    ).toBeGreaterThan(0);
+
+    expect(
+      await scalarAs(db, MODERATOR, 'select count(*)::int as n from public.admin_audit_log')
+    ).toBe(0);
+
+    expect(
+      await scalarAs(db, SUPPORT, 'select count(*)::int as n from public.admin_audit_log')
+    ).toBe(0);
+  });
+
+  it('limits direct role reads to the caller or a super admin', async () => {
+    expect(
+      await scalarAs(db, SUPPORT, 'select count(*)::int as n from public.user_roles')
+    ).toBe(1);
+
+    expect(
+      await scalarAs(db, MODERATOR, 'select count(*)::int as n from public.user_roles')
+    ).toBe(1);
+
+    expect(
+      await scalarAs(db, ADMIN, 'select count(*)::int as n from public.user_roles')
+    ).toBeGreaterThan(1);
+  });
+
+  it('stops a moderator from acting on another staff account', async () => {
+    await expect(
+      asUser(db, MODERATOR, () =>
+        db.query(`select public.admin_set_user_status('${SUPPORT}'::uuid, 'suspended', 'x')`)
+      )
+    ).rejects.toThrow(/staff account/i);
+
+    await expect(
+      asUser(db, MODERATOR, () =>
+        db.query(`select public.admin_warn_user('${SUPPORT}'::uuid, 'x')`)
+      )
+    ).rejects.toThrow(/staff account/i);
+
+    await expect(
+      asUser(db, MODERATOR, () =>
+        db.query(`select public.admin_suspend_user('${SUPPORT}'::uuid, 'x')`)
+      )
+    ).rejects.toThrow(/staff account/i);
+
+    await expect(
+      asUser(db, MODERATOR, () =>
+        db.query(
+          `select public.admin_apply_moderation_action('${SUPPORT}'::uuid, 'spam', 'chat', 'x')`
+        )
+      )
+    ).rejects.toThrow(/staff account/i);
+  });
+
+  it('does not let report thresholds enforce against staff', async () => {
+    const result = await db.query<{ outcome: Record<string, unknown> }>(
+      `select public.evaluate_report_thresholds('${ADMIN}'::uuid) as outcome`
+    );
+    expect(result.rows[0]?.outcome).toMatchObject({
+      applied: false,
+      reason: 'protected_staff',
+    });
+  });
 });

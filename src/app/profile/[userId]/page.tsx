@@ -4,7 +4,8 @@ import { useEffect, useRef, useState, use } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { fetchUserMoments, likeMoment, unlikeMoment } from '@/lib/moments';
-import { isFollowing, findMatchId } from '@/lib/follows';
+import { isFollowing } from '@/lib/follows';
+import { ConversationError, startConversation } from '@/lib/conversations';
 import { isProfileLiked } from '@/lib/likes';
 import { fetchProfileViewCount, recordProfileView } from '@/lib/profile-views';
 import { fetchPublicProfile, PublicProfileError, type PublicProfile } from '@/lib/public-profiles';
@@ -42,7 +43,7 @@ export default function PublicProfilePage({ params }: { params: Promise<{ userId
 
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [following, setFollowing] = useState(false);
-  const [matchId, setMatchId] = useState<string | null>(null);
+  const [startingConversation, setStartingConversation] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<ProfileTab>('feed');
 
@@ -76,7 +77,7 @@ export default function PublicProfilePage({ params }: { params: Promise<{ userId
       setNotFound(false);
       setProfile(null);
       setFollowing(false);
-      setMatchId(null);
+      setStartingConversation(false);
       setNotice(null);
       setLiked(false);
       setLikeCount(0);
@@ -112,11 +113,6 @@ export default function PublicProfilePage({ params }: { params: Promise<{ userId
         // Load the caller's existing like so the button renders "Liked" on entry.
         const likedState = isSelf ? false : await isProfileLiked(userId);
         if (!cancelled) setLiked(likedState);
-
-        // Messaging is unlocked only by a match (reciprocal cross-gender
-        // follow, or a mutual like). Look it up so the profile can offer a chat.
-        const connectionId = isSelf ? null : await findMatchId(userId);
-        if (!cancelled) setMatchId(connectionId);
       } catch (err) {
         console.error('[public-profile] load failed:', err);
         if (!cancelled) {
@@ -265,12 +261,23 @@ export default function PublicProfilePage({ params }: { params: Promise<{ userId
     setLikeCount((current) => Math.max(0, current + (nowLiked ? 1 : -1)));
   };
 
-  const handleSendText = () => {
-    if (matchId) {
-      router.push(`/chat/${matchId}`);
-      return;
+  const handleSendText = async () => {
+    if (startingConversation) return;
+    setStartingConversation(true);
+    setNotice(null);
+
+    try {
+      const connection = await startConversation(userId);
+      router.push(`/chat/${connection.conversationId}`);
+    } catch (err) {
+      setNotice(
+        err instanceof ConversationError
+          ? err.message
+          : 'The conversation could not be opened. Please try again.'
+      );
+    } finally {
+      setStartingConversation(false);
     }
-    setNotice('You can only message once you match — follow each other to connect.');
   };
 
   if (loading) {
@@ -390,8 +397,16 @@ export default function PublicProfilePage({ params }: { params: Promise<{ userId
                 onLikedChange={handleLikedChange}
                 size="md"
               />
-              <button type="button" onClick={handleSendText} style={styles.sendTextButton}>
-                Message
+              <button
+                type="button"
+                onClick={() => void handleSendText()}
+                disabled={startingConversation}
+                style={{
+                  ...styles.sendTextButton,
+                  opacity: startingConversation ? 0.6 : 1,
+                }}
+              >
+                {startingConversation ? 'Opening…' : 'Message'}
               </button>
             </>
           ) : null
