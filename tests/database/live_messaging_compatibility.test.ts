@@ -5,6 +5,7 @@ import {
   USER_B,
   USER_C,
   USER_D,
+  anonReadCount,
   applyMigrations,
   asUser,
   createLiveLikeDb,
@@ -63,6 +64,7 @@ const state = async (db: PGlite, userId: string, matchId: string): Promise<SendS
 describe('M40 — live-shaped matches and explicit message requests', () => {
   let db: PGlite;
   let conversationId: string;
+  let bToCRequestId: string;
 
   beforeAll(async () => {
     db = await createLiveLikeDb();
@@ -280,8 +282,162 @@ describe('M40 — live-shaped matches and explicit message requests', () => {
       )
     ).toBe(1);
   });
+
+  it('gives an anonymous caller zero inbox rows', async () => {
+    expect(
+      await anonReadCount(
+        db,
+        `select count(*)::int as n from public.conversation_summaries()`
+      )
+    ).toBe(0);
+  });
+
+  it('does not let the sender accept their own request', async () => {
+    const result = await start(db, USER_B, USER_C);
+    bToCRequestId = result.conversation_id;
+
+    expect(result.relationship_state).toBe('MESSAGE_REQUEST_PENDING');
+    expect(result.requested_by_me).toBe(true);
+    expect(
+      await isRejected(
+        db,
+        USER_B,
+        `select public.respond_to_conversation_request('${bToCRequestId}'::uuid, true)`
+      )
+    ).toBe(true);
+
+    expect(await state(db, USER_B, bToCRequestId)).toMatchObject({
+      requested_by_me: true,
+      can_respond: false,
+      send_limit: 3,
+    });
+  });
+
+  it('allows two-way messaging without a cap after acceptance', async () => {
+    const accepted = await queryAs<{ result: { request_status: string } }>(
+      db,
+      USER_C,
+      `select public.respond_to_conversation_request('${bToCRequestId}'::uuid, true) as result`
+    );
+    expect(accepted[0].result.request_status).toBe('accepted');
+
+    for (let i = 0; i < 4; i += 1) {
+      await send(db, USER_B, bToCRequestId, `sender ${i}`);
+    }
+    await send(db, USER_C, bToCRequestId, 'recipient one');
+    await send(db, USER_C, bToCRequestId, 'recipient two');
+
+    expect(await state(db, USER_B, bToCRequestId)).toMatchObject({
+      relationship_state: 'MESSAGE_REQUEST_ACCEPTED',
+      request_status: 'accepted',
+      sent_count: 4,
+      can_send: true,
+    });
+    expect(await state(db, USER_C, bToCRequestId)).toMatchObject({
+      relationship_state: 'MESSAGE_REQUEST_ACCEPTED',
+      request_status: 'accepted',
+      sent_count: 2,
+      can_send: true,
+    });
+  });
+
+  it('preserves history when a request is rejected', async () => {
+    const result = await start(db, USER_C, USER_D);
+    await send(db, USER_C, result.conversation_id, 'keep this history');
+
+    const rejected = await queryAs<{ result: { request_status: string } }>(
+      db,
+      USER_D,
+      `select public.respond_to_conversation_request('${result.conversation_id}'::uuid, false) as result`
+    );
+    expect(rejected[0].result.request_status).toBe('rejected');
+
+    expect(
+      await scalarAs(
+        db,
+        USER_C,
+        `select count(*)::int as n from public.messages
+          where match_id = '${result.conversation_id}'::uuid
+            and content = 'keep this history'`
+      )
+    ).toBe(1);
+    expect(
+      await isRejected(
+        db,
+        USER_C,
+        `insert into public.messages (match_id, sender_id, content)
+         values ('${result.conversation_id}','${USER_C}','after rejection')`
+      )
+    ).toBe(true);
+  });
+
+  it('blocks message delivery in both directions without deleting history', async () => {
+    const result = await start(db, USER_B, USER_D);
+    await send(db, USER_B, result.conversation_id, 'before block');
+
+    // Insert the block directly so the match survives long enough to exercise
+    // the delivery trigger; `block_member` closes a conversation with history
+    // and is covered by the blocking and M41 suites.
+    await seed(
+      db,
+      `insert into public.blocked_users (blocker_id, blocked_user_id)
+       values ('${USER_D}','${USER_B}')`
+    );
+
+    expect(
+      await isRejected(
+        db,
+        USER_B,
+        `insert into public.messages (match_id, sender_id, content)
+         values ('${result.conversation_id}','${USER_B}','blocked sender')`
+      )
+    ).toBe(true);
+    expect(
+      await isRejected(
+        db,
+        USER_D,
+        `insert into public.messages (match_id, sender_id, content)
+         values ('${result.conversation_id}','${USER_D}','blocked recipient')`
+      )
+    ).toBe(true);
+    expect(
+      await scalarAs(
+        db,
+        USER_B,
+        `select count(*)::int as n from public.messages
+          where match_id = '${result.conversation_id}'::uuid`
+      )
+    ).toBe(1);
+  });
 });
 
+
+describe('M38 preflight', () => {
+  const M38 = '20261015540000_m38_relationship_messaging.sql';
+
+  it('drops the live uuid-returning function before creating the jsonb version', async () => {
+    const db = await createLiveLikeDb();
+    await applyMigrations(
+      db,
+      migrationFiles().filter((file) => file < M38)
+    );
+    await db.exec(`
+      create function public.start_conversation(p_target uuid)
+      returns uuid
+      language sql
+      as $$ select gen_random_uuid() $$;
+    `);
+
+    await expect(applyMigrations(db, [M38])).resolves.toBeUndefined();
+
+    const result = await db.query<{ result: string }>(`
+      select pg_get_function_result(
+        'public.start_conversation(uuid)'::regprocedure
+      ) as result
+    `);
+    expect(result.rows[0].result).toBe('jsonb');
+  });
+});
 
 describe('M40 preflight', () => {
   const M40 = '20261015560000_m40_live_messaging_compatibility.sql';
@@ -321,5 +477,98 @@ describe('M40 preflight', () => {
     await expect(applyMigrations(db, [M40])).rejects.toThrow(
       'duplicate/reverse match rows exist'
     );
+  });
+
+  it('keeps existing messages when classifying a legacy conversation', async () => {
+    const db = await applyThroughM39();
+
+    const match = await db.query<{ id: string }>(
+      `insert into public.matches (user_a_id, user_b_id, user_a, user_b)
+       values ('${USER_A}','${USER_B}','${USER_A}','${USER_B}')
+       returning id`
+    );
+    const matchId = match.rows[0].id;
+
+    await seed(
+      db,
+      `insert into public.messages (match_id, sender_id, content)
+       values ('${matchId}','${USER_A}','existing history')`
+    );
+
+    await applyMigrations(db, [M40]);
+
+    const rows = await queryAs<{ content: string; kind: string }>(
+      db,
+      USER_A,
+      `select msg.content, m.kind
+         from public.messages msg
+         join public.matches m on m.id::text = msg.match_id::text
+        where msg.match_id = '${matchId}'::uuid`
+    );
+    expect(rows).toEqual([{ content: 'existing history', kind: 'request' }]);
+  });
+});
+
+describe('M40 legacy matches.status constraint', () => {
+  const M40 = '20261015560000_m40_live_messaging_compatibility.sql';
+
+  const applyThroughM39 = async () => {
+    const db = await createLiveLikeDb();
+    await applyMigrations(
+      db,
+      migrationFiles().filter((file) => file < M40)
+    );
+    return db;
+  };
+
+  it('replaces the legacy check before closing a conversation', async () => {
+    const db = await applyThroughM39();
+
+    await seed(
+      db,
+      `insert into public.matches (user_a_id, user_b_id, user_a, user_b, status)
+       values
+         ('${USER_A}','${USER_B}','${USER_A}','${USER_B}','pending'),
+         ('${USER_A}','${USER_C}','${USER_A}','${USER_C}','accepted'),
+         ('${USER_A}','${USER_D}','${USER_A}','${USER_D}','blocked')`
+    );
+
+    await expect(
+      db.exec(
+        `update public.matches set status = 'closed'
+          where user_a_id = '${USER_A}' and user_b_id = '${USER_B}'`
+      )
+    ).rejects.toThrow(/matches_status_check/);
+
+    await applyMigrations(db, [M40]);
+
+    const preserved = await db.query<{ status: string }>(`
+      select status
+      from public.matches
+      where user_a_id = '${USER_A}'
+        and user_b_id in ('${USER_B}','${USER_C}','${USER_D}')
+      order by user_b_id
+    `);
+    expect(preserved.rows.map((row) => row.status)).toEqual([
+      'pending',
+      'accepted',
+      'blocked',
+    ]);
+
+    await expect(
+      db.exec(
+        `update public.matches set status = 'closed'
+          where user_a_id = '${USER_A}' and user_b_id = '${USER_B}'`
+      )
+    ).resolves.toBeDefined();
+
+    const constraint = await db.query<{ definition: string }>(`
+      select pg_get_constraintdef(oid) as definition
+      from pg_constraint
+      where conrelid = 'public.matches'::regclass
+        and conname = 'matches_status_check'
+    `);
+    expect(constraint.rows).toHaveLength(1);
+    expect(constraint.rows[0].definition).toContain("'closed'");
   });
 });

@@ -6,9 +6,10 @@ import { supabase } from '@/lib/supabase';
  * Every operation here is a single SECURITY DEFINER call in PostgreSQL
  * (`supabase/migrations/20261015210000_m12_blocking_enforcement.sql`). The
  * browser never writes `blocked_users` directly, because the interesting part of
- * a block — severing the match and both like decisions — has to happen in the
- * same transaction. A client-side two-step block could half-apply and leave a
- * live conversation with someone the member just blocked.
+ * a block — closing the conversation, severing follows and clearing both like
+ * decisions — has to happen in the same transaction. A client-side two-step
+ * block could half-apply and leave a live conversation with someone the member
+ * just blocked.
  */
 
 /** Raised for an expected failure while blocking, unblocking or unmatching. */
@@ -84,8 +85,8 @@ async function requireUserId(): Promise<string> {
 }
 
 /**
- * Blocks a member: records the block, removes the match and clears both like
- * decisions, atomically.
+ * Blocks a member atomically: records the block, severs follows and likes, and
+ * either closes a conversation with history or removes an empty one.
  */
 export async function blockMember(targetUserId: string): Promise<BlockResult> {
   const target = requireTarget(targetUserId);

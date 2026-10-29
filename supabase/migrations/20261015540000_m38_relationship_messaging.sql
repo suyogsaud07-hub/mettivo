@@ -334,7 +334,8 @@ create trigger notify_on_match_trg
 -- ---------------------------------------------------------------------------
 -- 6. Start a conversation: match, mutual-follow chat, or message request
 -- ---------------------------------------------------------------------------
-create or replace function public.start_conversation(p_target uuid)
+drop function if exists public.start_conversation(uuid);
+create function public.start_conversation(p_target uuid)
 returns jsonb
 language plpgsql
 security definer

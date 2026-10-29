@@ -28,6 +28,11 @@
 alter table public.matches add column if not exists user_a_id uuid;
 alter table public.matches add column if not exists user_b_id uuid;
 alter table public.matches add column if not exists status text not null default 'pending';
+
+alter table public.matches drop constraint if exists matches_status_check;
+alter table public.matches add constraint matches_status_check
+  check (status in ('pending', 'accepted', 'blocked', 'closed'));
+
 alter table public.matches add column if not exists kind text;
 alter table public.matches add column if not exists request_status text;
 alter table public.matches add column if not exists requested_by uuid
@@ -704,7 +709,10 @@ begin
 
   update public.matches
      set request_status = next_status,
-         status = next_status,
+         status = case
+           when next_status = 'accepted' then 'accepted'
+           else 'closed'
+         end,
          responded_at = now(),
          updated_at = now()
    where id = conn.id;

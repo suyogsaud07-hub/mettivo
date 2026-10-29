@@ -148,7 +148,9 @@ export async function createLiveLikeDb(): Promise<PGlite> {
       status     text not null default 'pending',
       created_at timestamptz not null default now(),
       user_a     uuid,
-      user_b     uuid
+      user_b     uuid,
+      constraint matches_status_check
+        check (status in ('pending', 'accepted', 'blocked'))
     );
 
     create unique index if not exists matches_user_a_id_user_b_id_key

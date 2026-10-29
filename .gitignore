@@ -42,6 +42,9 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
+# supabase CLI local linkage/cache (may contain connection metadata)
+supabase/.temp/
+
 # vitest reporter artifacts (generated; never commit)
 .vitest/
 

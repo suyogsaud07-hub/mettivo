@@ -121,10 +121,9 @@ describe('live-shaped database (match_id as uuid)', () => {
     expect(unread).toBe(1);
   });
 
-  it('refuses delivery to a blocked pair even if a match row survives', async () => {
-    // `block_member` deletes the match, so blocking alone leaves nothing to
-    // write to. This inserts the block directly to isolate the M12 delivery
-    // trigger, which is what protects legacy data where a match outlives a block.
+  it('refuses delivery to a blocked pair and retains a conversation with history', async () => {
+    // Insert the block directly to isolate the M12 delivery trigger, which is
+    // what protects legacy data where a match outlives a block.
     const match = await db.query<{ id: string }>(`select id from public.matches limit 1`);
     const matchId = match.rows[0].id;
 
@@ -143,13 +142,26 @@ describe('live-shaped database (match_id as uuid)', () => {
       )
     ).rejects.toThrow(/cannot message this member/i);
 
-    // And `block_member` severs the conversation outright.
+    // M41: blocking retains the conversation as closed when it has history, so
+    // the message and media ledger rows are not destroyed by the block.
     await seed(db, `delete from public.blocked_users`);
     await asUser(db, USER_A, () => db.query(`select public.block_member('${USER_B}'::uuid)`));
     expect(
-      await systemicCount(db, `select count(*)::int as n from public.matches`),
-      'blocking must remove the match'
-    ).toBe(0);
+      await systemicCount(
+        db,
+        `select count(*)::int as n from public.matches
+          where id = '${matchId}'::uuid and kind = 'closed'`
+      ),
+      'blocking must close the conversation with history'
+    ).toBe(1);
+    expect(
+      await systemicCount(
+        db,
+        `select count(*)::int as n from public.messages
+          where match_id = '${matchId}'::uuid`
+      ),
+      'blocking must not delete message history'
+    ).toBe(1);
   });
 
   it('keeps anonymous callers at zero rows on this shape too', async () => {

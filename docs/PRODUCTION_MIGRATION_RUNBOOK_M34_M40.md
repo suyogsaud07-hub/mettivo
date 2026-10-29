@@ -1,17 +1,17 @@
-# Production migration runbook — M34 to M40
+# Production migration runbook — M34 to M41
 
 > **Status:** prepared, not applied. No production database change has been
 > made by this document.
 >
 > **Target:** Supabase project `jnbrgxxwmgotuqejghrw`.
 >
-> **Repository baseline:** prepared from `6c40d4c`; the working tree also
-> contains M40 and its tests. M40 must be reviewed and committed before use.
+> **Repository baseline:** prepared from `522103e`; M40 and M41 must be reviewed
+> and committed before use.
 >
-> **Scope:** apply the pending M34–M39 migrations, then apply M40 last to repair
-> the live messaging shape. M40 supersedes M38’s messaging functions and match
-> classification. This runbook does not change frontend code, tests, or the E2E
-> failures.
+> **Scope:** apply the pending M34–M39 migrations, then M40 to repair the live
+> messaging shape, then M41 to retain blocked history and close the remaining
+> request-authority gap. M41 supersedes selected M38/M40 functions. This runbook
+> does not change frontend code, tests, or the E2E failures.
 
 ---
 
@@ -41,8 +41,9 @@ Do not proceed if any of these are true:
 ## 2. Non-negotiable rules
 
 1. Apply **one file at a time**, in the order in section 7.
-   `M40` is always last. Do not re-run `M34` or `M38` after `M40`: they replace
-   the repaired functions with older definitions.
+   `M41` is always last; `M40` must run immediately before it. Do not re-run
+   `M34` or `M38` after `M40`: they replace the repaired functions with older
+   definitions.
 2. Use the exact file from the reviewed commit. Do not edit SQL in the editor.
 3. Do **not** run `supabase/apply_all.sql` against production. It is a generated
    bundle and defeats the review boundary.
@@ -153,6 +154,7 @@ Do not treat "low traffic" as equivalent to "no writes" for `M38` or `M40`.
 | 5 | `20261015540000_m38_relationship_messaging.sql` | Six `matches` columns, constraints, follow/match reconciliation, request RPCs, three-message cap, inbox replacement | Rewrites every existing match to `kind='match'`; repairs all `profiles.matches_count` | Table locks, long updates, legacy invalid matches, concurrent inserts during `NOT NULL` transition | Any error after columns are added, especially on the `NOT NULL` step |
 | 6 | `20261015550000_m39_explore_metadata.sql` | `updated_at`, goal table, admin metadata RPCs, unique title index, Explore function replacements | Seeds three Dating Goals; no profile rows rewritten | Duplicate category titles or a top-level "Serious Relationship" row | Duplicate lower-cased titles or a top-level "Serious Relationship" exists |
 | 7 | `20261015560000_m40_live_messaging_compatibility.sql` | Canonical/legacy participant reconciliation, pair normalization, relationship classification, repaired messaging RPCs/triggers/RLS | Backfills participants, classifies existing matches, recomputes romantic counts | Duplicate/reverse rows, missing participants, or legacy/canonical disagreement stop the migration | Preflight raises; do not force it through |
+| 8 | `20261015570000_m41_block_history_and_request_authority.sql` | Request-authority repair, stricter accept/reject and send-state, history-preserving block, best-effort notifications | Repairs malformed pending/accepted request rows; closes blocked conversations with history | A malformed request can be closed or removed if no valid requester exists | M41 fails after M40 succeeds; do not delete history to force it through |
 
 Dependency order is not optional:
 
@@ -164,6 +166,9 @@ Dependency order is not optional:
 - `M34` depends on `matches.id` being `uuid`.
 - `M40` depends on `M34` for the archive table shape, but creates it defensively.
   `M40` must run after `M38` and must not be followed by `M34`/`M38` re-runs.
+- `M41` depends on `M40` and must run immediately after it. It replaces
+  `block_member`, `respond_to_conversation_request`,
+  `conversation_send_state`, `notify_on_message`, and `notify_on_match`.
 
 ---
 
@@ -753,7 +758,7 @@ Stop if the unique index fails. Do not rename or delete category rows in the
 editor to force it through; fix the data with a reviewed statement and re-run
 M39.
 
-### 7.8 Step 7 — `M40` (required last)
+### 7.8 Step 7 — `M40` (required before M41)
 
 File:
 
@@ -816,6 +821,53 @@ Expected:
 Do not re-run `M34` or `M38` after this step. If M40 stops on its preflight
 error, resolve the data with a reviewed statement first; do not edit the
 migration in the SQL Editor.
+
+### 7.9 Step 8 — `M41` (required last)
+
+File:
+
+```text
+supabase/migrations/20261015570000_m41_block_history_and_request_authority.sql
+```
+
+Expected output: no error. M41 repairs malformed request rows, replaces the
+request/block/notification functions, and performs no destructive table change.
+
+Targeted checks:
+
+```sql
+select count(*) as malformed_pending_requests
+from public.matches
+where kind = 'request'
+  and request_status in ('pending', 'accepted')
+  and (
+    requested_by is null
+    or requested_by not in (user_a_id, user_b_id)
+  );
+
+select proname, prosecdef, proconfig
+from pg_proc
+where pronamespace = 'public'::regnamespace
+  and proname in (
+    'block_member',
+    'respond_to_conversation_request',
+    'conversation_send_state',
+    'notify_on_message',
+    'notify_on_match'
+  )
+order by proname;
+```
+
+Expected: `malformed_pending_requests = 0`; every function is
+`security_definer = true` with a pinned `search_path` where applicable.
+
+Behavioral check with approved accounts: A blocks B after messages exist. The
+`matches` row must remain with `kind='closed'` and `status='closed'`, the
+messages and `chat_media` rows must still exist, and new sends must be refused.
+A pending request with a null `requested_by` must be refused by both participants
+until the data is repaired.
+
+Do not delete messages, media, or `matches` rows to make M41 pass.
 
 ---
 
@@ -949,6 +1001,8 @@ Compare with the counts recorded in section 6.1. The expected changes are only:
   rows without deleting conversations;
 - `profiles.matches_count` is recomputed first by M38 and again by M40 from
   canonical participant columns;
+- M41 may close a blocked conversation with history, or remove an empty
+  malformed pending request; it must not delete a message or media row;
 - `conversation_archive`, `donation_contributions`, `explore_categories`, and
   `explore_dating_goals` are created;
 - `explore_categories` has seven active seed rows;
@@ -961,7 +1015,7 @@ No migration in this set should delete a message or a profile.
 Run these against staging first. On production, use only approved internal test
 accounts and avoid creating fake financial rows.
 
-#### M40 messaging matrix
+#### M40/M41 messaging matrix
 
 | Scenario | Expected |
 | --- | --- |
@@ -973,7 +1027,8 @@ accounts and avoid creating fake financial rows.
 | B rejects through `respond_to_conversation_request` | `request_status=rejected`; tombstone remains; A cannot send or silently reopen |
 | A and B mutually follow, cross-gender, not blocked | romantic `kind=match`, notification generated, counts increment once |
 | A and B mutually follow, same gender | `kind=mutual_follow`, chat allowed, not counted as a romantic match |
-| A blocks B after messages exist | conversation retained as `closed`; chat unavailable; history not destroyed |
+| A blocks B after messages exist | conversation retained as `closed`; chat unavailable; messages and media not destroyed |
+| A pending request has `requested_by = null` | accept/reject refused; send-state cannot advertise sending; M41 repairs from the first valid sender |
 | A archives a conversation | only A's inbox hides it; B's inbox is unchanged |
 | Existing conversation has messages before M40 | messages remain readable; only relationship metadata/classification changes |
 | Legacy and canonical participant columns both exist | both pairs stay synchronized on every write |
@@ -1062,6 +1117,7 @@ untested manual repair. Record:
 | `M38` | Inspect `matches` columns, defaults, null counts, and constraints. Re-run the same file if the partial state is consistent. | Do not set `kind`/`request_status` manually across the table without review, and do not drop messages. |
 | `M39` | Inspect duplicate titles and the goal seed. Resolve data with a reviewed statement, then re-run M39. | Do not remove the check/unique constraint. |
 | `M40` | Read the raised preflight message. Resolve missing participants, duplicates, or legacy/canonical disagreements with a reviewed data fix, then re-run M40. | Do not drop the unique pair index, null out participants, or delete messages to force it through. |
+| `M41` | Confirm M40 completed, then re-run M41. Inspect any request it closed or removed and verify no message/media row was deleted. | Do not restore the M23 match-deleting block behavior or delete history to force the repair. |
 
 ### 9.3 Database rollback
 
@@ -1076,6 +1132,8 @@ rollback, and `supabase/apply_all.sql` is not a rollback tool.
   A restore is the only clean rollback after either commits. There is no
   reviewed down migration, and dropping the new columns would break the new
   RPCs. Never roll back by re-running M34/M38 after M40.
+- `M41` is forward-fix only. Re-running it is safe; reverting it would restore
+  the match-deleting block behavior and the null-requester acceptance gap.
 
 Use a PITR restore only when data is corrupted, a security boundary is broken, or
 a forward fix cannot converge. A restore loses writes made after the restore
@@ -1086,7 +1144,7 @@ piecemeal.
 
 ## 10. Completion checklist
 
-- [ ] All seven files applied once, in order, with no unrecorded error.
+- [ ] All eight files applied once, in order, with no unrecorded error.
 - [ ] `M34` archive table exists and the request-limit trigger is installed.
 - [ ] `M35` donation table exists, is RPC-only, and no historical rows were
       invented.
@@ -1097,6 +1155,8 @@ piecemeal.
 - [ ] `M39` has three active goals and the unique/check constraints.
 - [ ] `M40` has no null state, synchronized participant pairs, correct romantic
       counts, and all four message write guards installed.
+- [ ] `M41` leaves zero malformed pending/accepted request rows and preserves
+      messages/media when a conversation is blocked.
 - [ ] `./scripts/check-schema-drift.sh` reports `IN SYNC`.
 - [ ] `./scripts/verify-rls.sh` reports `PASS`.
 - [ ] The four new tables return `401`/`403` to an anonymous PostgREST request.
@@ -1116,6 +1176,7 @@ piecemeal.
 | | `M38` | | | |
 | | `M39` | | | |
 | | `M40` | | | |
+| | `M41` | | | |
 | | Schema drift | | | |
 | | RLS checks | | | |
 | | App smoke | | | |
