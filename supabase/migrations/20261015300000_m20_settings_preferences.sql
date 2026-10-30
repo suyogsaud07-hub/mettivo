@@ -95,13 +95,14 @@ revoke all on public.user_preferences from anon;
 -- ---------------------------------------------------------------------------
 -- 3. Storage — the `avatars` bucket
 -- ---------------------------------------------------------------------------
--- Guarded on the `storage` schema: the PGlite test harness does not model
--- Supabase Storage, so this block is skipped there. Public read (so an <img>
--- can load the object), writes scoped to a `<user-id>/…` folder the uploader
--- owns — the same posture as `moment-media`.
+-- Guarded on the Storage tables: a PGlite harness or a postgres-only container
+-- does not initialise Supabase Storage, so this block is skipped there. Public
+-- read (so an <img> can load the object), writes scoped to a `<user-id>/…`
+-- folder the uploader owns — the same posture as `moment-media`.
 do $storage$
 begin
-  if exists (select 1 from information_schema.schemata where schema_name = 'storage') then
+  if to_regclass('storage.buckets') is not null
+     and to_regclass('storage.objects') is not null then
     insert into storage.buckets (id, name, public)
     values ('avatars', 'avatars', true)
     on conflict (id) do update set public = true;
@@ -141,7 +142,7 @@ begin
 
     raise notice 'avatars storage bucket ready';
   else
-    raise notice 'storage schema not found - create the avatars bucket in the dashboard';
+    raise notice 'storage buckets/objects not found - create the avatars bucket in the dashboard';
   end if;
 end $storage$;
 

@@ -14,16 +14,19 @@
 --
 -- WHAT
 --   * Repair malformed pending/accepted request rows from their first valid
---     message sender, close them if no valid requester can be derived, or delete
---     an empty pending row that has no history.
+--     message sender. An unrecoverable pending request becomes a closed
+--     tombstone; the repair never deletes a conversation row.
 --   * Make the accept/reject RPC reject malformed request authority explicitly.
 --   * Align the send-state projection with the same rule.
---   * Redefine `block_member()` to close a conversation with history instead of
---     deleting it, preserving every message and media ledger row.
+--   * Redefine `sync_match_for_pair()` so a blocked or disconnected pair is
+--     retained as closed whenever any dependent history exists, not only when a
+--     message row exists.
+--   * Redefine `block_member()` to use that reconciler and preserve every
+--     message, media, archive, settings and receipt row.
 --   * Keep notification failures from rolling back the message/match write.
 --
 -- SAFE TO RE-RUN: guarded data repair, `create or replace` functions, and no
--- destructive table/column changes. Existing history is retained.
+-- destructive table/column changes. The repair itself deletes no match rows.
 -- DEPENDS ON: M38 (request state), M40 (canonical messaging repair).
 -- =============================================================================
 
@@ -35,7 +38,6 @@ declare
   request_row   record;
   first_sender  uuid;
   first_sent_at timestamptz;
-  has_messages  boolean;
 begin
   for request_row in
     select
@@ -69,21 +71,16 @@ begin
     order by msg.created_at, msg.id
     limit 1;
 
-    select exists (
-      select 1
-      from public.messages msg
-      where msg.match_id::text = request_row.id::text
-    ) into has_messages;
-
     if first_sender is not null then
       update public.matches
          set requested_by = first_sender,
              requested_at = coalesce(requested_at, first_sent_at, now()),
              updated_at = now()
        where id = request_row.id;
-    elsif request_row.request_status = 'pending' and has_messages then
-      -- History exists but no participant ever sent it. Retain the row as
-      -- closed rather than deleting the only container for that history.
+    elsif request_row.request_status = 'pending' then
+      -- No recoverable participant requester. Keep the row as a closed
+      -- tombstone: it may still own media, archive, settings or receipt rows,
+      -- and those FKs cascade if the match is deleted.
       update public.matches
          set kind = 'closed',
              request_status = 'not_applicable',
@@ -93,10 +90,6 @@ begin
              responded_at = null,
              updated_at = now()
        where id = request_row.id;
-    elsif request_row.request_status = 'pending' then
-      -- No history and no provable requester: the row cannot become a valid
-      -- request. Removing it is the only safe repair.
-      delete from public.matches where id = request_row.id;
     else
       -- Accepted rows remain usable by both participants even when the original
       -- requester was lost. Clear the untrustworthy attribution.
@@ -281,7 +274,168 @@ revoke all on function public.conversation_send_state(uuid) from public, anon;
 grant execute on function public.conversation_send_state(uuid) to authenticated;
 
 -- ---------------------------------------------------------------------------
--- 4. Block closes a conversation with history instead of deleting it
+-- 4. Retained-history predicate and safe pair reconciliation
+-- ---------------------------------------------------------------------------
+-- `matches` is referenced by five cascading FKs. Checking only `messages` is
+-- not enough: a conversation can own media, an archive flag, disappearing-chat
+-- settings and read receipts while having no message row. Deleting the match
+-- would cascade all of them.
+create or replace function public.match_has_retained_history(p_match_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+  select exists (
+           select 1 from public.messages msg
+           where msg.match_id::text = p_match_id::text
+         )
+      or exists (
+           select 1 from public.chat_media cm
+           where cm.match_id = p_match_id
+         )
+      or exists (
+           select 1 from public.conversation_archive ca
+           where ca.match_id = p_match_id
+         )
+      or exists (
+           select 1 from public.chat_settings cs
+           where cs.match_id = p_match_id
+         )
+      or exists (
+           select 1 from public.match_read_state mrs
+           where mrs.match_id = p_match_id
+         );
+$$;
+
+revoke all on function public.match_has_retained_history(uuid)
+  from public, anon, authenticated;
+
+comment on function public.match_has_retained_history(uuid) is
+  'True when deleting a match would cascade any retained conversation history; internal only.';
+
+-- Replaces the M38/M40 reconciler. The only behavioural change is that every
+-- place which previously deleted an unreferenced match now checks all five
+-- history tables before deleting.
+create or replace function public.sync_match_for_pair(a uuid, b uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  lo uuid;
+  hi uuid;
+  conn public.matches%rowtype;
+  mutual boolean := false;
+begin
+  if a is null or b is null or a = b then
+    return;
+  end if;
+
+  lo := least(a, b);
+  hi := greatest(a, b);
+
+  perform pg_advisory_xact_lock(hashtext(lo::text || ':' || hi::text));
+
+  select * into conn
+  from public.matches m
+  where m.user_a_id = lo and m.user_b_id = hi;
+
+  if public.is_blocked_pair(lo, hi) then
+    if conn.id is null then
+      return;
+    end if;
+
+    if public.match_has_retained_history(conn.id) then
+      update public.matches
+         set kind = 'closed',
+             request_status = 'not_applicable',
+             status = 'closed',
+             updated_at = now()
+       where id = conn.id;
+    else
+      delete from public.matches where id = conn.id;
+    end if;
+    return;
+  end if;
+
+  if public.pair_should_match(lo, hi) then
+    insert into public.matches (
+      user_a, user_b, user_a_id, user_b_id, kind, request_status, status,
+      requested_by, requested_at, responded_at
+    )
+    values (lo, hi, lo, hi, 'match', 'not_applicable', 'accepted', null, null, null)
+    on conflict (user_a_id, user_b_id) do update
+      set kind = 'match',
+          request_status = 'not_applicable',
+          status = 'accepted',
+          requested_by = null,
+          requested_at = null,
+          responded_at = null,
+          updated_at = now();
+    return;
+  end if;
+
+  mutual := exists (
+    select 1 from public.follows f
+    where f.follower_id = lo and f.following_id = hi
+  ) and exists (
+    select 1 from public.follows f
+    where f.follower_id = hi and f.following_id = lo
+  );
+
+  if mutual then
+    insert into public.matches (
+      user_a, user_b, user_a_id, user_b_id, kind, request_status, status,
+      requested_by, requested_at, responded_at
+    )
+    values (lo, hi, lo, hi, 'mutual_follow', 'not_applicable', 'accepted', null, null, null)
+    on conflict (user_a_id, user_b_id) do update
+      set kind = 'mutual_follow',
+          request_status = 'not_applicable',
+          status = 'accepted',
+          requested_by = null,
+          requested_at = null,
+          responded_at = null,
+          updated_at = now();
+    return;
+  end if;
+
+  if conn.id is null then
+    return;
+  end if;
+
+  -- Accepted requests remain usable after a one-way follow disappears. Pending
+  -- and rejected requests retain their explicit state.
+  if conn.kind = 'request' then
+    return;
+  end if;
+
+  if conn.kind in ('match', 'mutual_follow') then
+    if public.match_has_retained_history(conn.id) then
+      update public.matches
+         set kind = 'closed',
+             request_status = 'not_applicable',
+             status = 'closed',
+             updated_at = now()
+       where id = conn.id;
+    else
+      delete from public.matches where id = conn.id;
+    end if;
+  end if;
+end;
+$$;
+
+revoke all on function public.sync_match_for_pair(uuid, uuid)
+  from public, anon, authenticated;
+
+comment on function public.sync_match_for_pair(uuid, uuid) is
+  'Reconciles the canonical match row for one pair. Retains any conversation with history as closed.';
+
+-- ---------------------------------------------------------------------------
+-- 5. Block closes a conversation with history instead of deleting it
 -- ---------------------------------------------------------------------------
 create or replace function public.block_member(p_target uuid)
 returns jsonb
@@ -347,10 +501,10 @@ revoke all on function public.block_member(uuid) from public, anon;
 grant execute on function public.block_member(uuid) to authenticated;
 
 comment on function public.block_member(uuid) is
-  'Blocks a pair, removes follows/likes and leaves a conversation with history as kind=closed. An empty conversation is deleted.';
+  'Blocks a pair, removes follows/likes and retains any conversation with messages, media, archive, settings or receipts as kind=closed. A conversation with no retained history is deleted.';
 
 -- ---------------------------------------------------------------------------
--- 5. A notification failure must not roll back the member's write
+-- 6. A notification failure must not roll back the member's write
 -- ---------------------------------------------------------------------------
 create or replace function public.notify_on_message()
 returns trigger

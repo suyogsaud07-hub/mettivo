@@ -22,8 +22,11 @@ export const USER_C = '33333333-3333-3333-3333-333333333333';
 export const USER_D = '44444444-4444-4444-4444-444444444444';
 export const MODERATOR = '99999999-9999-9999-9999-999999999999';
 
-/** The schema Supabase provides before any of this project's migrations run. */
-const BASE_SCHEMA = `
+/**
+ * The objects Supabase provides before any of this project's migrations run.
+ * Contains no project tables, so it can prove the clean bootstrap path.
+ */
+const SUPABASE_ONLY_SCHEMA = `
   create schema if not exists auth;
   create role anon nologin;
   create role authenticated nologin;
@@ -44,6 +47,25 @@ const BASE_SCHEMA = `
     ('${USER_C}', 'cy@example.com'),
     ('${USER_D}', 'dee@example.com'),
     ('${MODERATOR}', 'mod@example.com');
+
+  grant usage on schema public to anon, authenticated;
+
+  -- A real Supabase project also runs
+  --   alter default privileges in schema public grant all on tables to anon, authenticated;
+  -- so every table created later by a migration arrives world-grantable and RLS
+  -- alone decides what is visible. Without this, an "anonymous reads zero rows"
+  -- assertion on a migration-created table passes merely because the GRANT is
+  -- missing -- proving nothing about RLS. Grants are not the boundary here.
+  alter default privileges in schema public
+    grant select, insert, update, delete on tables to anon, authenticated;
+`;
+
+/**
+ * A live-shaped fixture with the project tables that predate the migration set.
+ * Use `createEmptySupabaseDb()` when the test must exercise a clean bootstrap.
+ */
+const BASE_SCHEMA = `
+  ${SUPABASE_ONLY_SCHEMA}
 
   -- Mirrors the live profiles table, including the columns the M6 view reads.
   create table public.profiles (
@@ -79,7 +101,6 @@ const BASE_SCHEMA = `
     blocker_id uuid, blocked_user_id uuid, created_at timestamptz default now()
   );
 
-  grant usage on schema public to anon, authenticated;
   grant select, insert, update, delete on
     public.profiles, public.messages, public.follows, public.reports, public.blocked_users
     to authenticated;
@@ -90,15 +111,6 @@ const BASE_SCHEMA = `
   grant select, insert, update, delete on
     public.profiles, public.messages, public.follows, public.reports, public.blocked_users
     to anon;
-
-  -- A real Supabase project also runs
-  --   alter default privileges in schema public grant all on tables to anon, authenticated;
-  -- so every table created later by a migration arrives world-grantable and RLS
-  -- alone decides what is visible. Without this, an "anonymous reads zero rows"
-  -- assertion on a migration-created table passes merely because the GRANT is
-  -- missing -- proving nothing about RLS. Grants are not the boundary here.
-  alter default privileges in schema public
-    grant select, insert, update, delete on tables to anon, authenticated;
 `;
 
 /** Migration filenames in the order they must be applied. */
@@ -163,11 +175,23 @@ export async function createLiveLikeDb(): Promise<PGlite> {
 }
 
 /**
- * Fresh database with the Supabase base objects and NO project migrations.
+ * Fresh database with only the objects Supabase provides: no project tables.
+ *
+ * Use this to prove the migration set can initialise a genuinely empty project,
+ * not merely reconcile a fixture that already has the pre-migration tables.
+ */
+export async function createEmptySupabaseDb(): Promise<PGlite> {
+  const db = new PGlite();
+  await db.exec(SUPABASE_ONLY_SCHEMA);
+  return db;
+}
+
+/**
+ * Fresh database with the live-shaped project fixture and NO migrations.
  *
  * Use this to assert something about the migration set as a whole — for example
  * that `supabase/apply_all.sql`, the file an operator pastes into the SQL
- * Editor, applies cleanly in one pass.
+ * Editor, applies cleanly in one pass against an existing project.
  */
 export async function createBaseDb(): Promise<PGlite> {
   const db = new PGlite();

@@ -2,6 +2,12 @@
 
 Authoritative, idempotent SQL for the Mettivo database. Apply in filename order.
 
+> **Clean bootstrap.** A genuinely empty Supabase project starts with
+> `20261015110000_m0_base_schema.sql`. It recreates only the five pre-migration
+> tables the original project already had, with RLS enabled and no policies, so
+> a partially-applied database fails closed. The rest of this directory then
+> applies unchanged.
+
 > **Legacy note.** The older top-level `migrations/` directory is superseded by
 > this one. Its `reports_blocked_users.sql` is **not executable** (0 of 22
 > statements succeed): it calls `uuid_generate_v4()` without creating the
@@ -33,6 +39,7 @@ same state and no error.
 
 | # | File | Purpose | Milestone |
 | --- | --- | --- | --- |
+| 0 | `20261015110000_m0_base_schema.sql` | Recreates `profiles`, `messages`, `follows`, `reports`, `blocked_users` for an empty project; RLS enabled, policies still owned by M6 | Base |
 | 1 | `20261015120000_m6_profiles_rls_lockdown.sql` | Stops anonymous reads of `profiles`; owner-only writes | M6 |
 | 2 | `20261015120100_m6_enable_rls_all_tables.sql` | Ensures RLS is on for every personal-data table | M6 |
 | 3 | `20261015120200_m6_public_profiles_view.sql` | Allow-listed public projection without `birth_date` | M6 |
@@ -61,9 +68,11 @@ same state and no error.
 > (M16–M31 and the elite profile upgrade) apply in filename order after these.
 > The generated `supabase/apply_all.sql` is the authoritative full sequence.
 
-> **Applying to a live project.** Migrations 1–3 are the security boundary: on a
-> project where they have not been applied, `profiles` is readable by anyone
-> holding the public anon key. Always finish by running `./scripts/verify-rls.sh`.
+> **Applying to a live project.** Migration 0 is structural only and is a no-op
+> where the pre-migration tables already exist. Migrations 1–3 are the security
+> boundary: on a project where they have not been applied, `profiles` is readable
+> by anyone holding the public anon key. Always finish by running
+> `./scripts/verify-rls.sh`.
 
 ## Verify your work
 

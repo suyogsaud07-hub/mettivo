@@ -754,12 +754,14 @@ $$;
 revoke all on function public.chat_media_can_read_storage(text) from public, anon;
 grant execute on function public.chat_media_can_read_storage(text) to authenticated;
 
--- Storage policies are written in dynamic SQL inside a schema guard, because
--- the PGlite harness does not model Supabase's `storage` schema (M20 set the
--- precedent). In production the bucket and its policies ship with the migration.
+-- Storage policies are written in dynamic SQL inside a table guard, because a
+-- PGlite harness or a postgres-only container does not initialise Supabase
+-- Storage (M20 set the precedent). In production the bucket and its policies
+-- ship with the migration.
 do $storage$
 begin
-  if exists (select 1 from information_schema.schemata where schema_name = 'storage') then
+  if to_regclass('storage.buckets') is not null
+     and to_regclass('storage.objects') is not null then
     execute $b$
       insert into storage.buckets (id, name, public)
       values ('chat-media', 'chat-media', false)
@@ -794,7 +796,7 @@ begin
 
     raise notice 'chat-media storage bucket ready';
   else
-    raise notice 'storage schema not found - create the chat-media bucket in the dashboard';
+    raise notice 'storage buckets/objects not found - create the chat-media bucket in the dashboard';
   end if;
 end $storage$;
 

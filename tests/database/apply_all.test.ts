@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import type { PGlite } from '@electric-sql/pglite';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { anonReadCount, createBaseDb, createLiveLikeDb, migrationFiles } from './harness';
+import { anonReadCount, createEmptySupabaseDb, createLiveLikeDb, migrationFiles } from './harness';
 
 /**
  * The operator's bootstrap file.
@@ -55,7 +55,7 @@ describe('apply_all.sql — the operator bootstrap', () => {
 
   beforeAll(async () => {
     sql = readFileSync(BUNDLE, 'utf8');
-    db = await createBaseDb();
+    db = await createEmptySupabaseDb();
   });
 
   it('contains every migration, in filename order', () => {

@@ -79,6 +79,33 @@ alter table public.matches add column if not exists created_at timestamptz not n
 create unique index if not exists matches_user_pair_key
   on public.matches (user_a, user_b);
 
+-- `messages` exists before `matches` on a clean bootstrap, so its match FK can
+-- only be created here. The type guard keeps the deliberately text-typed
+-- compatibility fixture working; a real project has uuid on both sides.
+do $$
+begin
+  if to_regclass('public.messages') is not null
+     and exists (
+       select 1
+       from information_schema.columns
+       where table_schema = 'public'
+         and table_name = 'messages'
+         and column_name = 'match_id'
+         and data_type = 'uuid'
+     )
+     and not exists (
+       select 1
+       from pg_constraint
+       where conname = 'messages_match_id_fkey'
+         and conrelid = to_regclass('public.messages')
+     )
+  then
+    alter table public.messages
+      add constraint messages_match_id_fkey
+      foreign key (match_id) references public.matches(id) on delete cascade;
+  end if;
+end $$;
+
 alter table public.matches enable row level security;
 
 drop policy if exists "matches_select_participant" on public.matches;

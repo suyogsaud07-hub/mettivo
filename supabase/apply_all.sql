@@ -13,6 +13,102 @@
 -- =============================================================================
 
 -- ############################################################################
+-- # 20261015110000_m0_base_schema.sql
+-- ############################################################################
+
+-- =============================================================================
+-- M0 · Base schema for a genuinely empty project
+-- =============================================================================
+-- The migration set was written against a project that already had five
+-- pre-migration tables: profiles, messages, follows, reports and blocked_users.
+-- That made a clean bootstrap fail at M6 (`relation "public.profiles" does not
+-- exist`) and silently skipped M6's baseline policies for the other tables.
+--
+-- This migration reconstructs only the pre-migration columns and constraints,
+-- derived from the production schema dump minus every column a later migration
+-- owns. Later migrations remain responsible for their own additions.
+--
+-- RLS is enabled here with no policies: a partially-applied database fails
+-- closed. M6 installs the first policies.
+--
+-- SAFE TO RE-RUN: every statement is idempotent.
+-- =============================================================================
+
+create table if not exists public.profiles (
+  id                   uuid        primary key references auth.users(id) on delete cascade,
+  updated_at           timestamptz not null default timezone('utc', now()),
+  display_name         text        not null,
+  age                  integer     not null,
+  city                 text        default 'Kathmandu',
+  intention            text        not null,
+  bio                  text,
+  interests            text[]      default '{}'::text[],
+  is_verified          boolean     default false,
+  birth_date           date,
+  gender               text,
+  looking_for          text[],
+  country              text,
+  drinking             text,
+  smoking              text,
+  avatar_url           text,
+  pets                 text[],
+  religion             text,
+  politics             text,
+  hobbies              text[],
+  photos               text[],
+  onboarding_completed boolean     default false,
+  prompts              jsonb       default '[]'::jsonb,
+  personality          text[]      default '{}'::text[],
+  friends_count        integer     default 0,
+  followers            integer     default 0,
+  following            integer     default 0,
+  friends              integer     default 0,
+  is_online            boolean     default true,
+  constraint profiles_age_check check (age >= 18)
+);
+
+create table if not exists public.follows (
+  id           uuid        primary key default gen_random_uuid(),
+  follower_id  uuid        references public.profiles(id) on delete cascade,
+  following_id uuid        references public.profiles(id) on delete cascade,
+  created_at   timestamptz not null default timezone('utc', now()),
+  constraint follows_follower_id_following_id_key unique (follower_id, following_id)
+);
+
+create table if not exists public.messages (
+  id         uuid        primary key default gen_random_uuid(),
+  match_id   uuid        not null,
+  sender_id  uuid        not null references public.profiles(id) on delete cascade,
+  content    text        not null,
+  created_at timestamptz not null default timezone('utc', now())
+);
+
+create table if not exists public.reports (
+  id               uuid        primary key default gen_random_uuid(),
+  reporter_id      uuid        not null,
+  reported_user_id uuid        not null,
+  reason           text        not null,
+  details          text,
+  status           text        default 'pending',
+  created_at       timestamptz not null default timezone('utc', now()),
+  updated_at       timestamptz not null default timezone('utc', now())
+);
+
+create table if not exists public.blocked_users (
+  id              uuid        primary key default gen_random_uuid(),
+  blocker_id      uuid        not null,
+  blocked_user_id uuid        not null,
+  created_at      timestamptz not null default timezone('utc', now())
+);
+
+alter table public.profiles enable row level security;
+alter table public.follows enable row level security;
+alter table public.messages enable row level security;
+alter table public.reports enable row level security;
+alter table public.blocked_users enable row level security;
+
+
+-- ############################################################################
 -- # 20261015120000_m6_profiles_rls_lockdown.sql
 -- ############################################################################
 
@@ -401,6 +497,33 @@ alter table public.matches add column if not exists created_at timestamptz not n
 -- Exactly one row per pair, whichever direction the like came from.
 create unique index if not exists matches_user_pair_key
   on public.matches (user_a, user_b);
+
+-- `messages` exists before `matches` on a clean bootstrap, so its match FK can
+-- only be created here. The type guard keeps the deliberately text-typed
+-- compatibility fixture working; a real project has uuid on both sides.
+do $$
+begin
+  if to_regclass('public.messages') is not null
+     and exists (
+       select 1
+       from information_schema.columns
+       where table_schema = 'public'
+         and table_name = 'messages'
+         and column_name = 'match_id'
+         and data_type = 'uuid'
+     )
+     and not exists (
+       select 1
+       from pg_constraint
+       where conname = 'messages_match_id_fkey'
+         and conrelid = to_regclass('public.messages')
+     )
+  then
+    alter table public.messages
+      add constraint messages_match_id_fkey
+      foreign key (match_id) references public.matches(id) on delete cascade;
+  end if;
+end $$;
 
 alter table public.matches enable row level security;
 
@@ -4227,7 +4350,8 @@ end $$;
 -- uploads are scoped to a `<user-id>/…` folder the uploader owns.
 do $storage$
 begin
-  if exists (select 1 from information_schema.schemata where schema_name = 'storage') then
+  if to_regclass('storage.buckets') is not null
+     and to_regclass('storage.objects') is not null then
     insert into storage.buckets (id, name, public)
     values ('moment-media', 'moment-media', true)
     on conflict (id) do update set public = true;
@@ -4267,7 +4391,7 @@ begin
 
     raise notice 'moment-media storage bucket ready';
   else
-    raise notice 'storage schema not found - create the moment-media bucket in the dashboard';
+    raise notice 'storage buckets/objects not found - create the moment-media bucket in the dashboard';
   end if;
 end $storage$;
 
@@ -4391,13 +4515,14 @@ revoke all on public.user_preferences from anon;
 -- ---------------------------------------------------------------------------
 -- 3. Storage — the `avatars` bucket
 -- ---------------------------------------------------------------------------
--- Guarded on the `storage` schema: the PGlite test harness does not model
--- Supabase Storage, so this block is skipped there. Public read (so an <img>
--- can load the object), writes scoped to a `<user-id>/…` folder the uploader
--- owns — the same posture as `moment-media`.
+-- Guarded on the Storage tables: a PGlite harness or a postgres-only container
+-- does not initialise Supabase Storage, so this block is skipped there. Public
+-- read (so an <img> can load the object), writes scoped to a `<user-id>/…`
+-- folder the uploader owns — the same posture as `moment-media`.
 do $storage$
 begin
-  if exists (select 1 from information_schema.schemata where schema_name = 'storage') then
+  if to_regclass('storage.buckets') is not null
+     and to_regclass('storage.objects') is not null then
     insert into storage.buckets (id, name, public)
     values ('avatars', 'avatars', true)
     on conflict (id) do update set public = true;
@@ -4437,7 +4562,7 @@ begin
 
     raise notice 'avatars storage bucket ready';
   else
-    raise notice 'storage schema not found - create the avatars bucket in the dashboard';
+    raise notice 'storage buckets/objects not found - create the avatars bucket in the dashboard';
   end if;
 end $storage$;
 
@@ -7979,12 +8104,14 @@ $$;
 revoke all on function public.chat_media_can_read_storage(text) from public, anon;
 grant execute on function public.chat_media_can_read_storage(text) to authenticated;
 
--- Storage policies are written in dynamic SQL inside a schema guard, because
--- the PGlite harness does not model Supabase's `storage` schema (M20 set the
--- precedent). In production the bucket and its policies ship with the migration.
+-- Storage policies are written in dynamic SQL inside a table guard, because a
+-- PGlite harness or a postgres-only container does not initialise Supabase
+-- Storage (M20 set the precedent). In production the bucket and its policies
+-- ship with the migration.
 do $storage$
 begin
-  if exists (select 1 from information_schema.schemata where schema_name = 'storage') then
+  if to_regclass('storage.buckets') is not null
+     and to_regclass('storage.objects') is not null then
     execute $b$
       insert into storage.buckets (id, name, public)
       values ('chat-media', 'chat-media', false)
@@ -8019,7 +8146,7 @@ begin
 
     raise notice 'chat-media storage bucket ready';
   else
-    raise notice 'storage schema not found - create the chat-media bucket in the dashboard';
+    raise notice 'storage buckets/objects not found - create the chat-media bucket in the dashboard';
   end if;
 end $storage$;
 
@@ -17817,16 +17944,19 @@ order by p.proname;
 --
 -- WHAT
 --   * Repair malformed pending/accepted request rows from their first valid
---     message sender, close them if no valid requester can be derived, or delete
---     an empty pending row that has no history.
+--     message sender. An unrecoverable pending request becomes a closed
+--     tombstone; the repair never deletes a conversation row.
 --   * Make the accept/reject RPC reject malformed request authority explicitly.
 --   * Align the send-state projection with the same rule.
---   * Redefine `block_member()` to close a conversation with history instead of
---     deleting it, preserving every message and media ledger row.
+--   * Redefine `sync_match_for_pair()` so a blocked or disconnected pair is
+--     retained as closed whenever any dependent history exists, not only when a
+--     message row exists.
+--   * Redefine `block_member()` to use that reconciler and preserve every
+--     message, media, archive, settings and receipt row.
 --   * Keep notification failures from rolling back the message/match write.
 --
 -- SAFE TO RE-RUN: guarded data repair, `create or replace` functions, and no
--- destructive table/column changes. Existing history is retained.
+-- destructive table/column changes. The repair itself deletes no match rows.
 -- DEPENDS ON: M38 (request state), M40 (canonical messaging repair).
 -- =============================================================================
 
@@ -17838,7 +17968,6 @@ declare
   request_row   record;
   first_sender  uuid;
   first_sent_at timestamptz;
-  has_messages  boolean;
 begin
   for request_row in
     select
@@ -17872,21 +18001,16 @@ begin
     order by msg.created_at, msg.id
     limit 1;
 
-    select exists (
-      select 1
-      from public.messages msg
-      where msg.match_id::text = request_row.id::text
-    ) into has_messages;
-
     if first_sender is not null then
       update public.matches
          set requested_by = first_sender,
              requested_at = coalesce(requested_at, first_sent_at, now()),
              updated_at = now()
        where id = request_row.id;
-    elsif request_row.request_status = 'pending' and has_messages then
-      -- History exists but no participant ever sent it. Retain the row as
-      -- closed rather than deleting the only container for that history.
+    elsif request_row.request_status = 'pending' then
+      -- No recoverable participant requester. Keep the row as a closed
+      -- tombstone: it may still own media, archive, settings or receipt rows,
+      -- and those FKs cascade if the match is deleted.
       update public.matches
          set kind = 'closed',
              request_status = 'not_applicable',
@@ -17896,10 +18020,6 @@ begin
              responded_at = null,
              updated_at = now()
        where id = request_row.id;
-    elsif request_row.request_status = 'pending' then
-      -- No history and no provable requester: the row cannot become a valid
-      -- request. Removing it is the only safe repair.
-      delete from public.matches where id = request_row.id;
     else
       -- Accepted rows remain usable by both participants even when the original
       -- requester was lost. Clear the untrustworthy attribution.
@@ -18084,7 +18204,168 @@ revoke all on function public.conversation_send_state(uuid) from public, anon;
 grant execute on function public.conversation_send_state(uuid) to authenticated;
 
 -- ---------------------------------------------------------------------------
--- 4. Block closes a conversation with history instead of deleting it
+-- 4. Retained-history predicate and safe pair reconciliation
+-- ---------------------------------------------------------------------------
+-- `matches` is referenced by five cascading FKs. Checking only `messages` is
+-- not enough: a conversation can own media, an archive flag, disappearing-chat
+-- settings and read receipts while having no message row. Deleting the match
+-- would cascade all of them.
+create or replace function public.match_has_retained_history(p_match_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+  select exists (
+           select 1 from public.messages msg
+           where msg.match_id::text = p_match_id::text
+         )
+      or exists (
+           select 1 from public.chat_media cm
+           where cm.match_id = p_match_id
+         )
+      or exists (
+           select 1 from public.conversation_archive ca
+           where ca.match_id = p_match_id
+         )
+      or exists (
+           select 1 from public.chat_settings cs
+           where cs.match_id = p_match_id
+         )
+      or exists (
+           select 1 from public.match_read_state mrs
+           where mrs.match_id = p_match_id
+         );
+$$;
+
+revoke all on function public.match_has_retained_history(uuid)
+  from public, anon, authenticated;
+
+comment on function public.match_has_retained_history(uuid) is
+  'True when deleting a match would cascade any retained conversation history; internal only.';
+
+-- Replaces the M38/M40 reconciler. The only behavioural change is that every
+-- place which previously deleted an unreferenced match now checks all five
+-- history tables before deleting.
+create or replace function public.sync_match_for_pair(a uuid, b uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  lo uuid;
+  hi uuid;
+  conn public.matches%rowtype;
+  mutual boolean := false;
+begin
+  if a is null or b is null or a = b then
+    return;
+  end if;
+
+  lo := least(a, b);
+  hi := greatest(a, b);
+
+  perform pg_advisory_xact_lock(hashtext(lo::text || ':' || hi::text));
+
+  select * into conn
+  from public.matches m
+  where m.user_a_id = lo and m.user_b_id = hi;
+
+  if public.is_blocked_pair(lo, hi) then
+    if conn.id is null then
+      return;
+    end if;
+
+    if public.match_has_retained_history(conn.id) then
+      update public.matches
+         set kind = 'closed',
+             request_status = 'not_applicable',
+             status = 'closed',
+             updated_at = now()
+       where id = conn.id;
+    else
+      delete from public.matches where id = conn.id;
+    end if;
+    return;
+  end if;
+
+  if public.pair_should_match(lo, hi) then
+    insert into public.matches (
+      user_a, user_b, user_a_id, user_b_id, kind, request_status, status,
+      requested_by, requested_at, responded_at
+    )
+    values (lo, hi, lo, hi, 'match', 'not_applicable', 'accepted', null, null, null)
+    on conflict (user_a_id, user_b_id) do update
+      set kind = 'match',
+          request_status = 'not_applicable',
+          status = 'accepted',
+          requested_by = null,
+          requested_at = null,
+          responded_at = null,
+          updated_at = now();
+    return;
+  end if;
+
+  mutual := exists (
+    select 1 from public.follows f
+    where f.follower_id = lo and f.following_id = hi
+  ) and exists (
+    select 1 from public.follows f
+    where f.follower_id = hi and f.following_id = lo
+  );
+
+  if mutual then
+    insert into public.matches (
+      user_a, user_b, user_a_id, user_b_id, kind, request_status, status,
+      requested_by, requested_at, responded_at
+    )
+    values (lo, hi, lo, hi, 'mutual_follow', 'not_applicable', 'accepted', null, null, null)
+    on conflict (user_a_id, user_b_id) do update
+      set kind = 'mutual_follow',
+          request_status = 'not_applicable',
+          status = 'accepted',
+          requested_by = null,
+          requested_at = null,
+          responded_at = null,
+          updated_at = now();
+    return;
+  end if;
+
+  if conn.id is null then
+    return;
+  end if;
+
+  -- Accepted requests remain usable after a one-way follow disappears. Pending
+  -- and rejected requests retain their explicit state.
+  if conn.kind = 'request' then
+    return;
+  end if;
+
+  if conn.kind in ('match', 'mutual_follow') then
+    if public.match_has_retained_history(conn.id) then
+      update public.matches
+         set kind = 'closed',
+             request_status = 'not_applicable',
+             status = 'closed',
+             updated_at = now()
+       where id = conn.id;
+    else
+      delete from public.matches where id = conn.id;
+    end if;
+  end if;
+end;
+$$;
+
+revoke all on function public.sync_match_for_pair(uuid, uuid)
+  from public, anon, authenticated;
+
+comment on function public.sync_match_for_pair(uuid, uuid) is
+  'Reconciles the canonical match row for one pair. Retains any conversation with history as closed.';
+
+-- ---------------------------------------------------------------------------
+-- 5. Block closes a conversation with history instead of deleting it
 -- ---------------------------------------------------------------------------
 create or replace function public.block_member(p_target uuid)
 returns jsonb
@@ -18150,10 +18431,10 @@ revoke all on function public.block_member(uuid) from public, anon;
 grant execute on function public.block_member(uuid) to authenticated;
 
 comment on function public.block_member(uuid) is
-  'Blocks a pair, removes follows/likes and leaves a conversation with history as kind=closed. An empty conversation is deleted.';
+  'Blocks a pair, removes follows/likes and retains any conversation with messages, media, archive, settings or receipts as kind=closed. A conversation with no retained history is deleted.';
 
 -- ---------------------------------------------------------------------------
--- 5. A notification failure must not roll back the member's write
+-- 6. A notification failure must not roll back the member's write
 -- ---------------------------------------------------------------------------
 create or replace function public.notify_on_message()
 returns trigger

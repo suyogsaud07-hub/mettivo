@@ -154,7 +154,7 @@ Do not treat "low traffic" as equivalent to "no writes" for `M38` or `M40`.
 | 5 | `20261015540000_m38_relationship_messaging.sql` | Six `matches` columns, constraints, follow/match reconciliation, request RPCs, three-message cap, inbox replacement | Rewrites every existing match to `kind='match'`; repairs all `profiles.matches_count` | Table locks, long updates, legacy invalid matches, concurrent inserts during `NOT NULL` transition | Any error after columns are added, especially on the `NOT NULL` step |
 | 6 | `20261015550000_m39_explore_metadata.sql` | `updated_at`, goal table, admin metadata RPCs, unique title index, Explore function replacements | Seeds three Dating Goals; no profile rows rewritten | Duplicate category titles or a top-level "Serious Relationship" row | Duplicate lower-cased titles or a top-level "Serious Relationship" exists |
 | 7 | `20261015560000_m40_live_messaging_compatibility.sql` | Canonical/legacy participant reconciliation, pair normalization, relationship classification, repaired messaging RPCs/triggers/RLS | Backfills participants, classifies existing matches, recomputes romantic counts | Duplicate/reverse rows, missing participants, or legacy/canonical disagreement stop the migration | Preflight raises; do not force it through |
-| 8 | `20261015570000_m41_block_history_and_request_authority.sql` | Request-authority repair, stricter accept/reject and send-state, history-preserving block, best-effort notifications | Repairs malformed pending/accepted request rows; closes blocked conversations with history | A malformed request can be closed or removed if no valid requester exists | M41 fails after M40 succeeds; do not delete history to force it through |
+| 8 | `20261015570000_m41_block_history_and_request_authority.sql` | Request-authority repair, stricter accept/reject and send-state, all-history-aware reconciliation, history-preserving block, best-effort notifications | Repairs malformed pending/accepted request rows; closes unrecoverable pending requests as tombstones; retains blocked conversations with any dependent history | A malformed pending request is closed as a tombstone; no match is deleted by the repair | M41 fails after M40 succeeds; do not delete history to force it through |
 
 Dependency order is not optional:
 
@@ -167,8 +167,9 @@ Dependency order is not optional:
 - `M40` depends on `M34` for the archive table shape, but creates it defensively.
   `M40` must run after `M38` and must not be followed by `M34`/`M38` re-runs.
 - `M41` depends on `M40` and must run immediately after it. It replaces
-  `block_member`, `respond_to_conversation_request`,
-  `conversation_send_state`, `notify_on_message`, and `notify_on_match`.
+  `sync_match_for_pair`, `block_member`, `respond_to_conversation_request`,
+  `conversation_send_state`, `notify_on_message`, and `notify_on_match`, and
+  adds the internal `match_has_retained_history(uuid)` predicate.
 
 ---
 
@@ -831,24 +832,43 @@ supabase/migrations/20261015570000_m41_block_history_and_request_authority.sql
 ```
 
 Expected output: no error. M41 repairs malformed request rows, replaces the
-request/block/notification functions, and performs no destructive table change.
+request/block/notification functions and the pair reconciler, and performs no
+destructive table change. The data repair deletes no match. The block reconciler
+may remove a match only when all five dependent-history tables are empty.
+
+Invariant enforced by M41:
+
+- a **pending** request must have a participant as `requested_by`; if no valid
+  requester can be recovered, the row is retained as a closed tombstone;
+- an **accepted** request may have `requested_by = null` when historical
+  attribution cannot be recovered, provided the conversation remains usable;
+- an accepted request with a non-null, non-participant requester is cleared to
+  `requested_by = null`, not closed solely for that reason.
 
 Targeted checks:
 
 ```sql
-select count(*) as malformed_pending_requests
+select
+  count(*) filter (
+    where request_status = 'pending'
+      and (
+        requested_by is null
+        or requested_by not in (user_a_id, user_b_id)
+      )
+  ) as malformed_pending_requests,
+  count(*) filter (
+    where request_status = 'accepted'
+      and requested_by is not null
+      and requested_by not in (user_a_id, user_b_id)
+  ) as malformed_accepted_attributions
 from public.matches
-where kind = 'request'
-  and request_status in ('pending', 'accepted')
-  and (
-    requested_by is null
-    or requested_by not in (user_a_id, user_b_id)
-  );
+where kind = 'request';
 
 select proname, prosecdef, proconfig
 from pg_proc
 where pronamespace = 'public'::regnamespace
   and proname in (
+    'match_has_retained_history',
     'block_member',
     'respond_to_conversation_request',
     'conversation_send_state',
@@ -858,16 +878,24 @@ where pronamespace = 'public'::regnamespace
 order by proname;
 ```
 
-Expected: `malformed_pending_requests = 0`; every function is
-`security_definer = true` with a pinned `search_path` where applicable.
+Expected: both counts are `0`; every function is `security_definer = true` with
+a pinned `search_path` where applicable. An accepted request with a null
+requester is valid and must not be counted.
 
-Behavioral check with approved accounts: A blocks B after messages exist. The
-`matches` row must remain with `kind='closed'` and `status='closed'`, the
-messages and `chat_media` rows must still exist, and new sends must be refused.
-A pending request with a null `requested_by` must be refused by both participants
-until the data is repaired.
+Behavioral checks with approved accounts:
 
-Do not delete messages, media, or `matches` rows to make M41 pass.
+- A blocks B after messages exist. The `matches` row must remain with
+  `kind='closed'` and `status='closed'`, messages and `chat_media` must survive,
+  and new sends and request responses must be refused.
+- Repeat the block case when the conversation has `chat_media`,
+  `conversation_archive`, `chat_settings`, or `match_read_state` rows but no
+  message row. The match must also remain closed, with all four rows intact.
+- A pending request with a null `requested_by` must be refused by both
+  participants. If no valid sender can recover it, M41 closes it as a tombstone.
+- An accepted request with `requested_by = null` must remain accepted and usable.
+
+Do not delete messages, media, archive, settings, receipts, or `matches` rows to
+make M41 pass.
 
 ---
 
@@ -1001,8 +1029,10 @@ Compare with the counts recorded in section 6.1. The expected changes are only:
   rows without deleting conversations;
 - `profiles.matches_count` is recomputed first by M38 and again by M40 from
   canonical participant columns;
-- M41 may close a blocked conversation with history, or remove an empty
-  malformed pending request; it must not delete a message or media row;
+- M41 may close a blocked conversation with history or a malformed pending
+  request as a tombstone; it must not delete a match that owns messages, media,
+  archive, settings, or receipts. A truly history-free match may still be
+  removed by the existing block semantics;
 - `conversation_archive`, `donation_contributions`, `explore_categories`, and
   `explore_dating_goals` are created;
 - `explore_categories` has seven active seed rows;
@@ -1028,7 +1058,9 @@ accounts and avoid creating fake financial rows.
 | A and B mutually follow, cross-gender, not blocked | romantic `kind=match`, notification generated, counts increment once |
 | A and B mutually follow, same gender | `kind=mutual_follow`, chat allowed, not counted as a romantic match |
 | A blocks B after messages exist | conversation retained as `closed`; chat unavailable; messages and media not destroyed |
-| A pending request has `requested_by = null` | accept/reject refused; send-state cannot advertise sending; M41 repairs from the first valid sender |
+| A pending request has `requested_by = null` | accept/reject refused; send-state cannot advertise sending; M41 recovers from the first valid sender or closes it as a tombstone |
+| An accepted request has `requested_by = null` | remains accepted and usable; M41 does not close it and the runbook query does not flag it |
+| A blocks B with media/archive/settings/receipts but no messages | conversation retained as `closed`; all dependent rows survive |
 | A archives a conversation | only A's inbox hides it; B's inbox is unchanged |
 | Existing conversation has messages before M40 | messages remain readable; only relationship metadata/classification changes |
 | Legacy and canonical participant columns both exist | both pairs stay synchronized on every write |
@@ -1117,7 +1149,7 @@ untested manual repair. Record:
 | `M38` | Inspect `matches` columns, defaults, null counts, and constraints. Re-run the same file if the partial state is consistent. | Do not set `kind`/`request_status` manually across the table without review, and do not drop messages. |
 | `M39` | Inspect duplicate titles and the goal seed. Resolve data with a reviewed statement, then re-run M39. | Do not remove the check/unique constraint. |
 | `M40` | Read the raised preflight message. Resolve missing participants, duplicates, or legacy/canonical disagreements with a reviewed data fix, then re-run M40. | Do not drop the unique pair index, null out participants, or delete messages to force it through. |
-| `M41` | Confirm M40 completed, then re-run M41. Inspect any request it closed or removed and verify no message/media row was deleted. | Do not restore the M23 match-deleting block behavior or delete history to force the repair. |
+| `M41` | Confirm M40 completed, then re-run M41. Inspect any tombstone it created and verify no match, message, media, archive, settings or receipt row was deleted. | Do not restore the M23 match-deleting block behavior or delete history to force the repair. |
 
 ### 9.3 Database rollback
 
@@ -1155,8 +1187,10 @@ piecemeal.
 - [ ] `M39` has three active goals and the unique/check constraints.
 - [ ] `M40` has no null state, synchronized participant pairs, correct romantic
       counts, and all four message write guards installed.
-- [ ] `M41` leaves zero malformed pending/accepted request rows and preserves
-      messages/media when a conversation is blocked.
+- [ ] `M41` leaves zero malformed pending requests and zero accepted requests
+      with an invalid non-null requester; accepted null attribution is allowed.
+- [ ] `M41` preserves messages/media/archive/settings/receipts when a
+      conversation is blocked, including when it has no message rows.
 - [ ] `./scripts/check-schema-drift.sh` reports `IN SYNC`.
 - [ ] `./scripts/verify-rls.sh` reports `PASS`.
 - [ ] The four new tables return `401`/`403` to an anonymous PostgREST request.

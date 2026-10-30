@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import type { PGlite } from '@electric-sql/pglite';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { applyMigrations, createBaseDb, createLiveLikeDb } from './harness';
+import { applyMigrations, createEmptySupabaseDb, createLiveLikeDb } from './harness';
 
 /**
  * R-14 — restore rehearsal (the schema half).
@@ -89,10 +89,10 @@ describe('R-14 — rebuilding from the repository matches the normal path', () =
   let recoveredLiveShape: PGlite;
 
   beforeAll(async () => {
-    normal = await createBaseDb();
+    normal = await createEmptySupabaseDb();
     await applyMigrations(normal);
 
-    recovered = await createBaseDb();
+    recovered = await createEmptySupabaseDb();
     await recovered.exec(readFileSync(join(process.cwd(), 'supabase', 'apply_all.sql'), 'utf8'));
 
     // A rebuild must also work against the live column types.

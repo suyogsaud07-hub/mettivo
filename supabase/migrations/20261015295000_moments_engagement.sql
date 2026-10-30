@@ -202,7 +202,8 @@ end $$;
 -- uploads are scoped to a `<user-id>/…` folder the uploader owns.
 do $storage$
 begin
-  if exists (select 1 from information_schema.schemata where schema_name = 'storage') then
+  if to_regclass('storage.buckets') is not null
+     and to_regclass('storage.objects') is not null then
     insert into storage.buckets (id, name, public)
     values ('moment-media', 'moment-media', true)
     on conflict (id) do update set public = true;
@@ -242,7 +243,7 @@ begin
 
     raise notice 'moment-media storage bucket ready';
   else
-    raise notice 'storage schema not found - create the moment-media bucket in the dashboard';
+    raise notice 'storage buckets/objects not found - create the moment-media bucket in the dashboard';
   end if;
 end $storage$;
 
