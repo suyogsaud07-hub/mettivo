@@ -15,6 +15,7 @@ import { parseBanStatus } from '@/lib/bot/moderation';
  */
 
 const BANNED_API_PREFIXES = ['/api/bot', '/api/moments', '/api/live'] as const;
+const PROTECTED_API_PREFIXES = ['/api'] as const;
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -69,6 +70,26 @@ export async function proxy(request: NextRequest) {
           { status: 403 },
         );
       }
+    }
+
+    // Seven-day inactivity enforcement for API routes
+    try {
+      const { data: isValid } = await supabase.rpc('check_activity_validity');
+      if (isValid === false) {
+        const isProtectedApi = PROTECTED_API_PREFIXES.some((prefix) =>
+          request.nextUrl.pathname.startsWith(prefix),
+        ) && !request.nextUrl.pathname.startsWith('/api/health') && 
+           !request.nextUrl.pathname.startsWith('/api/auth');
+        
+        if (isProtectedApi) {
+          return NextResponse.json(
+            { error: 'session_expired', message: 'Session expired due to inactivity' },
+            { status: 401 },
+          );
+        }
+      }
+    } catch (err) {
+      // Don't block if check fails
     }
   }
 

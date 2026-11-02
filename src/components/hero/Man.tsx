@@ -68,11 +68,11 @@ const ROOT: Record<HeroPhase, RootPose> = {
 
 /** A slow lean toward her, pivoting on the pelvis. */
 const TORSO_ROTATE: Record<HeroPhase, number> = {
-  see: 0,
-  wave: -2,
-  walk: 0,
+  see: 8,
+  wave: 6,
+  walk: 4,
   propose: 14,
-  accept: 9,
+  accept: 12,
   morph: 0,
   logo: 0,
 };
@@ -88,21 +88,21 @@ const TORSO_Y: Record<HeroPhase, Limb> = {
 };
 
 const HEAD_ROTATE: Record<HeroPhase, number> = {
-  see: 0,
-  wave: -4,
-  walk: 0,
-  propose: 6,
-  accept: 7,
+  see: 12,
+  wave: 10,
+  walk: 8,
+  propose: 16,
+  accept: 14,
   morph: 0,
   logo: 0,
 };
 
 const HEAD_X: Record<HeroPhase, number> = {
-  see: 0,
-  wave: 0,
-  walk: 0,
-  propose: 3,
-  accept: 4,
+  see: 4,
+  wave: 4,
+  walk: 3,
+  propose: 6,
+  accept: 6,
   morph: 0,
   logo: 0,
 };

@@ -160,6 +160,17 @@ export default function SettingsPage() {
   const handleSignOut = async () => {
     setIsSigningOut(true);
     try {
+      // End presence session
+      if (typeof window !== 'undefined') {
+        const sessionId = sessionStorage.getItem('mettivo_presence_session_id');
+        if (sessionId) {
+          try {
+            await supabase.rpc('end_presence_session', { p_session_id: sessionId });
+          } catch (err) {
+            // Best effort
+          }
+        }
+      }
       const { error } = await supabase.auth.signOut();
       // `signOut()` reports failure in `error`, it does not throw. Navigating
       // regardless would strand the member on /auth while still signed in.

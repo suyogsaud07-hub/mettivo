@@ -5,6 +5,7 @@ import { FollowProvider } from '@/context/FollowContext';
 import ServiceWorkerRegistrar from '@/app/components/ServiceWorkerRegistrar';
 import LocationVerificationGate from '@/components/shared/LocationVerificationGate';
 import PresenceHeartbeat from '@/components/shared/PresenceHeartbeat';
+import ClientInit from '@/components/ClientInit';
 
 const APP_NAME = 'Mettivo';
 const APP_DESCRIPTION =
@@ -75,6 +76,7 @@ export default function RootLayout({
           <FollowProvider>
             {children}
             <PresenceHeartbeat />
+            <ClientInit />
           </FollowProvider>
           <ServiceWorkerRegistrar />
           {/*
