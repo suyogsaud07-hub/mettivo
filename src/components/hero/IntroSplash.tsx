@@ -20,6 +20,11 @@ import { EASE } from './timeline';
  * is belt-and-braces.)
  */
 
+/** Marks the intro as played for this tab. `sessionStorage` survives a reload but
+ * is cleared when the tab closes — so the splash plays on a cold start, not on
+ * every refresh. */
+const INTRO_SEEN_KEY = 'mettivo_intro_seen';
+
 /** How long the finished logo is held before the fade begins. */
 const HOLD_MS = 1500;
 const FADE_MS = 800;
@@ -38,6 +43,21 @@ export default function IntroSplash({ onDone }: IntroSplashProps) {
   // second `onDone`. The animation must play exactly once per mount.
   const completedRef = useRef(false);
   const doneRef = useRef(false);
+
+  const markIntroSeen = useCallback(() => {
+    try {
+      window.sessionStorage.setItem(INTRO_SEEN_KEY, '1');
+    } catch {
+      // Ignore: the intro simply plays again next load.
+    }
+  }, []);
+
+  const handleSkip = useCallback(() => {
+    if (doneRef.current) return;
+    doneRef.current = true;
+    markIntroSeen();
+    onDone();
+  }, [markIntroSeen, onDone]);
 
   const handleComplete = useCallback(() => {
     if (completedRef.current) return;
@@ -75,6 +95,16 @@ export default function IntroSplash({ onDone }: IntroSplashProps) {
       transition={{ duration: FADE_MS / 1000, ease: EASE }}
       aria-hidden="true"
     >
+      {/* Skip Intro — always visible, top-right, respects mobile safe areas. */}
+      <button
+        type="button"
+        onClick={handleSkip}
+        className="fixed top-4 right-4 z-60 w-10 h-10 rounded-full border border-white/20 bg-black/60 text-[#F2E9E4] text-xs font-semibold tracking-wide flex items-center justify-center hover:bg-white/10 hover:border-white/30 transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D4B18A] backdrop-blur-sm"
+        aria-label="Skip intro"
+      >
+        Skip
+      </button>
+
       <AnimatedHero className="h-full w-full" showReplay={false} onComplete={handleComplete} />
     </motion.div>
   );
