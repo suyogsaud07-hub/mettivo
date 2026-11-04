@@ -32,7 +32,8 @@
     "next": "^16.4.3",
     "react": "19.3.0",
     "react-dom": "19.3.0",
-    "stripe": "^23.0.0"
+    "stripe": "^23.0.0",
+    "twemoji": "^14.0.2"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.10",

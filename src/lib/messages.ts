@@ -102,6 +102,8 @@ export async function fetchMessages(
     throw new MessageError('A conversation is required.');
   }
 
+  const { data: { user } } = await supabase.auth.getUser();
+
   const { data, error } = await supabase
     .from('messages')
     .select('id, match_id, sender_id, content, created_at, delivered_at, seen_at')
@@ -114,9 +116,21 @@ export async function fetchMessages(
     throw new MessageError('We could not load this conversation.', error.code);
   }
 
+  // Exclude messages the current member has deleted for themselves
+  // ("Delete for Me"). RLS on message_deletions scopes rows to the caller.
+  let deletedIds: string[] = [];
+  if (user) {
+    const { data: deletions } = await supabase
+      .from('message_deletions')
+      .select('message_id')
+      .eq('user_id', user.id);
+    deletedIds = (deletions ?? []).map((d) => d.message_id).filter(Boolean);
+  }
+
   return (data ?? [])
     .map(parseMessage)
     .filter((row): row is MessageRecord => row !== null)
+    .filter((m) => !deletedIds.includes(m.id))
     .reverse();
 }
 
@@ -379,4 +393,59 @@ export async function fetchConversationSendState(
     canSend: data.can_send === true,
     otherHasReplied,
   };
+}
+
+/** Whether the signed-in member has muted this conversation. */
+export async function fetchConversationMute(matchId: string): Promise<boolean> {
+  if (!matchId) return false;
+
+  const { data, error } = await supabase
+    .from('conversation_mute')
+    .select('match_id')
+    .eq('match_id', matchId)
+    .maybeSingle();
+
+  if (error) {
+    console.warn('[messages] fetch mute failed:', error.message);
+    return false;
+  }
+  return data !== null;
+}
+
+/** Toggle the signed-in member's mute flag on a conversation. */
+export async function setConversationMute(
+  matchId: string,
+  muted: boolean
+): Promise<boolean> {
+  if (!matchId) throw new Error('A conversation is required.');
+
+  const { data, error } = await supabase.rpc('set_conversation_mute', {
+    p_match_id: matchId,
+    p_muted: muted,
+  });
+
+  if (error) {
+    console.error('[messages] set mute failed:', error.message);
+    throw new Error('We could not update that mute setting.');
+  }
+  return data === true;
+}
+
+/**
+ * Physically unsend a message. The database enforces sender ownership and the
+ * ten-minute window server-side; this is a thin, authenticated caller.
+ */
+export async function unsendMessage(messageId: string): Promise<void> {
+  if (!messageId) throw new Error('A message is required.');
+
+  const { error } = await supabase.rpc('unsend_message', { p_message_id: messageId });
+
+  if (error) {
+    console.error('[messages] unsend failed:', error.message);
+    const message =
+      error.code === '42501'
+        ? error.message
+        : 'This message cannot be unsent.';
+    throw new Error(message);
+  }
 }

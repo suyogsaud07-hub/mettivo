@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useState, use, useRef, useSyncExternalStore } from 'react';
+import { useEffect, useState, use, useRef, useSyncExternalStore, useMemo } from 'react';
 import type { RealtimePostgresChangesPayload } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import {
   markConversationRead,
   markMessagesDelivered,
@@ -11,9 +12,12 @@ import {
   setDisappearingMessages,
   purgeExpiredChatContent,
   fetchConversationSendState,
+  fetchConversationMute,
+  setConversationMute,
   type ConversationSendState,
 } from '@/lib/messages';
 import { blockMember, BlockingError } from '@/lib/blocking';
+import { pinMessage, unpinMessage, fetchPinnedMessages } from '@/lib/pins';
 import {
   ConversationError,
   respondToConversationRequest,
@@ -27,8 +31,6 @@ import {
   ChatMediaError,
   type ChatMediaByMessage,
 } from '@/lib/chatMedia';
-import ChatMediaMessage, { ChatMediaReport } from '@/app/components/chat/ChatMediaMessage';
-import MessageStatus from '@/app/components/chat/MessageStatus';
 import {
   NO_RESTRICTIONS,
   describeRestriction,
@@ -36,10 +38,9 @@ import {
   type MyRestrictions,
 } from '@/lib/reports';
 import { ReportModal } from '@/app/components/moderation/ReportModal';
-import { ReportButton } from '@/app/components/moderation/ReportButton';
-import TranslatableMessage from '@/app/components/chat/TranslatableMessage';
-import { usePreferredTranslationLanguage } from '@/app/components/chat/usePreferredTranslationLanguage';
+import MessageBubble from '@/app/components/chat/MessageBubble';
 import { fetchPublicIdentities, type PublicIdentity } from '@/lib/public-profiles';
+import { usePreferredTranslationLanguage } from '@/app/components/chat/usePreferredTranslationLanguage';
 
 /** The 24-hour window offered by the disappearing-chat toggle. */
 const DISAPPEARING_SECONDS = 86_400;
@@ -65,13 +66,17 @@ function getBrowserLanguageSnapshot(): string | null {
 
 export default function ChatPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ matchId: string }>;
+  searchParams: Promise<{ search?: string }>;
 }) {
   // Next.js 16 passes `params` as a promise; `use()` unwraps it in a client
   // component without blocking the initial render.
   const resolvedParams = use(params);
   const matchId = resolvedParams.matchId;
+  const resolvedSearchParams = use(searchParams);
+  const searchFromUrl = resolvedSearchParams.search === '1';
 
   const [messages, setMessages] = useState<MessageRow[]>([]);
   const [newMessage, setNewMessage] = useState('');
@@ -82,6 +87,12 @@ export default function ChatPage({
   const [menuOpen, setMenuOpen] = useState(false);
   const [blocking, setBlocking] = useState(false);
   const [blocked, setBlocked] = useState(false);
+  const [muted, setMuted] = useState<boolean | null>(null);
+  const [searchActive, setSearchActive] = useState(searchFromUrl);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [pinnedMessageIds, setPinnedMessageIds] = useState<Set<string>>(new Set());
+  const router = useRouter();
+
   const [reportOpen, setReportOpen] = useState(false);
   const [reportTargetType, setReportTargetType] = useState<'user' | 'chat'>('user');
   const [restrictions, setRestrictions] = useState<MyRestrictions>(NO_RESTRICTIONS);
@@ -98,15 +109,6 @@ export default function ChatPage({
       setMessages((prev) => prev.filter((m) => m.id !== messageId));
     } catch (err) {
       console.error('Failed to delete for me:', err);
-    }
-  };
-
-  const unsendMessage = async (messageId: string) => {
-    try {
-      await supabase.from('messages').delete().eq('id', messageId);
-      setMessages((prev) => prev.filter((m) => m.id !== messageId));
-    } catch (err) {
-      console.error('Failed to unsend:', err);
     }
   };
 
@@ -228,6 +230,12 @@ export default function ChatPage({
       // M26: the retention setting drives the header toggle and banner.
       const window = await fetchChatSettings(matchId);
       if (isMounted) setDisappearing(window);
+
+      const mute = await fetchConversationMute(matchId);
+      if (isMounted) setMuted(mute);
+
+      const pinned = await fetchPinnedMessages(matchId);
+      if (isMounted) setPinnedMessageIds(new Set(pinned));
 
       // M11: opening a thread reads it. The badge is computed server-side from
       // `last_read_at`, so it must be stamped here or the count never clears.
@@ -532,6 +540,63 @@ export default function ChatPage({
     }
   };
 
+  const handleToggleMute = async () => {
+    if (muted === null) return;
+    setTogglingDisappearing(true);
+    setError(null);
+    try {
+      const next = await setConversationMute(matchId, !muted);
+      setMuted(next);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'We could not update that setting.');
+    } finally {
+      setTogglingDisappearing(false);
+    }
+  };
+
+  const handleClearChat = async () => {
+    if (!window.confirm('Clear this conversation for you? The other participant will keep their messages.')) return;
+    setTogglingDisappearing(true);
+    setError(null);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('You must be signed in.');
+
+      // Fetch every message id in the conversation (not just the loaded page).
+      const { data: allMessages, error: fetchError } = await supabase
+        .from('messages')
+        .select('id')
+        .eq('match_id', matchId);
+
+      if (fetchError) throw fetchError;
+
+      // Insert a deletion record for each message, idempotently.
+      if (allMessages && allMessages.length > 0) {
+        const { error: insertError } = await supabase
+          .from('message_deletions')
+          .upsert(
+            allMessages.map((m) => ({ message_id: m.id, user_id: user.id })),
+            { onConflict: 'message_id,user_id' }
+          );
+        if (insertError) throw insertError;
+      }
+
+      setMessages([]);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'We could not clear this conversation.');
+    } finally {
+      setTogglingDisappearing(false);
+    }
+  };
+
+  // Client-side search over currently loaded messages, derived reactively.
+  const searchResults = useMemo(() => {
+    if (!searchQuery.trim()) return [];
+    const q = searchQuery.toLowerCase();
+    return messages.filter((m) => m.content.toLowerCase().includes(q));
+  }, [searchQuery, messages]);
+
   const restrictionMessage = describeRestriction(restrictions);
   const requestPending = sendState?.relationshipState === 'MESSAGE_REQUEST_PENDING';
   const conversationClosed =
@@ -588,43 +653,75 @@ export default function ChatPage({
             </svg>
           </button>
 
-          {/* Report/Block Menu */}
+          {/* Conversation options menu */}
           {menuOpen && (
-            <div className="absolute right-0 mt-2 w-56 bg-white dark:bg-neutral-800 rounded-lg shadow-lg border border-neutral-200 dark:border-neutral-700 z-10">
+            <div className="absolute right-0 mt-2 w-56 bg-neutral-800 rounded-lg shadow-lg border border-neutral-700 z-10">
               <div className="px-4 py-2">
-                <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100 mb-2">Safety</p>
+                <p className="text-sm font-medium text-neutral-100 mb-2">Conversation</p>
                 <button
                   onClick={() => {
-                    setReportTargetType('user');
                     setMenuOpen(false);
+                    router.push(`/chat/${matchId}/info`);
+                  }}
+                  className="w-full text-left px-3 py-2 rounded hover:bg-neutral-700"
+                >
+                  View contact
+                </button>
+                <button
+                  onClick={() => {
+                    setMenuOpen(false);
+                    router.push(`/chat/${matchId}?search=1`);
+                  }}
+                  className="w-full text-left px-3 py-2 rounded hover:bg-neutral-700 mt-1"
+                >
+                  Search
+                </button>
+                <button
+                  onClick={handleToggleMute}
+                  disabled={muted === null || togglingDisappearing}
+                  className={`w-full text-left px-3 py-2 rounded hover:bg-neutral-700 mt-1 ${muted === null || togglingDisappearing ? 'opacity-50 cursor-not-allowed' : ''}`}
+                >
+                  {muted ? 'Unmute notifications' : 'Mute notifications'}
+                </button>
+                <button
+                  onClick={() => {
+                    setMenuOpen(false);
+                    setReportTargetType('user');
                     setReportOpen(true);
                   }}
-                  className="w-full text-left px-3 py-2 rounded hover:bg-neutral-100 dark:hover:bg-neutral-700"
+                  className="w-full text-left px-3 py-2 rounded hover:bg-neutral-700 mt-1"
                   disabled={!otherUserId}
                 >
                   Report User
                 </button>
                 <button
                   onClick={() => {
-                    setReportTargetType('chat');
                     setMenuOpen(false);
+                    setReportTargetType('chat');
                     setReportOpen(true);
                   }}
-                  className="w-full text-left px-3 py-2 rounded hover:bg-neutral-100 dark:hover:bg-neutral-700 mt-1"
+                  className="w-full text-left px-3 py-2 rounded hover:bg-neutral-700 mt-1"
                   disabled={!otherUserId}
                 >
                   Report Conversation
                 </button>
                 <button
                   onClick={blocked ? handleUnblock : handleBlock}
-                  className="w-full text-left px-3 py-2 rounded hover:bg-neutral-100 dark:hover:bg-neutral-700 mt-1"
+                  className="w-full text-left px-3 py-2 rounded hover:bg-neutral-700 mt-1"
                   disabled={blocking || !otherUserId}
                 >
                   {blocked ? 'Unblock User' : (blocking ? 'Blocking…' : 'Block User')}
                 </button>
                 <button
+                  onClick={handleClearChat}
+                  disabled={togglingDisappearing}
+                  className="w-full text-left px-3 py-2 rounded hover:bg-neutral-700 mt-1 text-rose-400"
+                >
+                  Clear chat
+                </button>
+                <button
                   onClick={toggleDisappearing}
-                  className="w-full text-left px-3 py-2 rounded hover:bg-neutral-100 dark:hover:bg-neutral-700 mt-1"
+                  className="w-full text-left px-3 py-2 rounded hover:bg-neutral-700 mt-1"
                   disabled={togglingDisappearing}
                 >
                   {togglingDisappearing
@@ -638,6 +735,58 @@ export default function ChatPage({
           )}
         </div>
       </div>
+
+      {searchActive && (
+        <div
+          className="mb-2 relative"
+          style={{
+            animation: 'slideDown 0.2s ease-out',
+          }}
+        >
+          <div
+            className="flex items-center gap-2"
+            style={{
+              position: 'relative',
+            }}
+          >
+            <svg
+              className="w-4 h-4 text-neutral-400"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
+              <circle cx="11" cy="11" r="8" />
+              <path d="M21 21l-4.35-4.35" />
+            </svg>
+            <input
+              type="text"
+              placeholder="Search messages…"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="flex-1 bg-neutral-800 border border-neutral-700 rounded-md px-3 py-2 text-sm text-neutral-100 focus:outline-none focus:ring-2 focus:ring-amber-500"
+              autoFocus
+            />
+            {searchQuery && (
+              <button
+                onClick={() => {
+                  setSearchQuery('');
+                }}
+                className="p-1 text-neutral-400 hover:text-neutral-200"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+          {searchQuery && (
+            <div
+              className="mt-1 px-2 text-xs text-neutral-400"
+            >
+              {searchResults.length} result{searchResults.length !== 1 ? 's' : ''}
+            </div>
+          )}
+        </div>
+      )}
 
       {disappearing && (
         <div
@@ -670,74 +819,46 @@ export default function ChatPage({
         {messages.map((msg) => {
           const isMe = msg.sender_id === currentUserId;
           const media = chatMedia[msg.id];
+          const isPinned = pinnedMessageIds.has(msg.id);
+
+          // When searching, skip non-matching messages.
+          if (searchQuery.trim() && !msg.content.toLowerCase().includes(searchQuery.toLowerCase())) {
+            return null;
+          }
 
           // An exhausted or expired item is gone for BOTH members, exactly as if
           // it had never been sent.
           if (media && isGone(media)) return null;
 
           return (
-            <div
-              key={msg.id}
-              className={`flex items-end gap-1 ${isMe ? 'justify-end' : 'justify-start'}`}
-            >
-              {/* Only incoming messages offer a report, and it points at the
-                  exact message so `file_report` captures it as context. */}
-              {!isMe && !media && (
-                <ReportButton
-                  targetUserId={msg.sender_id}
-                  targetType="message"
-                  targetId={msg.id}
-                  title="Report this message"
-                  ariaLabel="Report this message"
-                  className="mb-1"
-                />
-              )}
-              {!isMe && media && <ChatMediaReport media={media} />}
-              <div className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
-                {media ? (
-                  <ChatMediaMessage media={media} isOwn={isMe} />
-                ) : (
-                  <div className="relative group">
-                    <div
-                      className={`p-3 rounded-2xl max-w-[75%] ${
-                        isMe ? 'bg-rose-500 text-white' : 'bg-neutral-800 text-neutral-200'
-                      }`}
-                    >
-                      {/* Translation is on-demand and per message: nothing is sent to
-                          the provider until the member taps the control, and the
-                          original text is never replaced. */}
-                      <TranslatableMessage
-                        content={msg.content}
-                        isOwnMessage={isMe}
-                        targetLanguage={preferredTranslationLanguage}
-                        sourceLanguage={sourceLanguageHint}
-                      />
-                    </div>
-                    <div className={`absolute top-0 ${isMe ? '-left-24' : '-right-24'} hidden group-hover:flex flex-col gap-1 bg-neutral-800 rounded p-1 text-xs`}>
-                      <button onClick={() => deleteForMe(msg.id)} className="px-2 py-1 hover:bg-neutral-700 rounded text-left whitespace-nowrap">
-                        Delete for Me
-                      </button>
-                      {isMe && (
-                        <button onClick={() => unsendMessage(msg.id)} className="px-2 py-1 hover:bg-neutral-700 rounded text-left whitespace-nowrap text-rose-400">
-                          Unsend
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                )}
-                {/* Delivery/seen ticks belong to the sender's own messages. */}
-                {isMe && (
-                  <MessageStatus
-                    deliveredAt={msg.delivered_at ?? null}
-                    seenAt={msg.seen_at ?? null}
-                    className="mt-0.5 pr-1"
-                  />
-                )}
-              </div>
+            <div key={msg.id} className="mb-2 relative">
+              <MessageBubble
+                message={msg}
+                media={media ?? null}
+                isMe={isMe}
+                currentUserId={currentUserId ?? null}
+                searchQuery={searchQuery}
+                isPinned={isPinned}
+                onPinToggle={() => {
+                  const next = new Set(pinnedMessageIds);
+                  if (isPinned) next.delete(msg.id);
+                  else next.add(msg.id);
+                  setPinnedMessageIds(next);
+                }}
+              />
             </div>
           );
         })}
       </div>
+
+      {pinnedMessageIds.size > 0 && (
+        <div
+          role="status"
+          className="mt-2 rounded-xl border border-amber-700/50 bg-amber-950/40 p-2 text-xs text-amber-200"
+        >
+          {pinnedMessageIds.size} pinned message{pinnedMessageIds.size > 1 ? 's' : ''} in this conversation.
+        </div>
+      )}
 
       {restrictionMessage && (
         <div

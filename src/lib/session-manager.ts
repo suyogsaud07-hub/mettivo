@@ -3,11 +3,13 @@
 import { supabase } from '@/lib/supabase';
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+const ACTIVITY_THROTTLE_MS = 5 * 60 * 1000; // Only ping DB every 5 minutes
 
 export class SessionManager {
   private static instance: SessionManager;
   private activityTimer: number | null = null;
   private lastActivityKey = 'mettivo_last_activity';
+  private lastPingTime = 0;
 
   static getInstance(): SessionManager {
     if (!SessionManager.instance) {
@@ -23,14 +25,22 @@ export class SessionManager {
   }
 
   private init() {
-    // Update activity on user interactions
+    // ⚡ PERFORMANCE FIX: Throttle activity updates.
+    // We don't want to hit the database on every mouse move!
     const updateActivity = () => {
       const now = Date.now();
+      
+      // Update local storage (cheap, synchronous, prevents 7-day inactivity)
       localStorage.setItem(this.lastActivityKey, now.toString());
-      void this.touchActivity();
+
+      // Throttle database pings
+      if (now - this.lastPingTime > ACTIVITY_THROTTLE_MS) {
+        this.lastPingTime = now;
+        void this.touchActivity();
+      }
     };
 
-    // Track various user activities
+    // Track user activity
     window.addEventListener('click', updateActivity, { passive: true });
     window.addEventListener('keydown', updateActivity, { passive: true });
     window.addEventListener('scroll', updateActivity, { passive: true });
@@ -39,10 +49,10 @@ export class SessionManager {
     // Set initial activity
     updateActivity();
 
-    // Periodically check session validity
+    // Periodically check session validity (Every 5 minutes instead of 1)
     this.activityTimer = window.setInterval(() => {
       void this.checkSessionValidity();
-    }, 60000); // Check every minute
+    }, 5 * 60 * 1000); 
   }
 
   private async touchActivity() {
@@ -51,7 +61,7 @@ export class SessionManager {
       if (session) {
         await supabase.rpc('touch_user_activity');
       }
-    } catch (err) {
+    } catch {
       // Non-critical
     }
   }
@@ -67,23 +77,22 @@ export class SessionManager {
         const lastActivityTime = parseInt(lastActivity, 10);
         const now = Date.now();
         if (now - lastActivityTime > SEVEN_DAYS_MS) {
-          // User has been inactive for more than 7 days
-      console.warn('[session] Inactive for more than 7 days, signing out');
-      await supabase.auth.signOut();
-      if (typeof window !== 'undefined') {
-        window.location.assign('/auth');
-      }
-      return;
+          console.warn('[session] Inactive for more than 7 days, signing out');
+          await supabase.auth.signOut();
+          if (typeof window !== 'undefined') {
+            window.location.assign('/auth');
+          }
+          return;
         }
       }
 
       // Also check server-side
       const { data: isValid } = await supabase.rpc('check_activity_validity');
       if (isValid === false) {
-      await supabase.auth.signOut();
-      if (typeof window !== 'undefined') {
-        window.location.assign('/auth');
-      }
+        await supabase.auth.signOut();
+        if (typeof window !== 'undefined') {
+          window.location.assign('/auth');
+        }
       }
     } catch (err) {
       console.error('[session] Error checking session validity:', err);

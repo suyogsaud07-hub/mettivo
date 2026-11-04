@@ -3,6 +3,7 @@
 import type { ReactNode } from 'react';
 import IntentionBadge from './IntentionBadge';
 import ProfileStatCards, { type ProfileStatKey } from './ProfileStatCards';
+import EmojiText from '@/app/components/chat/EmojiText';
 
 /**
  * The profile hero: avatar, identity, intention and the four primary counters.
@@ -110,7 +111,7 @@ export default function ProfileHeader({
 
           <div className="pf-hero-bio-block">
             {bio?.trim() ? (
-              <p className="pf-hero-bio">{bio}</p>
+              <EmojiText text={bio} size={14} className="pf-hero-bio" />
             ) : (
               <p className="pf-hero-bio pf-hero-bio-empty">{emptyBio}</p>
             )}

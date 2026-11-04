@@ -4,18 +4,8 @@ import { parseBanStatus } from '@/lib/bot/moderation';
 
 /**
  * Session refresh proxy & ban enforcement.
- *
- * ⛔ THIS PROXY MUST NEVER REDIRECT PAGES.
- *   It refreshes a session and blocks API access for banned users.
- *   Authorisation redirects for pages belong in the page-level guards.
- *
- * The ban itself is enforced authoritatively in the API routes (and in the
- * database); this is an early, cheap rejection. The caller's state is read via
- * `my_ban_status()`, which can only ever return the caller's own row.
  */
-
 const BANNED_API_PREFIXES = ['/api/bot', '/api/moments', '/api/live'] as const;
-const PROTECTED_API_PREFIXES = ['/api'] as const;
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -44,13 +34,19 @@ export async function proxy(request: NextRequest) {
     },
   });
 
+  // 1. Always refresh the session (Required for Supabase SSR)
   const { data: { user } } = await supabase.auth.getUser();
 
-  // ✅ BAN ENFORCEMENT
-  // If the user is logged in, check whether Subbu has banned them. The RPC
-  // derives identity from auth.uid() and takes no arguments, so this cannot be
-  // pointed at another member.
-  if (user) {
+  // ⚡ PERFORMANCE FIX: Only run heavy database checks on API routes.
+  const isApiRoute = request.nextUrl.pathname.startsWith('/api');
+
+  if (user && isApiRoute) {
+    // Skip checks for health/auth endpoints
+    if (request.nextUrl.pathname.startsWith('/api/health') || request.nextUrl.pathname.startsWith('/api/auth')) {
+      return response;
+    }
+
+    // ✅ BAN ENFORCEMENT
     const { data } = await supabase.rpc('my_ban_status');
     const ban = parseBanStatus(data);
 
@@ -76,19 +72,12 @@ export async function proxy(request: NextRequest) {
     try {
       const { data: isValid } = await supabase.rpc('check_activity_validity');
       if (isValid === false) {
-        const isProtectedApi = PROTECTED_API_PREFIXES.some((prefix) =>
-          request.nextUrl.pathname.startsWith(prefix),
-        ) && !request.nextUrl.pathname.startsWith('/api/health') && 
-           !request.nextUrl.pathname.startsWith('/api/auth');
-        
-        if (isProtectedApi) {
-          return NextResponse.json(
-            { error: 'session_expired', message: 'Session expired due to inactivity' },
-            { status: 401 },
-          );
-        }
+        return NextResponse.json(
+          { error: 'session_expired', message: 'Session expired due to inactivity' },
+          { status: 401 },
+        );
       }
-    } catch (err) {
+    } catch {
       // Don't block if check fails
     }
   }
@@ -97,10 +86,6 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  /*
-   * Everything except static assets. Running on `_next/static` would be pure
-   * overhead, and running on images would break Next's optimiser.
-   */
   matcher: [
     '/((?!_next/static|_next/image|favicon.ico|manifest.json|sw.js|icons/|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)',
   ],

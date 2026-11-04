@@ -30,7 +30,7 @@ const TAB_TYPES: Record<NotificationTab, NotificationType[] | null> = {
   All: null,
   Follows: ['follow'],
   Likes: ['like'],
-  Activity: ['match', 'message'],
+  Activity: ['match'],
   // Safety carries the M21 warnings and the outcome of a report you filed.
   Safety: ['warning', 'report'],
   Visitors: ['visitor'],
@@ -113,7 +113,9 @@ export function formatRelativeTime(iso: string, now: number = Date.now()): strin
   return `${months} month${months === 1 ? '' : 's'} ago`;
 }
 
-/** Newest first. RLS restricts the result to the caller's own rows. */
+/** Newest first. RLS restricts the result to the caller's own rows. Message
+ * notifications belong in the chat inbox, not the general feed, so they are
+ * excluded at the query layer — never merely hidden with CSS. */
 export async function fetchNotifications(limit = 100): Promise<NotificationRow[]> {
   // `body` arrived in a later migration (M21). A deployment that is behind would
   // otherwise fail the whole read with 42703, so degrade to the columns that
@@ -121,6 +123,7 @@ export async function fetchNotifications(limit = 100): Promise<NotificationRow[]
   const withBody = await supabase
     .from('notifications')
     .select('id, user_id, actor_id, type, entity_id, body, read_at, created_at')
+    .neq('type', 'message')
     .order('created_at', { ascending: false })
     .limit(limit);
 
@@ -134,6 +137,7 @@ export async function fetchNotifications(limit = 100): Promise<NotificationRow[]
   const withoutBody = await supabase
     .from('notifications')
     .select('id, user_id, actor_id, type, entity_id, read_at, created_at')
+    .neq('type', 'message')
     .order('created_at', { ascending: false })
     .limit(limit);
 
@@ -151,14 +155,17 @@ export async function fetchNotifications(limit = 100): Promise<NotificationRow[]
 /**
  * Unread count for the signed-in member, used by the navigation badge.
  *
- * There is no INSERT policy on `notifications`, so this only ever counts the
- * caller's own rows; a failure degrades to 0 rather than breaking the nav.
+ * Message notifications are excluded because they are counted inside the chat
+ * inbox instead. There is no INSERT policy on `notifications`, so this only
+ * ever counts the caller's own rows; a failure degrades to 0 rather than
+ * breaking the nav.
  */
 export async function fetchUnreadNotificationCount(): Promise<number> {
   const { count, error } = await supabase
     .from('notifications')
     .select('id', { count: 'exact', head: true })
-    .is('read_at', null);
+    .is('read_at', null)
+    .neq('type', 'message');
 
   if (error) {
     console.error('[notifications] unread count failed:', error.message);
@@ -186,7 +193,7 @@ export function subscribeToNotificationChanges(
         event: '*',
         schema: 'public',
         table: 'notifications',
-        filter: `user_id=eq.${userId}`,
+        filter: `user_id=eq.${userId},type=neq.message`,
       },
       () => onChange()
     )
@@ -307,7 +314,7 @@ export function subscribeToNotifications(
         event: 'INSERT',
         schema: 'public',
         table: 'notifications',
-        filter: `user_id=eq.${userId}`,
+        filter: `user_id=eq.${userId},type=neq.message`,
       },
       (payload) => {
         const row = payload.new as Partial<NotificationRow>;

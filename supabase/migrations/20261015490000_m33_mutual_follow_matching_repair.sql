@@ -57,12 +57,12 @@ begin
   perform pg_advisory_xact_lock(hashtext(lo::text || ':' || hi::text));
 
   if public.pair_should_match(lo, hi) then
-    insert into public.matches (user_a, user_b)
-    values (lo, hi)
+    insert into public.matches (user_a, user_b, user_a_id, user_b_id)
+    values (lo, hi, lo, hi)
     on conflict (user_a, user_b) do nothing;
   else
     delete from public.matches m
-    where m.user_a = lo and m.user_b = hi;
+    where (m.user_a = lo and m.user_b = hi) or (m.user_a_id = lo and m.user_b_id = hi);
   end if;
 end;
 $$;
@@ -155,12 +155,14 @@ create trigger profiles_sync_match_pairs_trg
 -- Remove matches that violate the follows-only, cross-gender, unblocked rule.
 -- This intentionally cleans up matches created by the old mutual-like rule.
 delete from public.matches m
-where not public.pair_should_match(m.user_a, m.user_b);
+where not public.pair_should_match(m.user_a_id, m.user_b_id);
 
 -- Create the matches that existing mutual follows should already have. The
 -- canonical `least/greatest` pair and the unique index make this idempotent.
-insert into public.matches (user_a, user_b)
+insert into public.matches (user_a, user_b, user_a_id, user_b_id)
 select least(f1.follower_id, f1.following_id),
+       greatest(f1.follower_id, f1.following_id),
+       least(f1.follower_id, f1.following_id),
        greatest(f1.follower_id, f1.following_id)
 from public.follows f1
 join public.follows f2
