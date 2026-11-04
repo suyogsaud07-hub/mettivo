@@ -15,6 +15,7 @@ import { fetchDiscoveryCandidates, rankDiscovery, type DiscoveryCandidate } from
 import { gendersForLookingFor } from '@/lib/dating-preferences';
 import type { MatchProfile } from '@/lib/matching';
 import { useFollow } from '@/context/FollowContext';
+import { calculateDistance, getCurrentUserLocation } from '@/lib/distance';
 
 /**
  * `/people` — swipeable discovery.
@@ -78,6 +79,8 @@ export default function PeoplePage() {
   const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [currentUserLocation, setCurrentUserLocation] = useState<{ lat: number; lon: number } | null>(null);
+  const [currentUserGender, setCurrentUserGender] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [exit, setExit] = useState<SwipeDirection | null>(null);
   const [drag, setDrag] = useState<DragState>({ x: 0, y: 0 });
@@ -109,6 +112,21 @@ export default function PeoplePage() {
         return;
       }
 
+      // Fetch current user gender and location
+      const { data: userProfile } = await supabase
+        .from('profiles')
+        .select('gender, latitude, longitude')
+        .eq('id', user.id)
+        .maybeSingle();
+      
+      setCurrentUserGender(userProfile?.gender || null);
+      
+      if (userProfile?.latitude && userProfile?.longitude) {
+        setCurrentUserLocation({ lat: userProfile.latitude, lon: userProfile.longitude });
+      } else {
+        getCurrentUserLocation().then(setCurrentUserLocation);
+      }
+
       const { data: profileCheck, error: gateError } = await supabase
         .from('profiles')
         .select('onboarding_completed, gender, intention, interests, prompts, looking_for')
@@ -126,9 +144,19 @@ export default function PeoplePage() {
         return;
       }
 
-      const genders = gendersForLookingFor(
+      let genders = gendersForLookingFor(
         Array.isArray(profileCheck.looking_for) ? profileCheck.looking_for : []
       );
+      
+      // Filter to opposite gender if current user's gender is set
+      if (userProfile?.gender) {
+        const g = userProfile.gender.toLowerCase();
+        const oppositeGender = g === 'male' || g === 'man' ? 'Woman' : 
+                               g === 'female' || g === 'woman' ? 'Man' : null;
+        if (oppositeGender) {
+          genders = [oppositeGender];
+        }
+      }
 
       const discovered = await fetchDiscoveryCandidates({
         minAge: 18,
@@ -247,13 +275,20 @@ export default function PeoplePage() {
 
     setBusy(true);
     setError(null);
-    setExit(isLike ? 'right' : 'left');
 
     try {
-      const result = await recordLike(candidate.id, isLike);
-      await wait(DECISION_DELAY_MS);
-      removeActive(candidate.id);
-      showNotice(result.matched ? "It's a match" : isLike ? 'Like sent' : 'Passed');
+      if (isLike) {
+        // Like - send like but DON'T swipe card away, keep on screen
+        const result = await recordLike(candidate.id, true);
+        showNotice(result.matched ? "It's a match" : 'Like sent');
+      } else {
+        // Pass - swipe card away
+        setExit('left');
+        const result = await recordLike(candidate.id, false);
+        await wait(DECISION_DELAY_MS);
+        removeActive(candidate.id);
+        showNotice('Passed');
+      }
     } catch (err) {
       console.error('[people] decision failed:', err);
       setExit(null);

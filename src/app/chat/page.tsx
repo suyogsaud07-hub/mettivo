@@ -33,6 +33,34 @@ function formatTimestamp(value: string | null): string {
   )}:${pad(date.getMinutes())}`;
 }
 
+function formatRelative(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const now = new Date();
+  const diffMins = Math.floor((now.getTime() - date.getTime()) / 60_000);
+  if (diffMins < 1) return 'just now';
+  if (diffMins < 60) return `${diffMins}m ago`;
+  const diffHours = Math.floor((now.getTime() - date.getTime()) / 3_600_000);
+  if (diffHours < 24) return `${diffHours}h ago`;
+  const startOfToday = new Date(now);
+  startOfToday.setHours(0, 0, 0, 0);
+  const startOfYesterday = new Date(startOfToday);
+  startOfYesterday.setDate(startOfYesterday.getDate() - 1);
+  if (
+    date.getTime() >= startOfYesterday.getTime() &&
+    date.getTime() < startOfToday.getTime()
+  ) {
+    return 'Yesterday';
+  }
+  const diffDays = Math.floor((now.getTime() - date.getTime()) / 86_400_000);
+  if (diffDays < 30) return `${diffDays}d ago`;
+  return date.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+}
+
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) return '?';
@@ -45,7 +73,9 @@ function matchesTab(conversation: InboxConversation, tab: InboxTab): boolean {
   if (conversation.isArchived) return false;
   if (tab === 'requests') return conversation.isRequest;
   if (tab === 'online') return conversation.isOnline;
-  return true;
+  // 'All' shows accepted conversations plus requests the current user sent.
+  // Incoming pending requests live only in the 'Requests' tab until accepted.
+  return !conversation.isRequest || conversation.requestedByMe;
 }
 
 function emptyMessage(tab: InboxTab): string {
@@ -115,6 +145,37 @@ export default function ChatListPage() {
     () => conversations.filter((conversation) => matchesTab(conversation, tab)),
     [conversations, tab]
   );
+
+  // Relative timestamps ("35m ago", "Yesterday") are computed on the client so
+  // the server-rendered HTML stays stable across reloads — CODING_STANDARDS §2
+  // forbids time-dependent values during render. The absolute format below is
+  // the hydration-stable initial paint; the effect swaps in relative text after
+  // mount, which is a normal post-hydration update.
+  const [relativeTimes, setRelativeTimes] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    let mounted = true;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const refresh = () => {
+      if (!mounted) return;
+      const next: Record<string, string> = {};
+      for (const conversation of visible) {
+        if (conversation.lastMessageAt) {
+          next[conversation.matchId] = formatRelative(conversation.lastMessageAt);
+        }
+      }
+      setRelativeTimes(next);
+      timer = setTimeout(refresh, 60_000);
+    };
+
+    refresh();
+
+    return () => {
+      mounted = false;
+      if (timer) clearTimeout(timer);
+    };
+  }, [visible]);
 
   const toggleArchive = async (conversation: InboxConversation) => {
     const nextArchived = !conversation.isArchived;
@@ -416,7 +477,7 @@ export default function ChatListPage() {
                             color: '#B58A83',
                           }}
                         >
-                          {formatTimestamp(conversation.lastMessageAt)}
+                          {relativeTimes[conversation.matchId] ?? formatTimestamp(conversation.lastMessageAt)}
                         </span>
                       </div>
 
@@ -424,6 +485,11 @@ export default function ChatListPage() {
                         style={{
                           margin: '6px 0 0 0',
                           fontSize: '13px',
+                          fontWeight:
+                            conversation.unreadCount > 0 &&
+                            !conversation.lastMessageIsMine
+                              ? 700
+                              : 400,
                           color: conversation.isRequest ? '#D4B18A' : '#B58A83',
                           overflow: 'hidden',
                           textOverflow: 'ellipsis',

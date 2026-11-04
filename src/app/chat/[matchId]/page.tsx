@@ -3,6 +3,7 @@
 import { useEffect, useState, use, useRef, useSyncExternalStore } from 'react';
 import type { RealtimePostgresChangesPayload } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
+import Link from 'next/link';
 import {
   markConversationRead,
   markMessagesDelivered,
@@ -53,6 +54,8 @@ const DISAPPEARING_SECONDS = 86_400;
  * unsubscribing, which this deliberately avoids.
  */
 function subscribeToBrowserLanguage(): () => void {
+
+
   return () => {};
 }
 
@@ -86,6 +89,40 @@ export default function ChatPage({
   const [sendingMedia, setSendingMedia] = useState(false);
   const [disappearing, setDisappearing] = useState<number | null>(null);
   const [togglingDisappearing, setTogglingDisappearing] = useState(false);
+  const deleteForMe = async (messageId: string) => {
+    const { data } = await supabase.auth.getUser();
+    const user = data?.user ?? null;
+    if (!user) return;
+    try {
+      await supabase.from('message_deletions').insert({ message_id: messageId, user_id: user.id });
+      setMessages((prev) => prev.filter((m) => m.id !== messageId));
+    } catch (err) {
+      console.error('Failed to delete for me:', err);
+    }
+  };
+
+  const unsendMessage = async (messageId: string) => {
+    try {
+      await supabase.from('messages').delete().eq('id', messageId);
+      setMessages((prev) => prev.filter((m) => m.id !== messageId));
+    } catch (err) {
+      console.error('Failed to unsend:', err);
+    }
+  };
+
+  const handleUnblock = async () => {
+    const target = otherUserIdRef.current;
+    if (!target) return;
+    try {
+      const { unblockMember } = await import('@/lib/blocking');
+      await unblockMember(target);
+      setBlocked(false);
+      setMenuOpen(false);
+    } catch (err) {
+      console.error('Failed to unblock:', err);
+    }
+  };
+
   const [sendState, setSendState] = useState<ConversationSendState | null>(null);
   const [responding, setResponding] = useState(false);
   const mediaInputRef = useRef<HTMLInputElement | null>(null);
@@ -520,12 +557,25 @@ export default function ChatPage({
           ← Back
         </button>
         <div className="min-w-0 flex-1 text-center">
-          <p className="truncate text-sm font-semibold text-neutral-100">
-            {conversationName}
-          </p>
-          {conversationUsername ? (
-            <p className="truncate text-xs text-amber-200/80">{conversationUsername}</p>
-          ) : null}
+          {otherUserId ? (
+            <Link href={`/profile/${otherUserId}`} className="block">
+              <p className="truncate text-sm font-semibold text-neutral-100 hover:underline">
+                {conversationName}
+              </p>
+              {conversationUsername ? (
+                <p className="truncate text-xs text-amber-200/80">{conversationUsername}</p>
+              ) : null}
+            </Link>
+          ) : (
+            <>
+              <p className="truncate text-sm font-semibold text-neutral-100">
+                {conversationName}
+              </p>
+              {conversationUsername ? (
+                <p className="truncate text-xs text-amber-200/80">{conversationUsername}</p>
+              ) : null}
+            </>
+          )}
         </div>
         <div className="flex items-center gap-2 relative shrink-0">
           <button
@@ -566,11 +616,11 @@ export default function ChatPage({
                   Report Conversation
                 </button>
                 <button
-                  onClick={handleBlock}
+                  onClick={blocked ? handleUnblock : handleBlock}
                   className="w-full text-left px-3 py-2 rounded hover:bg-neutral-100 dark:hover:bg-neutral-700 mt-1"
                   disabled={blocking || !otherUserId}
                 >
-                  {blocking ? 'Blocking…' : 'Block User'}
+                  {blocked ? 'Unblock User' : (blocking ? 'Blocking…' : 'Block User')}
                 </button>
                 <button
                   onClick={toggleDisappearing}
@@ -647,20 +697,32 @@ export default function ChatPage({
                 {media ? (
                   <ChatMediaMessage media={media} isOwn={isMe} />
                 ) : (
-                  <div
-                    className={`p-3 rounded-2xl max-w-[75%] ${
-                      isMe ? 'bg-rose-500 text-white' : 'bg-neutral-800 text-neutral-200'
-                    }`}
-                  >
-                    {/* Translation is on-demand and per message: nothing is sent to
-                        the provider until the member taps the control, and the
-                        original text is never replaced. */}
-                    <TranslatableMessage
-                      content={msg.content}
-                      isOwnMessage={isMe}
-                      targetLanguage={preferredTranslationLanguage}
-                      sourceLanguage={sourceLanguageHint}
-                    />
+                  <div className="relative group">
+                    <div
+                      className={`p-3 rounded-2xl max-w-[75%] ${
+                        isMe ? 'bg-rose-500 text-white' : 'bg-neutral-800 text-neutral-200'
+                      }`}
+                    >
+                      {/* Translation is on-demand and per message: nothing is sent to
+                          the provider until the member taps the control, and the
+                          original text is never replaced. */}
+                      <TranslatableMessage
+                        content={msg.content}
+                        isOwnMessage={isMe}
+                        targetLanguage={preferredTranslationLanguage}
+                        sourceLanguage={sourceLanguageHint}
+                      />
+                    </div>
+                    <div className={`absolute top-0 ${isMe ? '-left-24' : '-right-24'} hidden group-hover:flex flex-col gap-1 bg-neutral-800 rounded p-1 text-xs`}>
+                      <button onClick={() => deleteForMe(msg.id)} className="px-2 py-1 hover:bg-neutral-700 rounded text-left whitespace-nowrap">
+                        Delete for Me
+                      </button>
+                      {isMe && (
+                        <button onClick={() => unsendMessage(msg.id)} className="px-2 py-1 hover:bg-neutral-700 rounded text-left whitespace-nowrap text-rose-400">
+                          Unsend
+                        </button>
+                      )}
+                    </div>
                   </div>
                 )}
                 {/* Delivery/seen ticks belong to the sender's own messages. */}
