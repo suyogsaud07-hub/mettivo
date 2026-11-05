@@ -1,4 +1,5 @@
 'use client';
+/* eslint-disable @next/next/no-img-element */
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
@@ -8,40 +9,42 @@ import MobileNav from '@/app/components/layout/MobileNav';
 import CasualIntentCards from '@/components/explore/CasualIntentCards';
 import { type CasualIntent } from '@/lib/casual-intent';
 
-/**
- * Explore Page
- *
- * Showcases all discoverable content with filtering options.
- * Features casual intent category filters.
- */
+// Define the exact shape of the profile data to fix the 'any' error
+interface Profile {
+  id: string;
+  display_name: string | null;
+  username: string | null;
+  age: number | null;
+  gender: string | null;
+  city: string | null;
+  country: string | null;
+  avatar_url: string | null;
+  intention: string | null;
+  casual_intent: string | null;
+  bio: string | null;
+  is_online: boolean | null;
+}
 
 export default function ExplorePage() {
   const router = useRouter();
-  const [profiles, setProfiles] = useState<any[]>([]);
+  const [profiles, setProfiles] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedIntent, setSelectedIntent] = useState<CasualIntent | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
-  // Fetch current user
   useEffect(() => {
     const fetchUser = async () => {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      
+      const { data: { user } } = await supabase.auth.getUser();
       if (!user) {
         router.push('/auth');
         return;
       }
-      
       setCurrentUserId(user.id);
     };
-    
     void fetchUser();
   }, [router]);
 
-  // Fetch profiles with intent filtering
   useEffect(() => {
     const fetchProfiles = async () => {
       if (!currentUserId) return;
@@ -50,7 +53,6 @@ export default function ExplorePage() {
       setError(null);
 
       try {
-        // Check if user has completed onboarding
         const { data: profileCheck } = await supabase
           .from('profiles')
           .select('onboarding_completed')
@@ -62,26 +64,21 @@ export default function ExplorePage() {
           return;
         }
 
-        // Build query
         let query = supabase
           .from('profiles')
           .select('id, display_name, username, age, gender, city, country, avatar_url, intention, casual_intent, bio, is_online')
           .neq('id', currentUserId)
           .eq('onboarding_completed', true);
 
-        // Add intent filter if selected
         if (selectedIntent) {
           query = query.eq('casual_intent', selectedIntent);
         }
 
-        // Limit results
         const { data, error: queryError } = await query.limit(50);
 
-        if (queryError) {
-          throw queryError;
-        }
+        if (queryError) throw queryError;
 
-        setProfiles(data ?? []);
+        setProfiles((data as Profile[]) ?? []);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load profiles');
       } finally {
@@ -92,12 +89,10 @@ export default function ExplorePage() {
     void fetchProfiles();
   }, [currentUserId, selectedIntent, router]);
 
-  // Reload when intent filter changes
   const handleIntentChange = (intent: CasualIntent | null) => {
     setSelectedIntent(intent);
   };
 
-  // Clear intent filter
   const clearIntentFilter = () => {
     setSelectedIntent(null);
   };
@@ -112,7 +107,6 @@ export default function ExplorePage() {
 
   return (
     <div className="min-h-screen bg-[#131017] text-[#F2E9E4] flex flex-col">
-      {/* Header */}
       <header className="flex justify-between items-center p-6 border-b border-[#29202D]">
         <h1 className="text-2xl font-bold">Explore</h1>
         <Link
@@ -123,7 +117,6 @@ export default function ExplorePage() {
         </Link>
       </header>
 
-      {/* Casual Intent Filters */}
       <div className="p-4 border-b border-[#29202D]">
         <div className="flex justify-between items-center mb-3">
           <h2 className="text-sm font-semibold text-[#B58A83] uppercase tracking-wider">
@@ -146,7 +139,6 @@ export default function ExplorePage() {
         />
       </div>
 
-      {/* Main Content */}
       <main className="flex-1 overflow-y-auto">
         {loading ? (
           <div className="flex items-center justify-center py-16">
@@ -187,11 +179,11 @@ export default function ExplorePage() {
                   href={`/profile/${profile.username || profile.id}`}
                   className="group block bg-[#1C1822] border border-[#29202D] rounded-2xl overflow-hidden hover:border-[#D4B18A]/70 transition-colors"
                 >
-                  <div className="relative aspect-[3/4] bg-[#29202D]">
+                  <div className="relative aspect-3/4 bg-[#29202D]">
                     {profile.avatar_url ? (
                       <img
                         src={profile.avatar_url}
-                        alt={profile.display_name}
+                        alt={profile.display_name || 'User'}
                         className="w-full h-full object-cover"
                       />
                     ) : (
@@ -200,12 +192,10 @@ export default function ExplorePage() {
                       </div>
                     )}
                     
-                    {/* Online indicator */}
                     {profile.is_online && (
                       <div className="absolute top-2 right-2 w-3 h-3 bg-[#34D399] rounded-full border-2 border-[#1C1822]"/>
                     )}
 
-                    {/* Casual intent badge */}
                     {profile.casual_intent && (
                       <div className="absolute bottom-2 left-2 bg-[#D4B18A] text-[#17121C] text-xs px-2 py-1 rounded-full font-bold">
                         {profile.casual_intent === 'free_tonight' ? '🌙 Free Tonight' :
@@ -216,7 +206,7 @@ export default function ExplorePage() {
                   
                   <div className="p-4">
                     <h3 className="font-bold text-lg group-hover:text-[#D4B18A] transition-colors">
-                      {profile.display_name}
+                      {profile.display_name || 'Member'}
                       {profile.age ? `, ${profile.age}` : ''}
                     </h3>
                     <p className="text-sm text-[#B58A83] line-clamp-2">
@@ -236,7 +226,6 @@ export default function ExplorePage() {
         )}
       </main>
 
-      {/* Navigation */}
       <MobileNav />
     </div>
   );

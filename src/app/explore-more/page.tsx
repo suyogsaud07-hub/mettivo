@@ -4,22 +4,34 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import MobileNav from '@/app/components/layout/MobileNav';
+import { supabase } from '@/lib/supabase';
 import {
-  EXPLORE_CATEGORIES,
   ExploreMoreError,
   fetchExploreAccess,
   fetchExploreCounts,
   type ExploreCounts,
 } from '@/lib/explore-more';
 
+interface Category {
+  id: string;
+  title: string;
+  description: string;
+  icon: string;
+  is_active: boolean;
+  sort_order: number;
+  requires_goal?: boolean;
+}
+
 /**
- * `/explore-more` — the seven category entry points.
+ * `/explore-more` — dynamic category entry points.
  *
- * The counts are real and come from the same eligible set as every feed. A
- * category with no cards says so honestly rather than opening a dead end.
+ * Categories are fetched from the database, counts are real and come from the
+ * same eligible set as every feed. A category with no cards says so honestly
+ * rather than opening a dead end.
  */
 export default function ExploreMorePage() {
   const router = useRouter();
+  const [categories, setCategories] = useState<Category[]>([]);
   const [counts, setCounts] = useState<ExploreCounts | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -40,6 +52,21 @@ export default function ExploreMorePage() {
         return;
       }
 
+      // Fetch categories dynamically from Supabase
+      const { data: categoriesData, error: categoriesError } = await supabase
+        .from('explore_categories')
+        .select('*')
+        .eq('is_active', true)
+        .order('sort_order');
+
+      if (categoriesError) {
+        throw categoriesError;
+      }
+
+      const activeCategories = (categoriesData as Category[]) || [];
+      setCategories(activeCategories);
+
+      // Fetch counts for all categories
       setCounts(await fetchExploreCounts());
     } catch (err) {
       setError(
@@ -89,7 +116,7 @@ export default function ExploreMorePage() {
 
         {loading ? (
           <div className="explore-grid" aria-label="Loading Explore More categories" aria-busy="true">
-            {EXPLORE_CATEGORIES.map((category) => (
+            {categories.map((category) => (
               <div key={category.id} className="explore-card explore-skeleton" aria-hidden="true">
                 <span className="explore-skeleton-icon" />
                 <span className="explore-skeleton-lines">
@@ -109,12 +136,12 @@ export default function ExploreMorePage() {
           </div>
         ) : (
           <div className="explore-grid">
-            {EXPLORE_CATEGORIES.map((category) => {
-              const count = counts?.categories[category.id] ?? 0;
+            {categories.map((category) => {
+              const count = counts?.categories?.[category.id as keyof typeof counts.categories] ?? 0;
               return (
                 <Link
                   key={category.id}
-                  href={category.requiresGoal ? '/explore-more/dating-goals' : `/explore-more/${category.id}`}
+                  href={category.requires_goal ? '/explore-more/dating-goals' : `/explore-more/${category.id}`}
                   className="explore-card"
                   aria-label={`${category.title}, ${count} ${count === 1 ? 'person' : 'people'}`}
                 >
@@ -131,7 +158,7 @@ export default function ExploreMorePage() {
                       </span>
                     </span>
                     <span className="explore-card-desc">{category.description}</span>
-                    {category.requiresGoal ? (
+                    {category.requires_goal ? (
                       <span className="explore-card-hint">Choose from 3 dating goals</span>
                     ) : null}
                   </span>
@@ -147,8 +174,7 @@ export default function ExploreMorePage() {
         )}
 
         <p className="explore-footnote">
-          Explore More respects your gender and age preferences. Distance is not
-          used because Mettivo does not collect precise location.
+          Explore More respects your gender, age, and location preferences.
         </p>
       </main>
 

@@ -106,7 +106,7 @@ export default function LandingPage() {
             <span className="text-[#4A1828]">.</span>
           </div>
 
-          <div className="max-w-[260px] w-full flex flex-col gap-4 mx-auto">
+          <div className="max-w-65 w-full flex flex-col gap-4 mx-auto">
             <div className="flex flex-col gap-1 leading-tight">
               <p className="text-[#F2E9E4] text-xs">
                 Someone on Mettivo might give you butterflies.
