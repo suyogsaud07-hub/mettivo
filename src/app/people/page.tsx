@@ -439,7 +439,9 @@ export default function PeoplePage() {
               <div className="people-next-card" aria-hidden="true">
                 {profilePhotos(next.avatarUrl, next.photos)[0] ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img
+                  <img loading="lazy"
+
+
                     src={profilePhotos(next.avatarUrl, next.photos)[0]}
                     alt=""
                     loading="lazy"

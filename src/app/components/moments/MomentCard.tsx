@@ -256,7 +256,9 @@ export default function MomentCard({
       <div style={styles.postHeader}>
         <ProfileLink userId={author.id} label={`View ${author.displayName}'s profile`}>
           {author.avatarUrl ? (
-            <img src={author.avatarUrl} alt={author.displayName} style={styles.avatar} />
+            <img loading="lazy"
+
+ src={author.avatarUrl} alt={author.displayName} style={styles.avatar} />
           ) : (
             <div style={styles.avatarFallback}>{genderIcon(author.gender)}</div>
           )}
@@ -351,7 +353,9 @@ export default function MomentCard({
             </>
           ) : (
             post.media.map((url, index) => (
-              <img
+              <img loading="lazy"
+
+
                 key={index}
                 src={url}
                 alt={`Post media ${index + 1}`}
@@ -480,7 +484,9 @@ export default function MomentCard({
           >
             ×
           </button>
-          <img
+          <img loading="lazy"
+
+
             src={viewingMedia}
             alt="Expanded post media"
             style={styles.lightboxImage}

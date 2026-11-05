@@ -90,7 +90,9 @@ export default function SubbuChat() {
           <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
             <div className={`max-w-[80%] rounded-2xl p-3 ${msg.role === 'user' ? 'bg-pink-600 rounded-tr-sm' : 'bg-gray-700 rounded-tl-sm'}`}>
               {msg.imageUrl && (
-                <img src={msg.imageUrl} alt="Mettivo Click" className="rounded-lg mb-2 max-h-60 object-cover" />
+                <img loading="lazy"
+
+ src={msg.imageUrl} alt="Mettivo Click" className="rounded-lg mb-2 max-h-60 object-cover" />
               )}
               <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
             </div>

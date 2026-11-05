@@ -130,7 +130,9 @@ export default function PhotoUploadStep({
         />
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
           {avatar ? (
-            <img src={avatar} alt="Profile picture" style={avatarStyle} />
+            <img loading="lazy"
+
+ src={avatar} alt="Profile picture" style={avatarStyle} />
           ) : (
             <div
               style={{
@@ -171,7 +173,9 @@ export default function PhotoUploadStep({
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'center' }}>
           {gallery.map((photo, index) => (
             <div key={index} style={{ position: 'relative' }}>
-              <img src={photo} alt={`Gallery photo ${index + 1}`} style={thumbStyle} />
+              <img loading="lazy"
+
+ src={photo} alt={`Gallery photo ${index + 1}`} style={thumbStyle} />
               <button
                 type="button"
                 aria-label={`Remove gallery photo ${index + 1}`}

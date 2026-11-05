@@ -134,7 +134,9 @@ export default function MatchesPage() {
           {matches.map(({ matchId, profile }) => (
             <div key={matchId} style={styles.userCard} onClick={() => router.push(`/chat/${matchId}`)}>
               {profile?.avatar_url ? (
-                <img src={profile.avatar_url} alt={profile.display_name ?? 'Match'} style={styles.avatar} />
+                <img loading="lazy"
+
+ src={profile.avatar_url} alt={profile.display_name ?? 'Match'} style={styles.avatar} />
               ) : (
                 <div style={{ ...styles.avatar, display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '20px' }}>👤</div>
               )}

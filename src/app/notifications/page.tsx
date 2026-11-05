@@ -293,7 +293,9 @@ export default function NotificationsPage() {
                 onClick={() => void handleOpen(notif)}
               >
                 {actor?.avatarUrl ? (
-                  <img src={actor.avatarUrl} alt={name} style={styles.avatar} />
+                  <img loading="lazy"
+
+ src={actor.avatarUrl} alt={name} style={styles.avatar} />
                 ) : (
                   <div style={styles.avatarFallback}>{actor ? getGenderIcon(actor.gender) : '🔔'}</div>
                 )}

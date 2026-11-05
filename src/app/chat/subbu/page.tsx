@@ -287,7 +287,9 @@ export default function SubbuChatPage() {
               >
                 {/* Display the Mettivo Click image if it exists */}
                 {msg.imageUrl && (
-                  <img 
+                  <img loading="lazy"
+
+ 
                     src={msg.imageUrl} 
                     alt="Mettivo Click" 
                     className="rounded-lg mb-2 max-h-60 object-cover w-full" 

@@ -166,7 +166,9 @@ export default function AdminUsersPage() {
                       <div className="admin-avatar">
                         {row.avatarUrl ? (
                           // eslint-disable-next-line @next/next/no-img-element
-                          <img src={row.avatarUrl} alt="" />
+                          <img loading="lazy"
+
+ src={row.avatarUrl} alt="" />
                         ) : (
                           row.displayName.charAt(0).toUpperCase()
                         )}
@@ -227,7 +229,9 @@ export default function AdminUsersPage() {
                   <div className="admin-avatar" style={{ width: 48, height: 48, flexBasis: 48 }}>
                     {detail.data.avatarUrl ? (
                       // eslint-disable-next-line @next/next/no-img-element
-                      <img src={detail.data.avatarUrl} alt="" />
+                      <img loading="lazy"
+
+ src={detail.data.avatarUrl} alt="" />
                     ) : (
                       detail.data.displayName.charAt(0).toUpperCase()
                     )}

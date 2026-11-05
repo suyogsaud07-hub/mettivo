@@ -312,7 +312,9 @@ export default function ChatInfoPage({
             }}
           >
             {profile.avatar_url ? (
-              <img
+              <img loading="lazy"
+
+
                 src={profile.avatar_url}
                 alt={displayName}
                 style={{

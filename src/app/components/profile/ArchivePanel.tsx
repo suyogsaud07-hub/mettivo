@@ -144,7 +144,9 @@ export default function ArchivePanel({ onClose, onChanged }: ArchivePanelProps) 
                     isVideo ? (
                       <span style={styles.thumbIcon} aria-hidden>🎬</span>
                     ) : (
-                      <img src={mediaUrl} alt="" style={styles.thumb} />
+                      <img loading="lazy"
+
+ src={mediaUrl} alt="" style={styles.thumb} />
                     )
                   ) : (
                     <span style={styles.thumbIcon} aria-hidden>📝</span>

@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
+import { SpeedInsights } from "@vercel/speed-insights/next"
 import { LanguageProvider } from '@/context/LanguageContext';
 import { FollowProvider } from '@/context/FollowContext';
 import ServiceWorkerRegistrar from '@/app/components/ServiceWorkerRegistrar';
@@ -79,15 +80,12 @@ export default function RootLayout({
             <ClientInit />
           </FollowProvider>
           <ServiceWorkerRegistrar />
-          {/*
-            Global location prompt. Mounted once here so it survives client-side
-            navigation (the App Router keeps this layout mounted), which is what
-            makes it a "once per app load", not "once per page". It renders
-            nothing until it has a signed-in user, and nothing at all for a
-            signed-out visitor.
-          */}
           <LocationVerificationGate />
         </LanguageProvider>
+        
+        {/* ADD THIS LINE RIGHT HERE */}
+        <SpeedInsights />
+        
       </body>
     </html>
   );

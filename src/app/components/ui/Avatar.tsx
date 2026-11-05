@@ -37,7 +37,9 @@ export const Avatar: React.FC<AvatarProps> = ({
         }`}
       >
         {src && !hasError ? (
-          <img
+          <img loading="lazy"
+
+
             src={src}
             alt={alt}
             className="w-full h-full object-cover"

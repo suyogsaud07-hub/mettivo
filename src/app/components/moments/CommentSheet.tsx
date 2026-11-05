@@ -144,7 +144,9 @@ export default function CommentSheet({
               return (
                 <div key={comment.id} style={styles.comment}>
                   {author?.avatarUrl ? (
-                    <img src={author.avatarUrl} alt="" style={styles.avatar} />
+                    <img loading="lazy"
+
+ src={author.avatarUrl} alt="" style={styles.avatar} />
                   ) : (
                     <div style={styles.avatarFallback}>{genderIcon(author?.gender ?? '')}</div>
                   )}

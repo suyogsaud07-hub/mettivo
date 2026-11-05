@@ -375,7 +375,9 @@ export default function DiscoverPage() {
           {profiles.map((profile) => (
             <div key={profile.id} style={styles.listItem}>
               <ProfileLink userId={profile.id} label={`View ${profile.display_name}'s profile`} style={styles.avatarWrapper}>
-                {profile.avatar_url ? <img src={profile.avatar_url} alt={profile.display_name} style={styles.avatar} /> : <div style={{ ...styles.avatar, display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '24px' }}>👤</div>}
+                {profile.avatar_url ? <img loading="lazy"
+
+ src={profile.avatar_url} alt={profile.display_name} style={styles.avatar} /> : <div style={{ ...styles.avatar, display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '24px' }}>👤</div>}
                 {profile.is_online && <span style={styles.onlineDot} aria-label="Online" title="Online" />}
               </ProfileLink>
               <ProfileLink userId={profile.id} label={`View ${profile.display_name}'s profile`} style={styles.infoWrapper}>

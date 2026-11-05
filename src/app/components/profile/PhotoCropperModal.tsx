@@ -10,7 +10,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
  * member sees is what gets verified and stored — the crop is committed before
  * the AI ever sees the photo.
  *
- * The maths is deliberately explicit: the <img> is drawn centred in a square
+ * The maths is deliberately explicit: the <img loading="lazy"
+
+> is drawn centred in a square
  * viewport and translated by `offset` at `scale`, and `toSourceRect` inverts
  * exactly that transform to draw the crop. No libraries, no `any`.
  */
@@ -202,7 +204,9 @@ export default function PhotoCropperModal({
         }}
       >
         {natural ? (
-          <img
+          <img loading="lazy"
+
+
             src={src}
             alt=""
             draggable={false}

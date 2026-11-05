@@ -202,7 +202,9 @@ export default function GameZonePage() {
       <div style={styles.banner}>
         <div style={styles.bannerTop}>
           {avatarUrl ? (
-            <img src={avatarUrl} alt="User" style={styles.avatar} />
+            <img loading="lazy"
+
+ src={avatarUrl} alt="User" style={styles.avatar} />
           ) : (
             <div style={styles.avatarFallback}>🎮</div>
           )}
@@ -241,7 +243,9 @@ export default function GameZonePage() {
       <div style={styles.sectionTitle}>⭐ Featured Today</div>
       <div style={styles.featuredCard}>
         <div style={styles.featuredBadge}>FEATURED TODAY</div>
-        <img src={featuredGame.image} alt={featuredGame.title} style={styles.featuredImage} />
+        <img loading="lazy"
+
+ src={featuredGame.image} alt={featuredGame.title} style={styles.featuredImage} />
         <div style={styles.featuredTitle}>{featuredGame.title}</div>
         <div style={styles.featuredDesc}>{featuredGame.description}</div>
         <div style={styles.featuredBottom}>
@@ -270,7 +274,9 @@ export default function GameZonePage() {
                   onClick={() => openGame(game.id)}
                   aria-label={`Play ${game.title}`}
                 >
-                  <img src={game.image} alt={game.title} style={styles.gameCardImage} />
+                  <img loading="lazy"
+
+ src={game.image} alt={game.title} style={styles.gameCardImage} />
                   <div style={styles.gameCardGradient} />
                   {game.playable ? (
                     <div style={styles.liveBadge}>PLAY</div>

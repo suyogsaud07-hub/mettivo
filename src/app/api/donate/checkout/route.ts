@@ -132,7 +132,12 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   const stripe = new Stripe(env.secretKey);
 
-  const donorUserId = await signedInUserId();
+    const donorUserId = await signedInUserId();
+  
+  // STRICT SECURITY: Block anonymous users entirely
+  if (!donorUserId) {
+    return NextResponse.json({ error: 'You must be logged in to donate.' }, { status: 401 });
+  }
   const donorName = donorDisplayName(body.displayName);
   const donationMetadata: Record<string, string> = {
     kind: 'donation',

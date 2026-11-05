@@ -625,7 +625,9 @@ export default function MomentsPage() {
                     {item.mediaType === 'video' ? (
                       <video src={item.previewUrl} style={styles.mediaPreview} controls muted playsInline />
                     ) : (
-                      <img src={item.previewUrl} alt={`Preview ${index + 1}`} style={styles.mediaPreview} />
+                      <img loading="lazy"
+
+ src={item.previewUrl} alt={`Preview ${index + 1}`} style={styles.mediaPreview} />
                     )}
                     <button
                       style={styles.removeMediaBtn}

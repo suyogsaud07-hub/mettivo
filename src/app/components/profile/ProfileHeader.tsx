@@ -85,7 +85,9 @@ export default function ProfileHeader({
         <div className="pf-identity">
           <div className="pf-avatar-wrap">
             {avatarUrl ? (
-              <img
+              <img loading="lazy"
+
+
                 src={avatarUrl}
                 alt={`${safeName}'s profile photo`}
                 className="pf-avatar"

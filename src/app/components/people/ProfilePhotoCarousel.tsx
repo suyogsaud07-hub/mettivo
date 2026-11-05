@@ -86,7 +86,9 @@ export default function ProfilePhotoCarousel({
         </div>
       ) : (
         // eslint-disable-next-line @next/next/no-img-element
-        <img
+        <img loading="lazy"
+
+
           src={current}
           alt={`${name}, photo ${active + 1} of ${urls.length}`}
           draggable={false}

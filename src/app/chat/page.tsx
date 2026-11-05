@@ -383,7 +383,9 @@ export default function ChatListPage() {
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                     <span style={{ position: 'relative', flexShrink: 0 }}>
                       {conversation.avatarUrl ? (
-                        <img
+                        <img loading="lazy"
+
+
                           src={conversation.avatarUrl}
                           alt=""
                           aria-hidden="true"

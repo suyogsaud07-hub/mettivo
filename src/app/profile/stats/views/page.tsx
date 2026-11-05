@@ -354,7 +354,9 @@ export default function ProfileViewsPage() {
                     >
                       <span className="pf-views-avatar-wrap">
                         {viewer.avatar_url ? (
-                          <img src={viewer.avatar_url} alt="" className="pf-views-avatar" />
+                          <img loading="lazy"
+
+ src={viewer.avatar_url} alt="" className="pf-views-avatar" />
                         ) : (
                           <span className="pf-views-avatar pf-views-avatar-fallback" aria-hidden="true">
                             {initials(name)}

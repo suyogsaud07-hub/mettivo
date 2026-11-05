@@ -229,7 +229,9 @@ export default function UserList({ type }: UserListProps) {
                 <div key={user.id} style={styles.userCard}>
                   <ProfileLink userId={user.id} label={`View ${user.display_name ?? 'this member'}'s profile`}>
                     {user.avatar_url ? (
-                      <img src={user.avatar_url} alt={user.display_name ?? 'Member'} style={styles.avatar} />
+                      <img loading="lazy"
+
+ src={user.avatar_url} alt={user.display_name ?? 'Member'} style={styles.avatar} />
                     ) : (
                       <div style={{ ...styles.avatar, display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '20px' }}>👤</div>
                     )}

@@ -275,7 +275,9 @@ export default function MettivoVoicePage() {
             <div key={profile.id} style={styles.card}>
               <div style={styles.avatarWrapper}>
                 {profile.avatar_url ? (
-                  <img src={profile.avatar_url} alt={profile.display_name} style={styles.avatar} />
+                  <img loading="lazy"
+
+ src={profile.avatar_url} alt={profile.display_name} style={styles.avatar} />
                 ) : (
                   <div style={{ ...styles.avatar, display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '24px' }}>👤</div>
                 )}

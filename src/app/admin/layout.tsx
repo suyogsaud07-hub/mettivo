@@ -344,7 +344,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 <div className="admin-avatar">
                   {identity.avatarUrl ? (
                     // eslint-disable-next-line @next/next/no-img-element
-                    <img src={identity.avatarUrl} alt="" />
+                    <img loading="lazy"
+
+ src={identity.avatarUrl} alt="" />
                   ) : (
                     initials(identity.displayName)
                   )}

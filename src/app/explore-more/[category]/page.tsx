@@ -448,7 +448,9 @@ function ExplorePersonCard({
           className="explore-person-photo-link"
         >
           {photo ? (
-            <img
+            <img loading="lazy"
+
+
               src={photo}
               alt=""
               className="explore-person-photo"

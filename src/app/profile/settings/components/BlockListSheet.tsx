@@ -140,7 +140,9 @@ export default function BlockListSheet({ onToast }: BlockListSheetProps) {
             >
               {row.avatarUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={row.avatarUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                <img loading="lazy"
+
+ src={row.avatarUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
               ) : (
                 row.displayName.charAt(0).toUpperCase()
               )}

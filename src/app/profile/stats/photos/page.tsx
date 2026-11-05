@@ -53,7 +53,9 @@ export default function PhotosPage() {
         <div style={styles.emptyState}><div style={styles.emptyIcon}>📸</div><div style={styles.emptyText}>No photos yet.</div></div>
       ) : (
         <div style={styles.photoGrid}>
-          {photos.map((url, i) => <img key={i} src={url} alt="Photo" style={styles.photo} />)}
+          {photos.map((url, i) => <img loading="lazy"
+
+ key={i} src={url} alt="Photo" style={styles.photo} />)}
         </div>
       )}
       <MobileNav />
