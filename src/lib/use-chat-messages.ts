@@ -70,10 +70,10 @@ export interface UseChatMessagesResult {
  * Hook that owns message fetching, pagination, realtime subscription, and
  * message grouping for one conversation.
  *
- * `otherIdentity` is tracked through a ref so that a caller passing a fresh
- * object literal on every render (e.g. an inline object) cannot retrigger the
- * subscription or a reload. `currentUserId` remains a real dependency so the
- * conversation is (re)loaded once the signed-in member is resolved.
+ * The realtime channel is created exactly once per matchId using a single
+ * `.channel() → .on() → .subscribe()` chain. `otherIdentity` and `hasMore`
+ * are tracked through refs so that a caller-supplied inline object or a
+ * pagination state change cannot retrigger the subscription.
  */
 export function useChatMessages(
   matchId: string,
@@ -90,21 +90,32 @@ export function useChatMessages(
   const lastCreatedAtRef = useRef<string | null>(null);
   const isMountedRef = useRef(true);
 
-  // Holds the latest `otherIdentity` without making it a dependency. This
-  // prevents a caller-supplied inline object from retriggering the
-  // subscription on every render. Kept in sync via an effect after commit.
+  // Refs keep the latest values without making them effect dependencies.
+  // This prevents a fresh object literal or a pagination state change from
+  // causing the channel to be torn down and re-subscribed.
   const otherIdentityRef = useRef<{
     display_name: string | null;
     avatar_url: string | null;
   } | null>(null);
+  const hasMoreRef = useRef(hasMore);
+  const currentUserIdRef = useRef<string | null>(null);
+
   useEffect(() => {
     otherIdentityRef.current = otherIdentity;
   }, [otherIdentity]);
 
+  useEffect(() => {
+    hasMoreRef.current = hasMore;
+  }, [hasMore]);
+
+  useEffect(() => {
+    currentUserIdRef.current = currentUserId;
+  }, [currentUserId]);
+
   const loadMessages = useCallback(
     async (older: boolean = false): Promise<void> => {
       if (!matchId) return;
-      if (older && !hasMore) return;
+      if (older && !hasMoreRef.current) return;
 
       try {
         setLoading(true);
@@ -114,7 +125,7 @@ export function useChatMessages(
         const parsed: ChatMessage[] = rows.map((row, index) =>
           toChatMessage(
             row,
-            currentUserId,
+            currentUserIdRef.current,
             otherIdentityRef.current,
             index > 0 ? rows[index - 1].senderId : null
           )
@@ -160,18 +171,18 @@ export function useChatMessages(
         if (isMountedRef.current) setLoading(false);
       }
     },
-    [matchId, currentUserId, hasMore]
+    [matchId]
   );
 
   const send = useCallback(
     async (content: string): Promise<void> => {
-      if (!matchId || !currentUserId) return;
+      if (!matchId || !currentUserIdRef.current) return;
 
       const optimisticId = `opt-${Date.now()}`;
       const optimistic: ChatMessage = {
         id: optimisticId,
         matchId,
-        senderId: currentUserId,
+        senderId: currentUserIdRef.current,
         content,
         messageType: 'text',
         createdAt: new Date().toISOString(),
@@ -187,7 +198,7 @@ export function useChatMessages(
 
       setItems((prev) => {
         const last = prev[prev.length - 1];
-        const sameSender = last && 'senderId' in last && last.senderId === currentUserId;
+        const sameSender = last && 'senderId' in last && last.senderId === currentUserIdRef.current;
         optimistic.isGrouped = sameSender;
         optimistic.isGroupStart = !sameSender;
         return [...prev, optimistic];
@@ -224,7 +235,7 @@ export function useChatMessages(
         );
       }
     },
-    [matchId, currentUserId]
+    [matchId]
   );
 
   useEffect(() => {
@@ -240,25 +251,29 @@ export function useChatMessages(
         if (user) setOtherUserId(null); // resolved elsewhere
       }
 
-      // Initial load is intentional: it populates state from an async source.
+      // Initial load happens after the signed-in member is resolved.
       void loadMessages();
     })();
 
+    // Strict chain: channel() → on() → subscribe(). A single postgres_changes
+    // listener with event: '*' handles both INSERT and UPDATE so we never
+    // add callbacks after the channel has subscribed.
     const channel = supabase
       .channel(`chat:${matchId}`)
       .on(
         'postgres_changes',
         {
-          event: 'INSERT',
+          event: '*',
           schema: 'public',
           table: 'messages',
           filter: `match_id=eq.${matchId}`,
         },
         (payload) => {
-          const row = payload.new as MessageRecord;
-          if (!isMountedRef.current) return;
+          const row = payload.new as MessageRecord | null;
+          const eventType = payload.eventType;
+          if (!row || !isMountedRef.current) return;
 
-          // Ignore our own optimistic insert; it will be replaced by the real row.
+          // Ignore our own optimistic insert; the real row replaces it.
           if ('optimisticId' in row) return;
 
           const lastItem = items[items.length - 1];
@@ -266,59 +281,49 @@ export function useChatMessages(
             ? (lastItem as ChatMessage).senderId
             : null;
 
-          const msg = toChatMessage(
-            row,
-            currentUserId,
-            otherIdentityRef.current,
-            lastSender
-          );
+          if (eventType === 'INSERT') {
+            const msg = toChatMessage(
+              row,
+              currentUserIdRef.current,
+              otherIdentityRef.current,
+              lastSender
+            );
 
-          setItems((prev) => {
-            const last = prev[prev.length - 1];
-            const lastCreatedAt = 'createdAt' in last ? last.createdAt : null;
-            const needsDateSep =
-              !last || ('type' in last && last.type === 'date') || (lastCreatedAt && !isSameDay(msg.createdAt, lastCreatedAt));
-            const sep: ChatListItem | null = needsDateSep
-              ? {
-                  type: 'date',
-                  label: new Date(msg.createdAt).toLocaleDateString(undefined, {
-                    weekday: 'long',
-                    month: 'long',
-                    day: 'numeric',
-                  }),
-                }
-              : null;
-            return [...(sep ? [sep] : []), msg];
-          });
-        }
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'messages',
-          filter: `match_id=eq.${matchId}`,
-        },
-        (payload) => {
-          const row = payload.new as MessageRecord;
-          if (!isMountedRef.current) return;
-          setItems((prev) =>
-            prev.map((item) =>
-              'senderId' in item && item.id === row.id
+            setItems((prev) => {
+              const last = prev[prev.length - 1];
+              const lastCreatedAt = 'createdAt' in last ? last.createdAt : null;
+              const needsDateSep =
+                !last || ('type' in last && last.type === 'date') || (lastCreatedAt && !isSameDay(msg.createdAt, lastCreatedAt));
+              const sep: ChatListItem | null = needsDateSep
                 ? {
-                    ...item,
-                    deliveredAt: row.deliveredAt,
-                    seenAt: row.seenAt,
-                    status: row.seenAt
-                      ? 'seen'
-                      : row.deliveredAt
-                        ? 'delivered'
-                        : item.status,
+                    type: 'date',
+                    label: new Date(msg.createdAt).toLocaleDateString(undefined, {
+                      weekday: 'long',
+                      month: 'long',
+                      day: 'numeric',
+                    }),
                   }
-                : item
-            )
-          );
+                : null;
+              return [...(sep ? [sep] : []), msg];
+            });
+          } else if (eventType === 'UPDATE') {
+            setItems((prev) =>
+              prev.map((item) =>
+                'senderId' in item && item.id === row.id
+                  ? {
+                      ...item,
+                      deliveredAt: row.deliveredAt,
+                      seenAt: row.seenAt,
+                      status: row.seenAt
+                        ? 'seen'
+                        : row.deliveredAt
+                          ? 'delivered'
+                          : item.status,
+                    }
+                  : item
+              )
+            );
+          }
         }
       )
       .subscribe();
@@ -330,7 +335,7 @@ export function useChatMessages(
       void supabase.removeChannel(channel);
       channelRef.current = null;
     };
-  }, [matchId, currentUserId, loadMessages]);
+  }, [matchId, loadMessages]);
 
   return {
     items,

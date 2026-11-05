@@ -656,6 +656,7 @@ export default function OrbitPage() {
         }
       } catch (err) {
         if (seq !== requestSeqRef.current) return;
+        console.error('[orbit] get_orbit_profiles failed:', err);
         const errorMessage = err instanceof Error ? err.message : 'Failed to load profiles';
         setError(errorMessage);
         setProfiles([]);
@@ -905,11 +906,7 @@ export default function OrbitPage() {
         </div>
       )}
 
-      {emptyToast && !loading && (
-        <div className="absolute bottom-10 left-1/2 -translate-x-1/2 z-20 bg-[#1C1822] border border-[#34283F] rounded-full px-4 py-2 text-xs text-[#B58A83] shadow-lg whitespace-nowrap animate-pulse">
-          No one found in this area
-        </div>
-      )}
+
 
       {error && (
         <div className="absolute bottom-26 left-4 z-10 bg-[#3B1220] border border-[#7F1D2E] text-[#FCA5B5] rounded-xl p-4 max-w-xs" role="alert">
