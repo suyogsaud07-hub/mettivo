@@ -361,6 +361,31 @@ export default function DiscoverPage() {
         </div>
       </button>
 
+      {/* Live Orbit Card */}
+      <button
+        type="button"
+        style={styles.exploreBanner}
+        onClick={() => router.push('/orbit')}
+        aria-label="Live Orbit - See who is online around the world"
+      >
+        <div style={styles.echoLeft}>
+          <div style={styles.echoTitleRow}>
+            <span style={styles.echoTitle}>Live Orbit</span>
+            <span style={styles.echoBadge}>Global</span>
+          </div>
+          <span style={styles.echoSubtitle}>See who is online around the world</span>
+        </div>
+        <div style={{ ...styles.echoIconBtn, width: '44px', height: '44px' }} aria-hidden="true">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#D4B18A" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="10" />
+            <line x1="12" y1="2" x2="12" y2="12" />
+            <line x1="2" y1="12" x2="12" y2="12" />
+            <line x1="12" y1="12" x2="22" y2="12" />
+            <line x1="12" y1="12" x2="12" y2="22" />
+          </svg>
+        </div>
+      </button>
+
       {loading ? (
         <div style={{ textAlign: 'center', marginTop: '40px', color: '#B58A83' }}>Finding people for you...</div>
       ) : profiles.length === 0 ? (

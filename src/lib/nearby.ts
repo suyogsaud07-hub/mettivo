@@ -1,5 +1,5 @@
 /**
- * Nearby Location Functions
+ * Nearby & Orbit Location Functions
  *
  * Handles fetching nearby profiles and location-based operations.
  * Uses the PostGIS RPC functions with privacy-protected grid snapping.
@@ -8,9 +8,31 @@
 import { supabase } from './supabase';
 
 /**
+ * Profile data returned from get_orbit_profiles RPC
+ * Note: This is the same structure as NearbyProfile but used for Orbit
+ */
+export interface OrbitProfile {
+  id: string;
+  displayName: string;
+  username: string | null;
+  avatarUrl: string | null;
+  age: number | null;
+  gender: string | null;
+  city: string | null;
+  country: string | null;
+  intention: string | null;
+  casualIntent: string | null;
+  bio: string | null;
+  isOnline: boolean | null;
+  snappedLat: number | null;
+  snappedLon: number | null;
+  distanceMeters: number;
+}
+
+/**
  * Profile data returned from get_nearby_profiles RPC
  */
-export interface NearbyProfile {
+export interface NearbyProfile extends OrbitProfile {}
   id: string;
   displayName: string;
   username: string | null;
@@ -244,4 +266,100 @@ export function formatDistance(meters: number): string {
   }
   const km = meters / 1000;
   return km < 10 ? `${km.toFixed(1)}km` : `${Math.round(km)}km`;
+}
+
+/**
+ * Options for fetching orbit profiles with filters
+ */
+export interface OrbitProfilesOptions {
+  /** Map center latitude */
+  latitude: number;
+  /** Map center longitude */
+  longitude: number;
+  /** Search radius in kilometers (use 20000 for global) */
+  radiusKm?: number | 'global';
+  /** Minimum age */
+  minAge?: number;
+  /** Maximum age */
+  maxAge?: number;
+  /** Filter by gender */
+  gender?: string | null;
+  /** Only show online users */
+  onlineOnly?: boolean;
+  /** Filter by country */
+  country?: string | null;
+  /** Maximum number of results (default: 100) */
+  limit?: number;
+}
+
+/**
+ * Fetch orbit profiles with advanced filtering from the RPC
+ * 
+ * IMPORTANT: The RPC returns SNAPPED locations for privacy protection.
+ * Users' exact locations are never exposed to the frontend.
+ * Use radiusKm: 'global' for worldwide search (20000km radius).
+ */
+export async function fetchOrbitProfiles(
+  options: OrbitProfilesOptions
+): Promise<{ profiles: OrbitProfile[]; error: string | null }> {
+  const {
+    latitude,
+    longitude,
+    radiusKm = 'global',
+    minAge = 18,
+    maxAge = 99,
+    gender = null,
+    onlineOnly = false,
+    country = null,
+    limit = 100,
+  } = options;
+
+  try {
+    // Call the RPC function
+    const { data, error } = await supabase.rpc('get_orbit_profiles', {
+      p_lat: latitude,
+      p_lng: longitude,
+      p_radius_km: radiusKm === 'global' ? 20000 : radiusKm,
+      p_min_age: minAge,
+      p_max_age: maxAge,
+      p_gender: gender,
+      p_online_only: onlineOnly,
+      p_country: country,
+    });
+
+    if (error) {
+      throw error;
+    }
+
+    if (!data || !Array.isArray(data)) {
+      return { profiles: [], error: null };
+    }
+
+    // Parse the results
+    const profiles: OrbitProfile[] = data.map((row: Record<string, unknown>) => ({
+      id: String(row.id ?? ''),
+      displayName: String(row.display_name ?? 'Member'),
+      username: row.username ? String(row.username) : null,
+      avatarUrl: row.avatar_url ? String(row.avatar_url) : null,
+      age: typeof row.age === 'number' ? row.age : null,
+      gender: row.gender ? String(row.gender) : null,
+      city: row.city ? String(row.city) : null,
+      country: row.country ? String(row.country) : null,
+      intention: row.intention ? String(row.intention) : null,
+      casualIntent: row.casual_intent ? String(row.casual_intent) : null,
+      bio: row.bio ? String(row.bio) : null,
+      isOnline: typeof row.is_online === 'boolean' ? row.is_online : null,
+      snappedLat: typeof row.snapped_lat === 'number' ? row.snapped_lat : null,
+      snappedLon: typeof row.snapped_lng === 'number' ? row.snapped_lng : null,
+      distanceMeters: typeof row.distance_meters === 'number' ? row.distance_meters : 0,
+    }));
+
+    // Limit results
+    const limitedProfiles = profiles.slice(0, limit);
+
+    return { profiles: limitedProfiles, error: null };
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : 'Failed to fetch orbit profiles';
+    return { profiles: [], error: errorMessage };
+  }
 }
