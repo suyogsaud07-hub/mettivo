@@ -69,6 +69,11 @@ export interface UseChatMessagesResult {
 /**
  * Hook that owns message fetching, pagination, realtime subscription, and
  * message grouping for one conversation.
+ *
+ * `otherIdentity` is tracked through a ref so that a caller passing a fresh
+ * object literal on every render (e.g. an inline object) cannot retrigger the
+ * subscription or a reload. `currentUserId` remains a real dependency so the
+ * conversation is (re)loaded once the signed-in member is resolved.
  */
 export function useChatMessages(
   matchId: string,
@@ -85,6 +90,17 @@ export function useChatMessages(
   const lastCreatedAtRef = useRef<string | null>(null);
   const isMountedRef = useRef(true);
 
+  // Holds the latest `otherIdentity` without making it a dependency. This
+  // prevents a caller-supplied inline object from retriggering the
+  // subscription on every render. Kept in sync via an effect after commit.
+  const otherIdentityRef = useRef<{
+    display_name: string | null;
+    avatar_url: string | null;
+  } | null>(null);
+  useEffect(() => {
+    otherIdentityRef.current = otherIdentity;
+  }, [otherIdentity]);
+
   const loadMessages = useCallback(
     async (older: boolean = false): Promise<void> => {
       if (!matchId) return;
@@ -99,7 +115,7 @@ export function useChatMessages(
           toChatMessage(
             row,
             currentUserId,
-            otherIdentity,
+            otherIdentityRef.current,
             index > 0 ? rows[index - 1].senderId : null
           )
         );
@@ -144,7 +160,7 @@ export function useChatMessages(
         if (isMountedRef.current) setLoading(false);
       }
     },
-    [matchId, currentUserId, otherIdentity, hasMore]
+    [matchId, currentUserId, hasMore]
   );
 
   const send = useCallback(
@@ -223,11 +239,10 @@ export function useChatMessages(
         setCurrentUserId(user?.id ?? null);
         if (user) setOtherUserId(null); // resolved elsewhere
       }
-    })();
 
-    // Initial load is intentional: it populates state from an async source.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void loadMessages();
+      // Initial load is intentional: it populates state from an async source.
+      void loadMessages();
+    })();
 
     const channel = supabase
       .channel(`chat:${matchId}`)
@@ -254,7 +269,7 @@ export function useChatMessages(
           const msg = toChatMessage(
             row,
             currentUserId,
-            otherIdentity,
+            otherIdentityRef.current,
             lastSender
           );
 
@@ -315,7 +330,7 @@ export function useChatMessages(
       void supabase.removeChannel(channel);
       channelRef.current = null;
     };
-  }, [matchId, currentUserId, otherIdentity, loadMessages]);
+  }, [matchId, currentUserId, loadMessages]);
 
   return {
     items,

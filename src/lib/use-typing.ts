@@ -43,6 +43,12 @@ export function useTyping(): UseTypingResult {
     timerRef.current.delete(userId);
   }, []);
 
+  // Reflects the match the channel is currently bound to. Prevents tearing down
+  // and rebuilding an active subscription when the caller re-invokes `subscribe`
+  // with the same match/user (e.g. because the hook's return object identity
+  // changed on a re-render).
+  const subscribedMatchIdRef = useRef<string | null>(null);
+
   const addOrRefresh = useCallback((userId: string, userName: string) => {
     if (userId === myUserIdRef.current) return;
     clearTimer(userId);
@@ -85,34 +91,53 @@ export function useTyping(): UseTypingResult {
 
   const subscribe = useCallback(
     (matchId: string, userId: string, userName: string) => {
+      // Do not rebuild an active subscription for the same match/user. The
+      // caller re-runs its subscription effect whenever the hook's return
+      // object identity changes; tearing down the channel each time would
+      // reset typing state and churn realtime subscriptions.
+      if (
+        channelRef.current &&
+        subscribedMatchIdRef.current === matchId &&
+        myUserIdRef.current === userId
+      ) {
+        return;
+      }
+
       myUserIdRef.current = userId;
+      subscribedMatchIdRef.current = matchId;
 
       if (channelRef.current) {
         void supabase.removeChannel(channelRef.current);
       }
 
-      // Cast to any to work with Supabase Realtime broadcast API.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const channel: any = supabase.channel(`typing:${matchId}`);
+      const channel = supabase.channel(`typing:${matchId}`);
 
       channel
         .on(
           'broadcast',
           { event: BROADCAST_EVENT },
-          ((event: { payload?: TypingEvent }) => {
-            const payload = event.payload;
+          (message: {
+            type: 'broadcast';
+            event: string;
+            payload?: TypingEvent;
+          }) => {
+            const payload = message.payload;
             if (!payload || payload.userId === userId) return;
             addOrRefresh(payload.userId, payload.userName);
-          }) as any /* eslint-disable-line @typescript-eslint/no-explicit-any */
+          }
         )
         .on(
           'broadcast',
           { event: 'typing_stop' },
-          ((event: { payload?: { userId: string } }) => {
-            const payload = event.payload;
+          (message: {
+            type: 'broadcast';
+            event: string;
+            payload?: { userId: string };
+          }) => {
+            const payload = message.payload;
             if (!payload || payload.userId === userId) return;
             remove(payload.userId);
-          }) as any /* eslint-disable-line @typescript-eslint/no-explicit-any */
+          }
         )
         .subscribe((status: string) => {
           if (status === 'SUBSCRIBED') {
@@ -151,6 +176,7 @@ export function useTyping(): UseTypingResult {
     }
     setTypingUsers([]);
     myUserIdRef.current = null;
+    subscribedMatchIdRef.current = null;
   }, []);
 
   useEffect(() => {

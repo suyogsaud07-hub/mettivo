@@ -205,6 +205,7 @@ export default function ChatPage({
 
   // --- Typing indicators ---
   const typing = useTyping();
+  const { subscribe: subscribeTyping, unsubscribe: unsubscribeTyping } = typing;
   const typingUserNames = useMemo(() => {
     return typing.typingUsers.map((uid) =>
       uid === otherUserId ? (otherIdentity?.display_name ?? 'Member') : 'Member'
@@ -220,18 +221,21 @@ export default function ChatPage({
   }, [typing]);
 
   // Subscribe to typing indicators for this conversation.
+  // `subscribe`/`unsubscribe` are stable callbacks, so depending on them (rather
+  // than the whole `typing` object) prevents resubscribing whenever
+  // `typingUsers` changes.
   useEffect(() => {
     if (currentUserId && otherUserId && matchId) {
-      typing.subscribe(
+      subscribeTyping(
         matchId,
         currentUserId,
         otherIdentity?.display_name ?? 'Member'
       );
     }
     return () => {
-      typing.unsubscribe();
+      unsubscribeTyping();
     };
-  }, [currentUserId, otherUserId, matchId, otherIdentity?.display_name, typing]);
+  }, [currentUserId, otherUserId, matchId, otherIdentity?.display_name, subscribeTyping, unsubscribeTyping]);
 
   // --- Init: load session, identity, settings ---
   const refreshMedia = useCallback(async () => {

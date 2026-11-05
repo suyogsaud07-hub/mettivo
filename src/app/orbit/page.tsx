@@ -311,74 +311,143 @@ const OrbitMapLayers = ({
 }: OrbitMapLayersProps) => {
   const maps = useMap();
   const map = maps.current?.getMap();
+  const mapLoadedRef = useRef(false);
+
+  // Latest registration function, kept in a ref so the load/styledata
+  // listeners always build from the current `profiles` without capturing a
+  // stale closure. Existing sources/layers are checked before registration,
+  // so this is idempotent and safe under React Strict Mode.
+  const registerRef = useRef<((m: NonNullable<typeof map>) => void) | null>(
+    null
+  );
+
+  const registerOrbitLayers = useCallback(
+    (m: NonNullable<typeof map>) => {
+      const geoJSON = buildOrbitGeoJSON(profiles);
+
+      if (!m.getSource(SOURCE_ID)) {
+        const spec: GeoJSONSourceSpecification = {
+          type: 'geojson',
+          data: geoJSON,
+          cluster: true,
+          clusterRadius: 40,
+          clusterMaxZoom: 14,
+        };
+        m.addSource(SOURCE_ID, spec);
+
+        m.addLayer({
+          id: CLUSTER_LAYER,
+          type: 'circle',
+          source: SOURCE_ID,
+          filter: ['has', 'point_count'],
+          paint: {
+            'circle-color': '#D9B38C',
+            'circle-radius': ['step', ['get', 'point_count'], 20, 10, 30, 40, 40],
+            'circle-opacity': 0.85,
+            'circle-stroke-color': '#17121A',
+            'circle-stroke-width': 2,
+          },
+        } as LayerSpecification);
+
+        m.addLayer({
+          id: CLUSTER_LABEL_LAYER,
+          type: 'symbol',
+          source: SOURCE_ID,
+          filter: ['has', 'point_count'],
+          layout: {
+            'text-field': ['to-string', ['get', 'point_count']],
+            'text-font': ['default'],
+            'text-size': 12,
+            'text-anchor': 'center',
+          },
+          paint: { 'text-color': '#17121A' },
+        } as LayerSpecification);
+
+        m.addLayer({
+          id: POINT_LAYER,
+          type: 'circle',
+          source: SOURCE_ID,
+          filter: ['!has', 'point_count'],
+          paint: {
+            'circle-color': [
+              'case',
+              ['boolean', ['get', 'is_online'], false],
+              '#10B981',
+              '#6B5B7B',
+            ],
+            'circle-radius': 7,
+            'circle-opacity': 0.9,
+            'circle-stroke-color': '#17121A',
+            'circle-stroke-width': 2,
+          },
+        } as LayerSpecification);
+      } else {
+        const source = m.getSource(SOURCE_ID);
+        if (source && source.type === 'geojson') {
+          source.setData(geoJSON);
+        }
+      }
+    },
+    [profiles]
+  );
+
+  // Keep `registerRef.current` pointing at the latest `registerOrbitLayers` so
+  // the load/styledata listeners always build from the current `profiles`
+  // without capturing a stale closure. This runs in an effect (not during
+  // render) to avoid touching refs while rendering.
+  useEffect(() => {
+    registerRef.current = registerOrbitLayers;
+  }, [registerOrbitLayers]);
+
+  // Register custom sources/layers once the map style has finished loading.
+  // `map.loaded()` is checked directly (no `setState` in an effect body), and
+  // the `load` event listener triggers registration once the style is ready.
+  useEffect(() => {
+    if (!map) return;
+    const onLoad = () => {
+      mapLoadedRef.current = true;
+      registerRef.current?.(map);
+    };
+    if (map.loaded()) {
+      onLoad();
+    } else {
+      map.on('load', onLoad);
+    }
+    return () => {
+      map.off('load', onLoad);
+    };
+  }, [map]);
+
+  // Refresh the source data when profiles change, once the style is loaded.
+  useEffect(() => {
+    if (!map || !mapLoadedRef.current) return;
+    registerRef.current?.(map);
+  }, [map, profiles]);
+
+  // Restore custom sources/layers after a dynamic style reload. Mapbox drops
+  // programmatic sources/layers when the style changes; re-register them once
+  // the new style finishes loading.
+  useEffect(() => {
+    if (!map) return;
+    const onStyleReload = () => {
+      mapLoadedRef.current = false;
+      if (map.loaded()) {
+        registerRef.current?.(map);
+      } else {
+        map.once('load', () => {
+          mapLoadedRef.current = true;
+          registerRef.current?.(map);
+        });
+      }
+    };
+    map.on('styledata', onStyleReload);
+    return () => {
+      map.off('styledata', onStyleReload);
+    };
+  }, [map]);
 
   useEffect(() => {
     if (!map) return;
-    const geoJSON = buildOrbitGeoJSON(profiles);
-
-    if (!map.getSource(SOURCE_ID)) {
-      const spec: GeoJSONSourceSpecification = {
-        type: 'geojson',
-        data: geoJSON,
-        cluster: true,
-        clusterRadius: 40,
-        clusterMaxZoom: 14,
-      };
-      map.addSource(SOURCE_ID, spec);
-
-      map.addLayer({
-        id: CLUSTER_LAYER,
-        type: 'circle',
-        source: SOURCE_ID,
-        filter: ['has', 'point_count'],
-        paint: {
-          'circle-color': '#D9B38C',
-          'circle-radius': ['step', ['get', 'point_count'], 20, 10, 30, 40, 40],
-          'circle-opacity': 0.85,
-          'circle-stroke-color': '#17121A',
-          'circle-stroke-width': 2,
-        },
-      } as LayerSpecification);
-
-      map.addLayer({
-        id: CLUSTER_LABEL_LAYER,
-        type: 'symbol',
-        source: SOURCE_ID,
-        filter: ['has', 'point_count'],
-        layout: {
-          'text-field': ['to-string', ['get', 'point_count']],
-          'text-font': ['default'],
-          'text-size': 12,
-          'text-anchor': 'center',
-        },
-        paint: { 'text-color': '#17121A' },
-      } as LayerSpecification);
-
-      map.addLayer({
-        id: POINT_LAYER,
-        type: 'circle',
-        source: SOURCE_ID,
-        filter: ['!has', 'point_count'],
-        paint: {
-          'circle-color': [
-            'case',
-            ['boolean', ['get', 'is_online'], false],
-            '#10B981',
-            '#6B5B7B',
-          ],
-          'circle-radius': 7,
-          'circle-opacity': 0.9,
-          'circle-stroke-color': '#17121A',
-          'circle-stroke-width': 2,
-        },
-      } as LayerSpecification);
-    } else {
-      const source = map.getSource(SOURCE_ID);
-      if (source && source.type === 'geojson') {
-        source.setData(geoJSON);
-      }
-    }
-
     const handleClick = (e: { point: PointLike }) => {
       const features = map.queryRenderedFeatures(e.point, {
         layers: [CLUSTER_LAYER, POINT_LAYER],
