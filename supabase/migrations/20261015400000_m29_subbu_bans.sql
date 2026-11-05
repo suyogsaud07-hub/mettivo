@@ -87,6 +87,11 @@ $$;
 -- ---------------------------------------------------------------------------
 -- 3. The single writer — always the caller
 -- ---------------------------------------------------------------------------
+-- Later migrations change this function's parameter name and semantics. Drop
+-- the old signature first so a full re-run is idempotent instead of failing
+-- with "cannot change name of input parameter".
+drop function if exists public.apply_self_ban(integer, text);
+
 create or replace function public.apply_self_ban(
   p_duration_days integer,
   p_reason        text default null

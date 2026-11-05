@@ -112,27 +112,31 @@ export function subscribeToMessageReactions(
 ): () => void {
   if (!matchId) return () => {};
 
-  const channel = supabase
-    .channel(`reactions:${matchId}`)
-    .on(
-      'postgres_changes',
-      {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'message_reactions',
-      },
-      () => onChange([])
-    )
-    .on(
-      'postgres_changes',
-      {
-        event: 'DELETE',
-        schema: 'public',
-        table: 'message_reactions',
-      },
-      () => onChange([])
-    )
-    .subscribe();
+  // All postgres_changes callbacks MUST be registered before subscribe().
+  // Calling .on() after .subscribe() raises a Realtime error on the server.
+  const channel = supabase.channel(`reactions:${matchId}`);
+
+  channel.on(
+    'postgres_changes',
+    {
+      event: 'INSERT',
+      schema: 'public',
+      table: 'message_reactions',
+    },
+    () => onChange([])
+  );
+
+  channel.on(
+    'postgres_changes',
+    {
+      event: 'DELETE',
+      schema: 'public',
+      table: 'message_reactions',
+    },
+    () => onChange([])
+  );
+
+  channel.subscribe();
 
   return () => {
     void supabase.removeChannel(channel);

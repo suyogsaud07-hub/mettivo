@@ -14,8 +14,10 @@ import {
   resolveReport,
   suspendUser,
   unsuspendUser,
+  RESTRICTION_HOURS,
   type ModeratedProfile,
   type ReportQueueEntry,
+  type RestrictionHours,
 } from '@/lib/admin';
 import type { ReportRecord, TriageAssessment } from '@/lib/moderation/triage';
 
@@ -67,6 +69,7 @@ export default function AdminPage() {
   const [profiles, setProfiles] = useState<Record<string, ModeratedProfile>>({});
   const [statusFilter, setStatusFilter] = useState<ReportStatus | null>('pending');
   const [notes, setNotes] = useState<Record<string, string>>({});
+  const [durations, setDurations] = useState<Record<string, RestrictionHours>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -239,6 +242,15 @@ export default function AdminPage() {
       margin: 0,
     },
     evidenceLine: { fontSize: '12px', color: '#F2E9E4', margin: '6px 0 0 0', lineHeight: 1.5 },
+    durationSelect: {
+      marginTop: '10px',
+      padding: '8px 12px',
+      borderRadius: '12px',
+      border: '1px solid #4A1828',
+      backgroundColor: '#0D0A10',
+      color: '#F2E9E4',
+      fontSize: '12px',
+    },
     noteInput: {
       width: '100%',
       marginTop: '12px',
@@ -384,6 +396,7 @@ export default function AdminPage() {
             const isSuspended = subject?.isSuspended === true;
             const snapshot = entry.evidence?.reportedProfile ?? null;
             const note = notes[entry.reportId] ?? '';
+            const duration = durations[entry.reportId] ?? 2;
             const assessment = triage[entry.reportId];
 
             return (
@@ -453,6 +466,28 @@ export default function AdminPage() {
                   }
                 />
 
+                <label style={{ ...styles.meta, display: 'block' }}>
+                  Read-only duration
+                  <select
+                    aria-label="Restriction duration"
+                    style={styles.durationSelect}
+                    value={duration}
+                    disabled={busy !== null}
+                    onChange={(e) =>
+                      setDurations((prev) => ({
+                        ...prev,
+                        [entry.reportId]: Number(e.target.value) as RestrictionHours,
+                      }))
+                    }
+                  >
+                    {RESTRICTION_HOURS.map((hours) => (
+                      <option key={hours} value={hours}>
+                        {hours} hours
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
                 <div style={styles.actions}>
                   {STATUS_ACTIONS.filter((a) => a.status !== entry.status).map((action) => (
                     <button
@@ -462,7 +497,12 @@ export default function AdminPage() {
                       style={{ ...styles.btn, color: action.colour, opacity: busy ? 0.5 : 1 }}
                       onClick={() =>
                         void runAction(`${entry.reportId}:${action.status}`, () =>
-                          resolveReport(entry.reportId, action.status, note)
+                          resolveReport(
+                            entry.reportId,
+                            action.status,
+                            note,
+                            action.status === 'actioned' ? duration : undefined
+                          )
                         )
                       }
                     >
@@ -490,7 +530,7 @@ export default function AdminPage() {
                       style={{ ...styles.btn, color: '#F87171', opacity: busy ? 0.5 : 1 }}
                       onClick={() =>
                         void runAction(`${entry.reportId}:suspend`, () =>
-                          suspendUser(entry.reportedId, entry.reason)
+                          suspendUser(entry.reportedId, entry.reason, duration)
                         )
                       }
                     >

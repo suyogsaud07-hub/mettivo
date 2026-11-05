@@ -53,7 +53,7 @@ describe('describeRestriction', () => {
       suspendedUntil: '2030-01-01T00:00:00.000Z',
       suspendedReason: 'underage_suspension',
     });
-    expect(message).toContain('suspended');
+    expect(message).toContain('read-only');
     expect(message).toContain('underage suspension');
   });
 

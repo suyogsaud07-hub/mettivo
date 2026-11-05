@@ -185,32 +185,35 @@ content id, and the *server* captures the context and decides the action.
   Mettivo Live unavailable, account suspended). Mettivo Live is client-gated on
   `is_video_restricted()` because there is no live server to enforce it.
 
-### 5.2 Subbu bans (M29)
+### 5.2 Restricted access (M46)
 
-`20261015400000_m29_subbu_bans.sql` makes the companion's moderation real rather
-than roleplay.
+`20261104000006_restricted_access_hardening.sql` replaces the old automatic
+7/15/30-day punishment and Subbu self-ban paths with one confirmed-only system.
 
-- **Storage.** `profiles.banned_until` / `ban_reason` (NULL or past = not
-  banned). The columns are deliberately **not** granted to `authenticated`; they
-  are read only through `my_ban_status()`, so one member cannot inspect another's
-  ban state and `select *` cannot expose it.
-- **One writer.** `apply_self_ban(days, reason)` is SECURITY DEFINER, derives the
-  subject from `auth.uid()`, accepts **no user id**, and is the only path past
-  `protect_moderation_columns` (the same tx-local `mettivo.moderation_action`
-  GUC). A prompt-injected model can therefore only ever ban the caller.
-- **API enforcement.** `/api/bot/chat` checks `my_ban_status()` **before** the
-  model is called (403 `banned`). Image uploads are classified with
-  `classifyContent`; `nudity`/`underage` applies a 30-day ban before the image
-  reaches the vision model, and every other image is stripped from the history.
-  A classifier outage refuses the image (`503`) but never punishes (an outage is
-  not evidence). Subbu may only emit the fixed
-  `{"action":"ban","duration":"2_days","reason":"verbal_harassment"}` flag, which
-  the route parses into a 2-day ban.
-- **Early rejection.** `src/proxy.ts` rejects banned callers on `/api/bot`,
-  `/api/moments` and `/api/live`; the route remains authoritative.
-- **UI.** `/chat/subbu` reads `my_ban_status()` on load, disables the text/send/
-  image controls and shows a red expiry banner. A 403 mid-conversation locks the
-  composer immediately and survives a refresh.
+- **One predicate.** `is_restricted(uuid)` is the read-only source of truth.
+  It derives expiry from `confirmed_violations`, active `suspensions`,
+  `profiles.restricted_until`, `banned_until`, and a legacy indefinite
+  `is_suspended` flag only when no timed row exists.
+- **Confirmed only.** AI scans and report-count thresholds return
+  `requires_human_review`; they never write a restriction. A moderator confirms
+  a violation and chooses exactly 2, 6, 12 or 24 hours. A report can produce at
+  most one confirmed violation.
+- **Read-only, not locked out.** Restricted members can sign in, browse, read,
+  view notifications, play games (`record_game_result` remains allowed) and file
+  safety reports. Triggers block messages, Moments, comments, likes, follows,
+  profile edits, shares, reactions, pins and uploads.
+- **One writer.** `apply_temporary_restriction` is internal and revoked from
+  every client role. `admin_resolve_report`, `admin_suspend_user` and
+  `admin_apply_moderation_action` are the only moderator entry points, and each
+  is audited. Ambiguous overloads are collapsed to one signature.
+- **Subbu is advisory.** `apply_self_ban` is a disabled no-op. `/api/bot/chat`
+  blocks classified explicit images (`422`) but never auto-restricts; the model
+  has no ban flag and no writer.
+- **Early rejection.** `src/proxy.ts` rejects restricted callers on `/api/bot`,
+  `/api/moments` and `/api/live`; the database remains authoritative.
+- **UI.** `my_restrictions()` drives the read-only banner with the end time,
+  selected hours and confirmed violation count. The admin console requires the
+  moderator to choose the duration before acting.
 
 ### 5.3 Moments — Posts and Reels (Moments Elite upgrade)
 

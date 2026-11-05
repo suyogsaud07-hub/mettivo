@@ -170,20 +170,32 @@ export async function fetchReportQueue(
  * stores the note, the deciding moderator and the timestamp, and writes an audit
  * entry, so a decision can be reviewed afterwards.
  */
+export const RESTRICTION_HOURS = [2, 6, 12, 24] as const;
+export type RestrictionHours = (typeof RESTRICTION_HOURS)[number];
+
+function isRestrictionHours(value: number): value is RestrictionHours {
+  return (RESTRICTION_HOURS as readonly number[]).includes(value);
+}
+
 export async function resolveReport(
   reportId: string,
   status: ReportStatus,
-  note?: string
+  note?: string,
+  durationHours?: RestrictionHours
 ): Promise<void> {
   if (!reportId) throw new ModerationError('A report id is required.');
   if (!VALID_STATUSES.includes(status)) {
     throw new ModerationError(`Invalid status: ${status}`);
+  }
+  if (status === 'actioned' && durationHours !== undefined && !isRestrictionHours(durationHours)) {
+    throw new ModerationError('Choose a restriction of 2, 6, 12 or 24 hours.');
   }
 
   const { error } = await supabase.rpc('admin_resolve_report', {
     p_report_id: reportId,
     p_status: status,
     p_note: note && note.trim().length > 0 ? note.trim() : null,
+    p_duration_hours: status === 'actioned' ? durationHours ?? null : null,
   });
 
   if (error) {
@@ -216,13 +228,18 @@ export async function isCurrentUserModerator(): Promise<boolean> {
 /** Suspends an account. Moderator-only, audited. */
 export async function suspendUser(
   targetUserId: string,
-  reason?: string
+  reason?: string,
+  durationHours?: RestrictionHours
 ): Promise<void> {
   if (!targetUserId) throw new ModerationError('A target user is required.');
+  if (durationHours !== undefined && !isRestrictionHours(durationHours)) {
+    throw new ModerationError('Choose a restriction of 2, 6, 12 or 24 hours.');
+  }
 
   const { error } = await supabase.rpc('admin_suspend_user', {
     p_target_user: targetUserId,
     p_reason: reason ?? null,
+    p_hours: durationHours ?? null,
   });
 
   if (error) {
@@ -319,6 +336,7 @@ export async function requestTriage(input: {
 export interface ModeratedProfile {
   displayName: string;
   isSuspended: boolean;
+  restrictedUntil: string | null;
 }
 
 /**
@@ -333,7 +351,7 @@ export async function fetchProfilesByIds(
 
   const { data, error } = await supabase
     .from('profiles')
-    .select('id, display_name, is_suspended')
+    .select('id, display_name, is_suspended, restricted_until')
     .in('id', userIds);
 
   if (error) {
@@ -346,10 +364,16 @@ export async function fetchProfilesByIds(
     id: string;
     display_name: string | null;
     is_suspended: boolean | null;
+    restricted_until: string | null;
   }[]) {
+    const until = row.restricted_until;
+    const untilMs = until ? new Date(until).getTime() : null;
+    const timedRestriction = untilMs !== null && Number.isFinite(untilMs) && untilMs > Date.now();
+    const legacyFlag = row.is_suspended === true && until === null;
     result[row.id] = {
       displayName: row.display_name ?? 'Unknown member',
-      isSuspended: row.is_suspended === true,
+      isSuspended: timedRestriction || legacyFlag,
+      restrictedUntil: timedRestriction ? until : null,
     };
   }
   return result;

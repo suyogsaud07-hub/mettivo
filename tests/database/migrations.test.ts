@@ -674,7 +674,7 @@ describe('M14 — moderation and abuse controls', () => {
       asUser(db, USER_A, () =>
         db.exec(`insert into public.messages (match_id, sender_id, content) values ('m','${USER_A}','spam')`)
       )
-    ).rejects.toThrow(/suspended/i);
+    ).rejects.toThrow(/read-only|suspended/i);
   });
 
   it('stops a member clearing their own suspension', async () => {
@@ -682,7 +682,7 @@ describe('M14 — moderation and abuse controls', () => {
       asUser(db, USER_A, () =>
         db.exec(`update public.profiles set is_suspended = false where id = '${USER_A}'`)
       )
-    ).rejects.toThrow(/moderation fields/i);
+    ).rejects.toThrow(/moderation fields|read-only/i);
   });
 
   it('refuses moderation actions to non-moderators', async () => {

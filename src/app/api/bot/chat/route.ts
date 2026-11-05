@@ -10,9 +10,7 @@ import {
   type BotTurn,
 } from '@/lib/bot/subbu';
 import {
-  SUBBU_IMAGE_BAN_DAYS,
   banDeniedMessage,
-  parseBanFlag,
   parseBanStatus,
 } from '@/lib/bot/moderation';
 import { classifyContent } from '@/lib/moderation/ai';
@@ -115,41 +113,6 @@ async function readOwnBan(supabase: ServerSupabaseClient): Promise<BanRecord | n
   return status.banned && status.until ? { until: status.until, reason: status.reason } : null;
 }
 
-/**
- * Writes a ban for the caller only. Returns the new end timestamp, or `null`
- * when the write failed. `apply_self_ban` derives the subject from `auth.uid()`
- * and has no target parameter.
- */
-async function persistBan(
-  supabase: ServerSupabaseClient,
-  days: number,
-  reason: string,
-): Promise<string | null> {
-  const { data, error } = await supabase.rpc('apply_self_ban', {
-    p_duration_days: days,
-    p_reason: reason,
-  });
-
-  if (error) {
-    console.error('[SUBBU BAN FAILED]', error.message);
-    logger.error('bot.ban_failed', 'Could not persist the ban.', {
-      message: error.message,
-      days,
-      reason,
-    });
-    return null;
-  }
-
-  const status = parseBanStatus(data);
-  if (!status.until) {
-    console.error('[SUBBU BAN FAILED]', 'apply_self_ban returned no banned_until');
-    return null;
-  }
-
-  logger.warn('bot.ban_applied', 'Subbu issued a ban.', { days, reason, until: status.until });
-  return status.until;
-}
-
 export async function POST(request: Request): Promise<NextResponse> {
   const now = Date.now();
   const declaredLength = Number(request.headers.get('content-length') ?? '');
@@ -223,10 +186,16 @@ export async function POST(request: Request): Promise<NextResponse> {
         (verdict.categories.includes('nudity') || verdict.categories.includes('underage'));
 
       if (explicit) {
-        const reason = verdict.categories.includes('underage') ? 'underage_image' : 'explicit_image';
-        const until = await persistBan(supabase, SUBBU_IMAGE_BAN_DAYS, reason);
-        if (!until) return NextResponse.json({ error: 'ban_failed' }, { status: 500 });
-        return bannedResponse({ until, reason });
+        // Automated image classification is evidence, not a punishment. Block
+        // the upload and let the member continue without silently restricting
+        // their account; any consequence requires a moderator-confirmed report.
+        return NextResponse.json(
+          {
+            error: 'content_blocked',
+            message: 'That image is not allowed here. Nothing was sent.',
+          },
+          { status: 422 },
+        );
       }
     }
 
@@ -240,15 +209,8 @@ export async function POST(request: Request): Promise<NextResponse> {
     const result = await chatWithSubbu(safeHistory);
     if (!result.reply) throw new Error('No reply generated');
 
-    // 4. Text moderation. Subbu cannot write to the database; it can only emit
-    //    the fixed flag. We parse it here and apply a real 2-day ban.
-    const flag = parseBanFlag(result.reply);
-    if (flag) {
-      const until = await persistBan(supabase, flag.days, flag.reason);
-      if (!until) return NextResponse.json({ error: 'ban_failed' }, { status: 500 });
-      return bannedResponse({ until, reason: flag.reason });
-    }
-
+    // 4. Subbu is advisory only. It has no ban flag and no database writer;
+    //    moderation consequences require a human-confirmed report.
     return NextResponse.json({ reply: result.reply }, { status: 200 });
 
   } catch (error) {

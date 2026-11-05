@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import type { Metadata } from 'next';
 import Logo from '@/components/Logo';
+import ContinueToMettivo from '@/app/components/ContinueToMettivo';
 import { WELCOME_LETTER, type WelcomeLetter } from '@/lib/welcome-letter';
 
 /**
@@ -112,6 +113,9 @@ export default function WelcomeLetterPage() {
               </Link>
             </section>
           )}
+        <div style={{ marginTop: '32px', textAlign: 'center' as const }}>
+          <ContinueToMettivo />
+        </div>
         </article>
       </main>
 

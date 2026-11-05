@@ -24,7 +24,7 @@ const h = vi.hoisted(() => {
 
   const makeChain = (result: Result) => {
     const chain: Record<string, unknown> = {};
-    for (const method of ['select', 'update', 'eq', 'is', 'order', 'limit']) {
+    for (const method of ['select', 'update', 'eq', 'neq', 'is', 'order', 'limit']) {
       chain[method] = (...args: unknown[]) => {
         state.calls.push({ method, args });
         return chain;

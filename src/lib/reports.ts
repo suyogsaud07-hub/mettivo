@@ -21,11 +21,9 @@ import { supabase } from '@/lib/supabase';
 /**
  * The report vocabulary the `reports.category` CHECK accepts (M25).
  *
- * The four product buckets map to the account-pause tiers:
- *   abuse_text     -> 7 days
- *   explicit_media -> 15 days
- *   indecent_live  -> 30 days
- *   other          -> 7 days
+ * The four product buckets are evidence for the moderator queue. They do not
+ * carry a punishment duration: after a confirmed violation, a moderator chooses
+ * exactly 2, 6, 12 or 24 hours of read-only access.
  * `underage` is kept because it is a safety escalation, not a tier.
  *
  * Legacy M21 values (nudity | harassment | spam) are still valid in the
@@ -127,6 +125,12 @@ export interface MyRestrictions {
   suspended: boolean;
   suspendedUntil: string | null;
   suspendedReason: string | null;
+  isReadOnly: boolean;
+  restrictedUntil: string | null;
+  restrictionStartsAt: string | null;
+  restrictionHours: number | null;
+  restrictionCategory: string | null;
+  confirmedViolationCount: number;
 }
 
 /** The no-restriction default, so callers never branch on `null`. */
@@ -138,6 +142,12 @@ export const NO_RESTRICTIONS: MyRestrictions = {
   suspended: false,
   suspendedUntil: null,
   suspendedReason: null,
+  isReadOnly: false,
+  restrictedUntil: null,
+  restrictionStartsAt: null,
+  restrictionHours: null,
+  restrictionCategory: null,
+  confirmedViolationCount: 0,
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -156,6 +166,11 @@ function readOptionalString(record: Record<string, unknown>, key: string): strin
 
 function readBoolean(record: Record<string, unknown>, key: string): boolean {
   return record[key] === true;
+}
+
+function readOptionalNumber(record: Record<string, unknown>, key: string): number | null {
+  const value = record[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
 /** The human label for a stored category value, falling back to the raw value. */
@@ -201,8 +216,8 @@ export function describeRestriction(restrictions: MyRestrictions): string | null
       ? restrictions.suspendedReason.replace(/_/g, ' ')
       : 'a safety review';
     return until
-      ? `Your account is suspended until ${until} following ${reason}.`
-      : `Your account is suspended following ${reason}.`;
+      ? `Your account is read-only until ${until} following ${reason}.`
+      : `Your account is read-only following ${reason}.`;
   }
   if (restrictions.chatBanned) {
     const until = formatRestrictionDate(restrictions.chatUntil);
@@ -283,5 +298,13 @@ export async function fetchMyRestrictions(): Promise<MyRestrictions> {
     suspended: readBoolean(data, 'suspended'),
     suspendedUntil: readOptionalString(data, 'suspended_until'),
     suspendedReason: readOptionalString(data, 'suspended_reason'),
+    isReadOnly: readBoolean(data, 'is_read_only') || readBoolean(data, 'suspended'),
+    restrictedUntil:
+      readOptionalString(data, 'restricted_until') ??
+      readOptionalString(data, 'suspended_until'),
+    restrictionStartsAt: readOptionalString(data, 'restriction_starts_at'),
+    restrictionHours: readOptionalNumber(data, 'restriction_hours'),
+    restrictionCategory: readOptionalString(data, 'restriction_category'),
+    confirmedViolationCount: readOptionalNumber(data, 'confirmed_violation_count') ?? 0,
   };
 }

@@ -195,7 +195,7 @@ describe('2. privilege escalation attempts', () => {
       asUser(db, USER_C, () =>
         db.exec(`update public.profiles set is_suspended = false where id = '${USER_C}'`)
       )
-    ).rejects.toThrow(/moderation fields/i);
+    ).rejects.toThrow(/moderation fields|read-only/i);
 
     // The suspension must have survived the attempt.
     expect(
