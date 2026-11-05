@@ -454,7 +454,7 @@ function ExplorePersonCard({
               src={photo}
               alt=""
               className="explore-person-photo"
-              loading="lazy"
+              
             />
           ) : (
             <span className="explore-person-photo explore-person-initial" aria-hidden="true">

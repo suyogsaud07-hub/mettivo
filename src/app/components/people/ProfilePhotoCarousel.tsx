@@ -92,7 +92,7 @@ export default function ProfilePhotoCarousel({
           src={current}
           alt={`${name}, photo ${active + 1} of ${urls.length}`}
           draggable={false}
-          loading={active === 0 ? 'eager' : 'lazy'}
+          
           onError={() => {
             setFailed((currentFailed) => new Set(currentFailed).add(current));
           }}
