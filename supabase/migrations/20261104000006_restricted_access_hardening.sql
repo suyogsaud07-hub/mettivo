@@ -59,6 +59,21 @@ create index if not exists pinned_messages_message_idx
 create index if not exists profiles_restricted_until_idx
   on public.profiles (restricted_until);
 
+-- `is_suspended` predates timed restrictions and has no clock. A timed
+-- restriction is enforced by `restricted_until`, `suspensions` and
+-- `confirmed_violations`, so clear the legacy flag wherever a timed row exists:
+-- leaving it sticky would hide the member from discovery after expiry and make
+-- their profile permanently unavailable to others.
+update public.profiles p
+   set is_suspended = false,
+       suspended_at = null,
+       suspension_reason = null
+ where coalesce(p.is_suspended, false)
+   and (
+     exists (select 1 from public.suspensions s where s.user_id = p.id)
+     or exists (select 1 from public.confirmed_violations cv where cv.user_id = p.id)
+   );
+
 -- Only the SECURITY DEFINER enforcement functions may write this ledger. The
 -- old MXX INSERT/UPDATE policies let any authenticated caller forge a
 -- "confirmed" violation, which defeats the whole human-confirmation rule.
@@ -278,9 +293,9 @@ begin
 
   perform set_config('mettivo.moderation_action', 'on', true);
   update public.profiles
-     set is_suspended = true,
-         suspended_at = v_starts_at,
-         suspension_reason = v_reason,
+     set is_suspended = false,
+         suspended_at = null,
+         suspension_reason = null,
          restricted_until = v_ends_at
    where id = p_user_id;
   perform set_config('mettivo.moderation_action', 'off', true);
@@ -1184,7 +1199,7 @@ security definer
 set search_path = public, pg_temp
 as $$
 declare
-  actor uuid := case when tg_op = 'DELETE' then old.sender_id else old.sender_id end;
+  actor uuid := old.sender_id;
 begin
   if actor is not null and actor = auth.uid() and public.is_restricted(actor) then
     raise exception 'Your account is read-only and cannot change messages.'

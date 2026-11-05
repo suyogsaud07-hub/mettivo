@@ -292,6 +292,14 @@ describe('M46 — only 2, 6, 12 or 24 hours after moderator confirmation', () =>
       (new Date(rows[0].ends).getTime() - new Date(rows[0].starts).getTime()) / 3_600_000;
     expect(spanHours).toBeCloseTo(2, 1);
     expect(await restricted(db, 'is_restricted', USER_B)).toBe(true);
+
+    const flags = await owner<{ is_suspended: boolean; restricted_until: string | null }>(
+      db,
+      `select is_suspended, restricted_until from public.profiles
+        where id = '${USER_B}'`
+    );
+    expect(flags[0].is_suspended).toBe(false);
+    expect(flags[0].restricted_until).toBeTruthy();
   });
 
   it('is idempotent for a replayed report action', async () => {
@@ -373,10 +381,18 @@ describe('M46 — a restricted member can browse and play, but cannot interact',
     await db.exec(
       `insert into public.user_roles (user_id, role) values ('${MODERATOR}','moderator')`
     );
+    await db.exec(
+      `insert into public.matches
+         (id, user_a, user_b, user_a_id, user_b_id, kind, request_status)
+       values ('dddddddd-0000-0000-0000-000000000001',
+               '${USER_B}', '${USER_A}', '${USER_B}', '${USER_A}',
+               'match', 'not_applicable')`
+    );
     await asUser(db, USER_B, () =>
       db.exec(
         `insert into public.messages (id, match_id, sender_id, content)
-         values ('cccccccc-0000-0000-0000-000000000001', 'm2', '${USER_B}', 'original')`
+         values ('cccccccc-0000-0000-0000-000000000001',
+                 'dddddddd-0000-0000-0000-000000000001', '${USER_B}', 'original')`
       )
     );
     await asUser(db, MODERATOR, () =>

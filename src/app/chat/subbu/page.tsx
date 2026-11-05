@@ -92,12 +92,12 @@ async function compressImage(file: File): Promise<string> {
 /**
  * `/chat/subbu` — the Subbu companion room.
  *
- * BANS ARE REAL HERE
- *   On mount the page reads the caller's own ban through `my_ban_status()`.
- *   While it is in the future the composer (text, send, image upload) is
- *   disabled and a red banner states the expiry. A 403 from the API carries the
- *   fresh `banned_until`, so a ban issued mid-conversation locks the composer
- *   immediately — no refresh required.
+ * READ-ONLY RESTRICTIONS ARE REAL HERE
+ *   On mount the page reads the caller's own state through `my_ban_status()`.
+ *   While a confirmed restriction is live the composer (text, send, image
+ *   upload) is disabled and a banner states the expiry. A 403 from the API
+ *   carries the fresh timestamp, so a restriction applied mid-conversation
+ *   locks the composer immediately — no refresh required.
  */
 export default function SubbuChatPage() {
   const [messages, setMessages] = useState<BotMessage[]>([GREETING]);
@@ -108,7 +108,7 @@ export default function SubbuChatPage() {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // `banUntil` is only ever set while the ban is live: the loader and the 403
+  // `banUntil` is only ever set while the restriction is live: the loader and the 403
   // handler both check the timestamp before storing it, and a timer clears it
   // the moment it expires. That keeps render pure (no clock read) while still
   // locking the composer instantly.
@@ -120,7 +120,7 @@ export default function SubbuChatPage() {
     if (node) node.scrollTop = node.scrollHeight;
   }, [messages, thinking]);
 
-  // Read the existing ban on load. `my_ban_status()` accepts no id, so this can
+  // Read the existing restriction on load. `my_ban_status()` accepts no id, so this can
   // only ever return the signed-in member's own state.
   useEffect(() => {
     let cancelled = false;
@@ -135,7 +135,7 @@ export default function SubbuChatPage() {
     };
   }, []);
 
-  // Re-enable the composer automatically when the ban expires.
+  // Re-enable the composer automatically when the restriction expires.
   useEffect(() => {
     if (!banUntil) return;
     const remaining = new Date(banUntil).getTime() - Date.now();
@@ -199,7 +199,7 @@ export default function SubbuChatPage() {
       const record = isRecord(payload) ? payload : null;
       const code = typeof record?.error === 'string' ? record.error : '';
 
-      // A real ban: lock the composer now and show the expiry.
+      // A confirmed restriction: lock the composer now and show the expiry.
       if (response.status === 403 && code === 'banned') {
         const status = parseBanStatus(record);
         if (status.banned && status.until) setBanUntil(status.until);
@@ -346,7 +346,7 @@ export default function SubbuChatPage() {
           type="text"
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
-          placeholder={isBanned ? 'Your account is suspended' : 'Message Subbu…'}
+          placeholder={isBanned ? 'Your account is read-only' : 'Message Subbu…'}
           aria-label="Message Subbu"
           disabled={thinking || isBanned}
           className="flex-1 p-3 rounded-xl bg-neutral-900 border border-neutral-800 text-white focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"

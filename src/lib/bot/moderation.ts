@@ -1,12 +1,13 @@
 /**
- * Subbu ban policy — the pure, shared parts of the moderation loop.
+ * Subbu restriction policy — the pure, shared parts of the moderation loop.
  *
  * Kept free of Supabase and `process.env` so the same functions are used by the
  * server route, the proxy and the chat UI, and can be unit-tested offline.
  *
  * THE CONTRACT
- *   Automated moderation is advisory. Subbu has no writer and no ban flag; only
- *   a moderator-confirmed report can apply a 2/6/12/24-hour read-only period.
+ *   Automated moderation is advisory. Subbu has no writer and no enforcement
+ *   flag; only a moderator-confirmed report can apply a 2/6/12/24-hour
+ *   read-only period.
  */
 
 export interface BanStatus {
@@ -48,7 +49,7 @@ export function parseBanStatus(value: unknown): BanStatus {
   };
 }
 
-/** A short, local date/time for a ban end. */
+/** A short, local date/time for a restriction end. */
 export function formatBanDate(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso;

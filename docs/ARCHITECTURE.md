@@ -193,19 +193,22 @@ content id, and the *server* captures the context and decides the action.
 - **One predicate.** `is_restricted(uuid)` is the read-only source of truth.
   It derives expiry from `confirmed_violations`, active `suspensions`,
   `profiles.restricted_until`, `banned_until`, and a legacy indefinite
-  `is_suspended` flag only when no timed row exists.
+  `is_suspended` flag only when no timed row exists. Timed moderation clears
+  `is_suspended`; it is not reused as a permanent hidden-profile switch, so an
+  expired restriction cannot leave the member undiscoverable.
 - **Confirmed only.** AI scans and report-count thresholds return
   `requires_human_review`; they never write a restriction. A moderator confirms
   a violation and chooses exactly 2, 6, 12 or 24 hours. A report can produce at
   most one confirmed violation.
 - **Read-only, not locked out.** Restricted members can sign in, browse, read,
   view notifications, play games (`record_game_result` remains allowed) and file
-  safety reports. Triggers block messages, Moments, comments, likes, follows,
-  profile edits, shares, reactions, pins and uploads.
+  safety reports. Triggers block new messages and edits, Moments, comments,
+  likes, follows, profile edits, shares, reactions, pins and uploads.
 - **One writer.** `apply_temporary_restriction` is internal and revoked from
   every client role. `admin_resolve_report`, `admin_suspend_user` and
   `admin_apply_moderation_action` are the only moderator entry points, and each
-  is audited. Ambiguous overloads are collapsed to one signature.
+  is audited. Ambiguous overloads are collapsed to one signature. Direct writes
+  to `confirmed_violations` and the moderation columns are denied.
 - **Subbu is advisory.** `apply_self_ban` is a disabled no-op. `/api/bot/chat`
   blocks classified explicit images (`422`) but never auto-restricts; the model
   has no ban flag and no writer.
