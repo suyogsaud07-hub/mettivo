@@ -460,7 +460,7 @@ export default function OrbitPage() {
           onLoad={handleMapLoad}
           ref={mapRef}
           style={{ width: '100%', height: '100%' }}
-          maxBounds={[[-180, -90], [180, 90]]}
+          maxBounds={[[ -180, -90 ], [ 180, 90 ]]}
           minZoom={1.5}
           maxZoom={18}
         >
@@ -470,7 +470,7 @@ export default function OrbitPage() {
                 type="button"
                 className="w-8 h-8 rounded-full bg-[#D4B18A] border-4 border-[#1C1822] shadow-lg flex items-center justify-center cursor-pointer hover:scale-110 transition-transform"
                 onClick={() => {
-                  mapRef.current?.flyTo({ center: [viewport.longitude, viewport.latitude], zoom: 10, speed: 1.5 });
+                  mapRef.current?.flyTo({ center: [ viewport.longitude, viewport.latitude ], zoom: 10, speed: 1.5 });
                 }}
                 aria-label="Your location"
               >
