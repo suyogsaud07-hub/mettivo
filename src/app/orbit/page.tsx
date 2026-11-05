@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import Map, { Marker, Popup, MapRef, useMap } from 'react-map-gl';
@@ -112,13 +112,6 @@ function featureStringProp(feature: Feature<Point> | undefined, key: string): st
   if (!props || typeof props !== 'object') return undefined;
   const value = (props as Record<string, unknown>)[key];
   return typeof value === 'string' ? value : undefined;
-}
-
-function featureNumberProp(feature: Feature<Point> | undefined, key: string): number | undefined {
-  const props = feature?.properties;
-  if (!props || typeof props !== 'object') return undefined;
-  const value = (props as Record<string, unknown>)[key];
-  return typeof value === 'number' ? value : undefined;
 }
 
 interface CustomPopupProps {
@@ -317,7 +310,7 @@ const OrbitMapLayers = ({
   onFlyTo,
 }: OrbitMapLayersProps) => {
   const maps = useMap();
-  const map = useMemo(() => maps.current?.getMap(), [maps.current]);
+  const map = maps.current?.getMap();
 
   useEffect(() => {
     if (!map) return;
@@ -795,6 +788,13 @@ export default function OrbitPage() {
     };
   }, []);
 
+  const flyTo = useCallback(
+    (center: [number, number], zoom: number) => {
+      mapRef.current?.getMap()?.flyTo({ center, zoom, speed: 1.5, essential: true });
+    },
+    [],
+  );
+
   if (!MAPBOX_TOKEN) {
     return (
       <div className="min-h-screen bg-[#131017] text-[#F2E9E4] flex flex-col items-center justify-center p-6">
@@ -818,13 +818,6 @@ export default function OrbitPage() {
       </div>
     );
   }
-
-  const flyTo = useCallback(
-    (center: [number, number], zoom: number) => {
-      mapRef.current?.getMap()?.flyTo({ center, zoom, speed: 1.5, essential: true });
-    },
-    [],
-  );
 
   return (
     <div className="min-h-screen bg-[#131017] text-[#F2E9E4] flex flex-col relative">
