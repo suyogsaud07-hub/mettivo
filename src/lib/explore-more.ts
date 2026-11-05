@@ -27,7 +27,7 @@ export const EXPLORE_CATEGORY_IDS = [
   'new-friends',
 ] as const;
 
-export type ExploreCategoryId = (typeof EXPLORE_CATEGORY_IDS)[number];
+export type ExploreCategoryId = string;
 
 export interface ExploreCategory {
   id: ExploreCategoryId;
@@ -174,7 +174,7 @@ function num(value: unknown): number {
 }
 
 export function isExploreCategoryId(value: string | null | undefined): value is ExploreCategoryId {
-  return typeof value === 'string' && (EXPLORE_CATEGORY_IDS as readonly string[]).includes(value);
+  return typeof value === 'string' && value.length > 0;
 }
 
 export function isExploreGoalKey(value: string | null | undefined): value is ExploreGoalKey {
@@ -182,7 +182,22 @@ export function isExploreGoalKey(value: string | null | undefined): value is Exp
 }
 
 export function exploreCategory(id: ExploreCategoryId): ExploreCategory {
-  return EXPLORE_CATEGORIES.find((category) => category.id === id) ?? EXPLORE_CATEGORIES[0];
+  const found = (EXPLORE_CATEGORIES as readonly ExploreCategory[]).find((category) => category.id === id);
+  if (found) return found;
+
+  // Dynamic fallback for new/unknown categories
+  const title = id
+    .split(/[-_]/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ');
+
+  return {
+    id,
+    title: title || 'Explore More',
+    description: `People matching the ${title || 'selected'} category.`,
+    icon: 'M13 10V3L4 14h7v7l9-11h-7z', // Default bolt icon
+  };
 }
 
 export function exploreGoal(key: ExploreGoalKey): ExploreGoal {

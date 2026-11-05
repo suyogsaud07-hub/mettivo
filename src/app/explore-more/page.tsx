@@ -146,9 +146,15 @@ export default function ExploreMorePage() {
                   aria-label={`${category.title}, ${count} ${count === 1 ? 'person' : 'people'}`}
                 >
                   <span className="explore-card-icon" aria-hidden="true">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                      <path d={category.icon} />
-                    </svg>
+                    {category.icon && category.icon.includes('M') ? (
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                        <path d={category.icon} />
+                      </svg>
+                    ) : (
+                      <span className="explore-card-emoji">
+                        {category.icon || (category.title.match(/\p{Emoji}/u)?.[0] ?? '✨')}
+                      </span>
+                    )}
                   </span>
                   <span className="explore-card-body">
                     <span className="explore-card-heading">
