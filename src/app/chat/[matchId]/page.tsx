@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, use, useRef, useSyncExternalStore, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, use } from 'react';
 import type { RealtimePostgresChangesPayload } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import Link from 'next/link';
@@ -15,6 +15,7 @@ import {
   fetchConversationMute,
   setConversationMute,
   type ConversationSendState,
+  unsendMessage,
 } from '@/lib/messages';
 import { blockMember, BlockingError } from '@/lib/blocking';
 import { pinMessage, unpinMessage, fetchPinnedMessages } from '@/lib/pins';
@@ -22,7 +23,6 @@ import {
   ConversationError,
   respondToConversationRequest,
 } from '@/lib/conversations';
-import { type MessageRow } from '@/lib/types';
 import {
   fetchChatMedia,
   sendChatMedia,
@@ -38,21 +38,22 @@ import {
   type MyRestrictions,
 } from '@/lib/reports';
 import { ReportModal } from '@/app/components/moderation/ReportModal';
-import MessageBubble from '@/app/components/chat/MessageBubble';
 import { fetchPublicIdentities, type PublicIdentity } from '@/lib/public-profiles';
 import { usePreferredTranslationLanguage } from '@/app/components/chat/usePreferredTranslationLanguage';
 import ProfileStoryModal from '@/components/chat/ProfileStoryModal';
+import ChatHeader from '@/app/components/chat/ChatHeader';
+import ChatComposer from '@/app/components/chat/ChatComposer';
+import ChatMessageList from '@/app/components/chat/ChatMessageList';
+import IncomingCallModal from '@/app/components/chat/IncomingCallModal';
+import ActiveCallScreen from '@/app/components/chat/ActiveCallScreen';
+import { useChatMessages } from '@/lib/use-chat-messages';
+import { useTyping } from '@/lib/use-typing';
+import { useWebRTC } from '@/lib/use-webrtc';
+import { useCallSignaling } from '@/lib/use-call-signaling';
+import type { MessageRow } from '@/lib/types';
 
 /** The 24-hour window offered by the disappearing-chat toggle. */
 const DISAPPEARING_SECONDS = 86_400;
-
-function subscribeToBrowserLanguage(): () => void {
-  return () => {};
-}
-
-function getBrowserLanguageSnapshot(): string | null {
-  return typeof navigator !== 'undefined' && navigator.language ? navigator.language : null;
-}
 
 export default function ChatPage({
   params,
@@ -66,20 +67,18 @@ export default function ChatPage({
   const resolvedSearchParams = use(searchParams);
   const searchFromUrl = resolvedSearchParams.search === '1';
 
-  const [messages, setMessages] = useState<MessageRow[]>([]);
-  const [newMessage, setNewMessage] = useState('');
+  const router = useRouter();
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [otherUserId, setOtherUserId] = useState<string | null>(null);
   const [otherIdentity, setOtherIdentity] = useState<PublicIdentity | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [menuOpen, setMenuOpen] = useState(false);
   const [blocking, setBlocking] = useState(false);
   const [blocked, setBlocked] = useState(false);
   const [muted, setMuted] = useState<boolean | null>(null);
   const [searchActive, setSearchActive] = useState(searchFromUrl);
   const [searchQuery, setSearchQuery] = useState('');
   const [pinnedMessageIds, setPinnedMessageIds] = useState<Set<string>>(new Set());
-  const router = useRouter();
+  const [isOnline, setIsOnline] = useState<boolean | null>(null);
 
   const [reportOpen, setReportOpen] = useState(false);
   const [reportTargetType, setReportTargetType] = useState<'user' | 'chat'>('user');
@@ -90,46 +89,129 @@ export default function ChatPage({
   const [togglingDisappearing, setTogglingDisappearing] = useState(false);
 
   const [storyOpen, setStoryOpen] = useState(false);
-  const deleteForMe = async (messageId: string) => {
-    const { data } = await supabase.auth.getUser();
-    const user = data?.user ?? null;
-    if (!user) return;
-    try {
-      await supabase.from('message_deletions').insert({ message_id: messageId, user_id: user.id });
-      setMessages((prev) => prev.filter((m) => m.id !== messageId));
-    } catch (err) {
-      console.error('Failed to delete for me:', err);
-    }
-  };
-
-  const handleUnblock = async () => {
-    const target = otherUserIdRef.current;
-    if (!target) return;
-    try {
-      const { unblockMember } = await import('@/lib/blocking');
-      await unblockMember(target);
-      setBlocked(false);
-      setMenuOpen(false);
-    } catch (err) {
-      console.error('Failed to unblock:', err);
-    }
-  };
-
   const [sendState, setSendState] = useState<ConversationSendState | null>(null);
   const [responding, setResponding] = useState(false);
-  const mediaInputRef = useRef<HTMLInputElement | null>(null);
 
   const { language: preferredTranslationLanguage } =
     usePreferredTranslationLanguage();
 
-  const sourceLanguageHint = useSyncExternalStore(
-    subscribeToBrowserLanguage,
-    getBrowserLanguageSnapshot,
-    () => null
-  );
-
   const currentUserIdRef = useRef<string | null>(null);
   const otherUserIdRef = useRef<string | null>(null);
+  const callSignalingRef = useRef<any>(null);
+
+  // --- WebRTC + Call Signaling ---
+  const webrtc = useWebRTC((payload) => {
+    callSignalingRef.current?.onSignal(payload);
+  });
+  const callSignaling = useCallSignaling(webrtc);
+  callSignalingRef.current = callSignaling;
+
+  const [incomingCall, setIncomingCall] = useState<{
+    callerId: string;
+    callerName: string;
+    callerAvatar: string | null;
+    callType: 'voice' | 'video';
+    callId: string;
+  } | null>(null);
+  const [activeCall, setActiveCall] = useState(false);
+
+  // Initialize call signaling when we know our identity
+  useEffect(() => {
+    if (currentUserId && otherUserId) {
+      callSignaling.subscribe(matchId, currentUserId, otherIdentity?.display_name ?? 'Member');
+    }
+    return () => {
+      callSignaling.unsubscribe();
+    };
+  }, [currentUserId, otherUserId, matchId, otherIdentity?.display_name, callSignaling]);
+
+  // Handle incoming call from signaling
+  useEffect(() => {
+    const c = callSignaling.call;
+    if (c.state === 'ringing' && c.remoteUserId && c.callType) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setIncomingCall({
+        callerId: c.remoteUserId,
+        callerName: c.remoteUserName ?? 'Member',
+        callerAvatar: otherIdentity?.avatar_url ?? null,
+        callType: c.callType,
+        callId: c.callId ?? '',
+      });
+    }
+  }, [callSignaling.call, otherIdentity?.avatar_url]);
+
+  // Accept incoming call
+  const handleAcceptCall = async () => {
+    setIncomingCall(null);
+    setActiveCall(true);
+    await callSignaling.acceptCall();
+  };
+
+  // Reject incoming call
+  const handleRejectCall = () => {
+    setIncomingCall(null);
+    callSignaling.rejectCall();
+  };
+
+  // End active call
+  const handleEndCall = () => {
+    setActiveCall(false);
+    callSignaling.endCall();
+  };
+
+  // Initiate outgoing call
+  const handleInitiateCall = async (callType: 'voice' | 'video') => {
+    if (!otherUserId || !otherIdentity) return;
+    setActiveCall(true);
+    await callSignaling.initiateCall(
+      otherUserId,
+      otherIdentity?.display_name ?? 'Member',
+      callType
+    );
+    // Start local WebRTC after a brief delay for the invite to propagate
+    setTimeout(() => {
+      if (callType === 'video') {
+        void webrtc.initiate({ audio: true, video: true });
+      } else {
+        void webrtc.initiate({ audio: true, video: false });
+      }
+    }, 1000);
+  };
+
+  // --- Message handling via useChatMessages hook ---
+  const {
+    items: messageItems,
+    loading: messagesLoading,
+    error: messagesError,
+    sendMessage: sendChatMessage,
+    loadMore: loadMoreMessages,
+    hasMore,
+    refresh: refreshMessages,
+  } = useChatMessages(matchId, otherIdentity
+    ? { display_name: otherIdentity.display_name, avatar_url: otherIdentity.avatar_url }
+    : null);
+
+  // --- Typing indicators ---
+  const typing = useTyping();
+  const typingUserNames = useMemo(() => {
+    return typing.typingUsers.map((uid) =>
+      uid === otherUserId ? (otherIdentity?.display_name ?? 'Member') : 'Member'
+    );
+  }, [typing.typingUsers, otherUserId, otherIdentity?.display_name]);
+
+  const startTyping = useCallback(() => {
+    typing.startTyping();
+  }, [typing]);
+
+  const stopTyping = useCallback(() => {
+    typing.stopTyping();
+  }, [typing]);
+
+  // --- Init: load session, identity, settings ---
+  const refreshMedia = useCallback(async () => {
+    const map = await fetchChatMedia(matchId);
+    setChatMedia(map);
+  }, [matchId]);
 
   useEffect(() => {
     let isMounted = true;
@@ -137,12 +219,6 @@ export default function ChatPage({
     const applyOtherUserId = (id: string) => {
       otherUserIdRef.current = id;
       if (isMounted) setOtherUserId(id);
-    };
-
-    const refreshMedia = () => {
-      void fetchChatMedia(matchId).then((map) => {
-        if (isMounted) setChatMedia(map);
-      });
     };
 
     const init = async () => {
@@ -175,8 +251,6 @@ export default function ChatPage({
       }
 
       const messagesData = (data ?? []) as MessageRow[];
-      setMessages(messagesData);
-
       const mediaMap = await fetchChatMedia(matchId);
       if (isMounted) setChatMedia(mediaMap);
 
@@ -190,7 +264,6 @@ export default function ChatPage({
       if (isMounted) setPinnedMessageIds(new Set(pinned));
 
       markConversationRead(matchId).catch(() => undefined);
-
       void markMessagesDelivered(matchId);
       void purgeExpiredChatContent();
 
@@ -228,11 +301,7 @@ export default function ChatPage({
         },
         (payload: RealtimePostgresChangesPayload<MessageRow>) => {
           const inserted = payload.new as MessageRow;
-          setMessages((prev) =>
-            prev.some((m) => m.id === inserted.id) ? prev : [...prev, inserted]
-          );
-
-          if (inserted.content === '') refreshMedia();
+          if (inserted.content === '') void refreshMedia();
 
           if (!otherUserIdRef.current && inserted.sender_id !== currentUserIdRef.current) {
             applyOtherUserId(inserted.sender_id);
@@ -257,9 +326,7 @@ export default function ChatPage({
         },
         (payload: RealtimePostgresChangesPayload<MessageRow>) => {
           const updated = payload.new as MessageRow;
-          setMessages((prev) =>
-            prev.map((m) => (m.id === updated.id ? { ...m, ...updated } : m))
-          );
+          setChatMedia((prev) => prev); // trigger re-render if needed
         }
       )
       .subscribe();
@@ -271,7 +338,7 @@ export default function ChatPage({
       unsubscribeMedia();
       void supabase.removeChannel(channel);
     };
-  }, [matchId]);
+  }, [matchId, refreshMedia]);
 
   useEffect(() => {
     if (!otherUserId) return;
@@ -306,68 +373,75 @@ export default function ChatPage({
     if (otherUserId) setStoryOpen(true);
   };
 
-  const sendMessage = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // --- Send text message ---
+  const handleSendText = useCallback(
+    async (text: string) => {
+      const me = currentUserIdRef.current;
+      if (!text || !me) return;
 
-    const content = newMessage.trim();
-    const me = currentUserIdRef.current;
-    if (!content || !me) return;
+      setError(null);
+      try {
+        await sendChatMessage(text);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Message could not be sent.');
+      }
+    },
+    [sendChatMessage]
+  );
 
-    const { data, error: insertError } = await supabase
-      .from('messages')
-      .insert({
-        match_id: matchId,
-        sender_id: me,
-        content,
-        message_type: 'text',
-      })
-      .select('id, match_id, sender_id, content, created_at, message_type, delivered_at, seen_at')
-      .single();
+  // --- Send voice note ---
+  const handleSendVoiceNote = useCallback(
+    async (blob: Blob, durationSeconds: number) => {
+      const me = currentUserIdRef.current;
+      if (!me) return;
 
-    if (insertError) {
-      console.error('Failed to send message:', insertError.message);
-      setError(
-        insertError.code === '42501'
-          ? insertError.message
-          : 'Message could not be sent.'
-      );
-      return;
-    }
+      setSendingMedia(true);
+      setError(null);
+      try {
+        const now = new Date();
+        const { data, error: insertError } = await supabase
+          .from('messages')
+          .insert({
+            match_id: matchId,
+            sender_id: me,
+            content: '',
+            message_type: 'text',
+          })
+          .select('id, match_id, sender_id, content, created_at, message_type, delivered_at, seen_at')
+          .single();
 
-    const inserted = data as MessageRow | null;
-    if (inserted) {
-      setMessages((prev) =>
-        prev.some((m) => m.id === inserted.id) ? prev : [...prev, inserted]
-      );
-    }
+        if (insertError) throw insertError;
 
-    setError(null);
-    setNewMessage('');
+        const messageId = (data as { id: string })?.id;
+        if (messageId) {
+          // Upload audio as chat media
+          const path = `${matchId}/${me}/${crypto.randomUUID()}.webm`;
+          const { error: uploadError } = await supabase.storage
+            .from('chat-media')
+            .upload(path, blob, { contentType: 'audio/webm', upsert: false, cacheControl: '3600' });
 
-    const nextState = await fetchConversationSendState(matchId);
-    if (nextState) setSendState(nextState);
-  };
+          if (uploadError) throw uploadError;
 
-  const handleRespond = async (accept: boolean) => {
-    if (responding) return;
-    setResponding(true);
-    setError(null);
+          await supabase.rpc('send_chat_media', {
+            p_match_id: matchId,
+            p_storage_path: path,
+            p_media_type: 'audio',
+            p_view_limit: 2,
+            p_ttl_seconds: 86400,
+          });
 
-    try {
-      await respondToConversationRequest(matchId, accept);
-      const nextState = await fetchConversationSendState(matchId);
-      if (nextState) setSendState(nextState);
-    } catch (err) {
-      setError(
-        err instanceof ConversationError
-          ? err.message
-          : 'The request could not be updated. Please try again.'
-      );
-    } finally {
-      setResponding(false);
-    }
-  };
+          void fetchChatMedia(matchId).then((map) => setChatMedia(map));
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Voice note could not be sent.');
+      } finally {
+        setSendingMedia(false);
+      }
+    },
+    [matchId, currentUserIdRef.current]
+  );
 
+  // --- Send media ---
   const handleMediaPicked = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files ? Array.from(event.target.files) : [];
     event.target.value = '';
@@ -379,40 +453,9 @@ export default function ChatPage({
     setError(null);
     try {
       const sent = await sendChatMedia(matchId, me, picked);
-      const now = new Date();
-      const messageRow: MessageRow = {
-        id: sent.messageId,
-        match_id: matchId,
-        sender_id: me,
-        content: '',
-        created_at: now.toISOString(),
-        message_type: 'text',
-        delivered_at: null,
-        seen_at: null,
-      };
-      setMessages((prev) =>
-        prev.some((m) => m.id === messageRow.id) ? prev : [...prev, messageRow]
-      );
+      void fetchChatMedia(matchId).then((map) => setChatMedia(map));
       const nextState = await fetchConversationSendState(matchId);
       if (nextState) setSendState(nextState);
-
-      setChatMedia((prev) => ({
-        ...prev,
-        [sent.messageId]: {
-          id: sent.mediaId,
-          message_id: sent.messageId,
-          match_id: matchId,
-          sender_id: me,
-          storage_path: '',
-          media_type: sent.media.mediaType,
-          view_once: false,
-          view_limit: sent.viewLimit,
-          view_count: 0,
-          expires_at: new Date(now.getTime() + 86_400_000).toISOString(),
-          viewed_at: null,
-          created_at: now.toISOString(),
-        },
-      }));
     } catch (err) {
       const message =
         err instanceof ChatMediaError ? err.message : 'The media could not be sent.';
@@ -422,6 +465,7 @@ export default function ChatPage({
     }
   };
 
+  // --- Other handlers ---
   const handleReported = () => {
     setReportOpen(false);
     setMenuOpen(false);
@@ -436,7 +480,6 @@ export default function ChatPage({
 
     try {
       await blockMember(target);
-      setMenuOpen(false);
       setBlocked(true);
     } catch (err) {
       if (err instanceof BlockingError) {
@@ -515,11 +558,8 @@ export default function ChatPage({
     }
   };
 
-  const searchResults = useMemo(() => {
-    if (!searchQuery.trim()) return [];
-    const q = searchQuery.toLowerCase();
-    return messages.filter((m) => m.content.toLowerCase().includes(q));
-  }, [searchQuery, messages]);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [messages, setMessages] = useState<MessageRow[]>([]);
 
   const restrictionMessage = describeRestriction(restrictions);
   const requestPending = sendState?.relationshipState === 'MESSAGE_REQUEST_PENDING';
@@ -546,131 +586,102 @@ export default function ChatPage({
   return (
     <div className="flex flex-col h-screen max-w-md mx-auto p-0 bg-[#131017] text-[#F2E9E4]">
       {/* Header */}
-      <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-[#34283F] shrink-0 bg-[#131017]/80 backdrop-blur">
-        <button
-          onClick={() => window.history.back()}
-          className="px-3 py-1.5 rounded-md text-sm bg-[#1C1822] border border-[#34283F] hover:bg-[#29202D] text-[#F2E9E4] shrink-0"
-        >
-          ← Back
-        </button>
-        <div className="min-w-0 flex-1 text-center cursor-pointer" onClick={openStory}>
-          {otherUserId ? (
-            <Link href={`/profile/${otherUserId}`} className="block" onClick={(e) => e.stopPropagation()}>
-              <p className="truncate text-sm font-semibold text-[#F2E9E4] hover:underline">
-                {conversationName}
-              </p>
-              {conversationUsername ? (
-                <p className="truncate text-xs text-[#D4B18A]/90">{conversationUsername}</p>
-              ) : null}
-            </Link>
-          ) : (
-            <>
-              <p className="truncate text-sm font-semibold text-[#F2E9E4]">
-                {conversationName}
-              </p>
-              {conversationUsername ? (
-                <p className="truncate text-xs text-[#D4B18A]/90">{conversationUsername}</p>
-              ) : null}
-            </>
-          )}
-        </div>
-        <div className="flex items-center gap-2 relative shrink-0">
-          <button
-            onClick={() => setMenuOpen(!menuOpen)}
-            className="p-1.5 rounded-md bg-[#1C1822] border border-[#34283F] hover:bg-[#29202D] text-[#F2E9E4] aria-label='Conversation options'"
-            aria-label="Conversation options"
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-            </svg>
-          </button>
+      <ChatHeader
+        otherUserId={otherUserId}
+        otherUserName={conversationName}
+        otherUserUsername={conversationUsername}
+        otherUserAvatar={senderAvatar}
+        isOnline={isOnline}
+        onVoiceCall={() => handleInitiateCall('voice')}
+        onVideoCall={() => handleInitiateCall('video')}
+        onBack={() => window.history.back()}
+        onMore={() => setMenuOpen(!menuOpen)}
+      />
 
-          {menuOpen && (
-            <div className="absolute right-0 mt-2 w-60 bg-[#1C1822] rounded-xl shadow-2xl border border-[#34283F] z-20">
-              <div className="px-4 py-3">
-                <p className="text-xs font-semibold text-[#B58A83] uppercase tracking-wider mb-3">Conversation</p>
-                <button
-                  onClick={() => {
-                    setMenuOpen(false);
-                    router.push(`/chat/${matchId}/info`);
-                  }}
-                  className="w-full text-left px-3 py-2 rounded-lg text-sm text-[#F2E9E4] hover:bg-[#29202D]"
-                >
-                  View contact
-                </button>
-                <button
-                  onClick={() => {
-                    setMenuOpen(false);
-                    router.push(`/chat/${matchId}?search=1`);
-                  }}
-                  className="w-full text-left px-3 py-2 rounded-lg text-sm text-[#F2E9E4] hover:bg-[#29202D] mt-1"
-                >
-                  Search
-                </button>
-                <button
-                  onClick={handleToggleMute}
-                  disabled={muted === null || togglingDisappearing}
-                  className={`w-full text-left px-3 py-2 rounded-lg text-sm hover:bg-[#29202D] mt-1 ${
-                    muted === null || togglingDisappearing ? 'opacity-50 cursor-not-allowed text-[#6B5B79]' : 'text-[#F2E9E4]'
-                  }`}
-                >
-                  {muted ? 'Unmute notifications' : 'Mute notifications'}
-                </button>
-                <button
-                  onClick={() => {
-                    setMenuOpen(false);
-                    setReportTargetType('user');
-                    setReportOpen(true);
-                  }}
-                  className="w-full text-left px-3 py-2 rounded-lg text-sm text-[#F2E9E4] hover:bg-[#29202D] mt-1"
-                  disabled={!otherUserId}
-                >
-                  Report User
-                </button>
-                <button
-                  onClick={() => {
-                    setMenuOpen(false);
-                    setReportTargetType('chat');
-                    setReportOpen(true);
-                  }}
-                  className="w-full text-left px-3 py-2 rounded-lg text-sm text-[#F2E9E4] hover:bg-[#29202D] mt-1"
-                  disabled={!otherUserId}
-                >
-                  Report Conversation
-                </button>
-                <button
-                  onClick={blocked ? handleUnblock : handleBlock}
-                  className="w-full text-left px-3 py-2 rounded-lg text-sm hover:bg-[#29202D] mt-1 text-[#F2E9E4]"
-                  disabled={blocking || !otherUserId}
-                >
-                  {blocked ? 'Unblock User' : (blocking ? 'Blocking…' : 'Block User')}
-                </button>
-                <button
-                  onClick={handleClearChat}
-                  disabled={togglingDisappearing}
-                  className="w-full text-left px-3 py-2 rounded-lg text-sm hover:bg-[#29202D] mt-1 text-[#C24A6E]"
-                >
-                  Clear chat
-                </button>
-                <button
-                  onClick={toggleDisappearing}
-                  className="w-full text-left px-3 py-2 rounded-lg text-sm hover:bg-[#29202D] mt-1 text-[#F2E9E4]"
-                  disabled={togglingDisappearing}
-                >
-                  {togglingDisappearing
-                    ? 'Updating…'
-                    : disappearing
-                      ? 'Turn off 24-hour mode'
-                      : 'Disappearing messages (24h)'}
-                </button>
-              </div>
-            </div>
-          )}
+      {menuOpen && (
+        <div className="absolute right-0 mt-2 w-60 bg-[#1C1822] rounded-xl shadow-2xl border border-[#34283F] z-20">
+          <div className="px-4 py-3">
+            <p className="text-xs font-semibold text-[#B58A83] uppercase tracking-wider mb-3">Conversation</p>
+            <button
+              onClick={() => {
+                setMenuOpen(false);
+                router.push(`/chat/${matchId}/info`);
+              }}
+              className="w-full text-left px-3 py-2 rounded-lg text-sm text-[#F2E9E4] hover:bg-[#29202D]"
+            >
+              View contact
+            </button>
+            <button
+              onClick={() => {
+                setMenuOpen(false);
+                router.push(`/chat/${matchId}?search=1`);
+              }}
+              className="w-full text-left px-3 py-2 rounded-lg text-sm text-[#F2E9E4] hover:bg-[#29202D] mt-1"
+            >
+              Search
+            </button>
+            <button
+              onClick={handleToggleMute}
+              disabled={muted === null || togglingDisappearing}
+              className={`w-full text-left px-3 py-2 rounded-lg text-sm hover:bg-[#29202D] mt-1 ${
+                muted === null || togglingDisappearing ? 'opacity-50 cursor-not-allowed text-[#6B5B79]' : 'text-[#F2E9E4]'
+              }`}
+            >
+              {muted ? 'Unmute notifications' : 'Mute notifications'}
+            </button>
+            <button
+              onClick={() => {
+                setMenuOpen(false);
+                setReportTargetType('user');
+                setReportOpen(true);
+              }}
+              className="w-full text-left px-3 py-2 rounded-lg text-sm text-[#F2E9E4] hover:bg-[#29202D] mt-1"
+              disabled={!otherUserId}
+            >
+              Report User
+            </button>
+            <button
+              onClick={() => {
+                setMenuOpen(false);
+                setReportTargetType('chat');
+                setReportOpen(true);
+              }}
+              className="w-full text-left px-3 py-2 rounded-lg text-sm text-[#F2E9E4] hover:bg-[#29202D] mt-1"
+              disabled={!otherUserId}
+            >
+              Report Conversation
+            </button>
+            <button
+              onClick={blocked ? handleBlock : handleBlock}
+              className="w-full text-left px-3 py-2 rounded-lg text-sm hover:bg-[#29202D] mt-1 text-[#F2E9E4]"
+              disabled={blocking || !otherUserId}
+            >
+              {blocked ? 'Unblock User' : (blocking ? 'Blocking…' : 'Block User')}
+            </button>
+            <button
+              onClick={handleClearChat}
+              disabled={togglingDisappearing}
+              className="w-full text-left px-3 py-2 rounded-lg text-sm hover:bg-[#29202D] mt-1 text-[#C24A6E]"
+            >
+              Clear chat
+            </button>
+            <button
+              onClick={toggleDisappearing}
+              className="w-full text-left px-3 py-2 rounded-lg text-sm hover:bg-[#29202D] mt-1 text-[#F2E9E4]"
+              disabled={togglingDisappearing}
+            >
+              {togglingDisappearing
+                ? 'Updating…'
+                : disappearing
+                  ? 'Turn off 24-hour mode'
+                  : 'Disappearing messages (24h)'}
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
       {searchActive && (
-        <div className="mb-2 px-4 relative" style={{ animation: 'slideDown 0.2s ease-out' }}>
+        <div className="mb-2 px-4 relative">
           <div className="flex items-center gap-2 relative">
             <svg
               className="w-4 h-4 text-[#B58A83]"
@@ -699,11 +710,6 @@ export default function ChatPage({
               </button>
             )}
           </div>
-          {searchQuery && (
-            <div className="mt-1 px-2 text-xs text-[#B58A83]">
-              {searchResults.length} result{searchResults.length !== 1 ? 's' : ''}
-            </div>
-          )}
         </div>
       )}
 
@@ -721,51 +727,41 @@ export default function ChatPage({
           role="status"
           className="mb-3 px-4 rounded-xl border border-[#C24A6E]/40 bg-[#C24A6E]/10 p-2 text-center text-xs text-[#C24A6E]"
         >
-          You blocked this member. The conversation is closed and you will not see each other again.
+          You blocked this member. The conversation is closed.
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto space-y-3 pb-2 pr-2 px-4 scrollbar-hide">
-        {messages.length === 0 && (
-          <p className="text-center text-sm text-[#B58A83] mt-12">
-            No messages yet. Say hello.
-          </p>
-        )}
-
-        {messages.map((msg) => {
-          const isMe = msg.sender_id === currentUserId;
-          const media = chatMedia[msg.id];
-          const isPinned = pinnedMessageIds.has(msg.id);
-
-          if (searchQuery.trim() && !msg.content.toLowerCase().includes(searchQuery.toLowerCase())) {
-            return null;
+      {/* Message list */}
+      <ChatMessageList
+        items={messageItems}
+        currentUserId={currentUserId}
+        otherUserId={otherUserId}
+        otherUserName={conversationName}
+        otherUserAvatar={senderAvatar}
+        searchQuery={searchQuery}
+        isLoading={messagesLoading}
+        error={messagesError}
+        onRetry={refreshMessages}
+        onPinToggle={(messageId) => {
+          const next = new Set(pinnedMessageIds);
+          if (next.has(messageId)) next.delete(messageId);
+          else next.add(messageId);
+          setPinnedMessageIds(next);
+          if (next.has(messageId)) {
+            void pinMessage(matchId, messageId);
+          } else {
+            void unpinMessage(matchId, messageId);
           }
-
-          if (media && isGone(media)) return null;
-
-          return (
-            <div key={msg.id} className="mb-2 relative w-full">
-              <MessageBubble
-                message={msg}
-                media={media ?? null}
-                isMe={isMe}
-                currentUserId={currentUserId ?? null}
-                isPinned={isPinned}
-                searchQuery={searchQuery}
-                onPinToggle={() => {
-                  const next = new Set(pinnedMessageIds);
-                  if (isPinned) next.delete(msg.id);
-                  else next.add(msg.id);
-                  setPinnedMessageIds(next);
-                }}
-                onReply={() => {}}
-                onForward={() => {}}
-                senderAvatar={!isMe ? senderAvatar : null}
-              />
-            </div>
-          );
-        })}
-      </div>
+        }}
+        onReply={(messageId) => {
+          // Reply context handled by composer
+          console.log('Reply to:', messageId);
+        }}
+        onForward={(messageId) => {
+          console.log('Forward:', messageId);
+        }}
+        typingUsers={typingUserNames}
+      />
 
       {pinnedMessageIds.size > 0 && (
         <div
@@ -805,13 +801,11 @@ export default function ChatPage({
           role="status"
           className="mb-3 px-4 rounded-xl border border-[#D4B18A]/40 bg-[#D4B18A]/10 p-3 text-xs text-[#D4B18A]"
         >
-          <p className="mb-3 text-center">
-            {conversationName} sent you a message request.
-          </p>
+          <p className="mb-3 text-center">{conversationName} sent you a message request.</p>
           <div className="flex gap-2">
             <button
               type="button"
-              onClick={() => void handleRespond(true)}
+              onClick={() => void respondToConversationRequest(matchId, true)}
               disabled={responding}
               className="flex-1 rounded-xl bg-[#D4B18A] px-3 py-2 font-semibold text-[#17121C] disabled:opacity-50"
             >
@@ -819,7 +813,7 @@ export default function ChatPage({
             </button>
             <button
               type="button"
-              onClick={() => void handleRespond(false)}
+              onClick={() => void respondToConversationRequest(matchId, false)}
               disabled={responding}
               className="flex-1 rounded-xl border border-[#D4B18A]/60 px-3 py-2 font-semibold text-[#F2E9E4] disabled:opacity-50"
             >
@@ -854,51 +848,72 @@ export default function ChatPage({
         </p>
       )}
 
-      <form onSubmit={sendMessage} className="flex gap-2 px-4 pb-4 shrink-0">
-        <input
-          ref={mediaInputRef}
-          type="file"
-          accept="image/*,video/*"
-          className="hidden"
-          data-testid="chat-media-input"
-          onChange={handleMediaPicked}
-        />
-        <button
-          type="button"
-          onClick={() => mediaInputRef.current?.click()}
-          disabled={!canSend || sendingMedia}
-          aria-label="Attach a photo or video"
-          title="Attach a photo or video"
-          className="p-2.5 rounded-full bg-[#1C1822] border border-[#34283F] text-[#F2E9E4] disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[#29202D] shrink-0"
-        >
-          {sendingMedia ? '…' : '📎'}
-        </button>
-        <input
-          type="text"
-          value={newMessage}
-          onChange={(e) => setNewMessage(e.target.value)}
-          placeholder={
-            conversationClosed
-              ? 'This conversation is closed'
-              : requestBlocked
-                ? 'Request limit reached — wait for acceptance'
-                : canSend
-                  ? 'Type a message...'
-                  : 'Messaging is paused'
-          }
-          aria-label="Message"
-          disabled={!canSend}
-          className="flex-1 px-4 py-3 rounded-2xl bg-[#1C1822] border border-[#34283F] text-[#F2E9E4] focus:outline-none focus:ring-1 focus:ring-[#D4B18A] disabled:opacity-50"
-        />
-        <button
-          type="submit"
-          disabled={!canSend}
-          className={`w-12 h-12 rounded-full bg-[#C24A6E] text-white flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed shrink-0 shadow-lg hover:bg-[#B33E5E] transition`}
-          aria-label="Send"
-        >
-          ➤
-        </button>
-      </form>
+      {/* Composer */}
+      <ChatComposer
+        disabled={!canSend || sendingMedia}
+        onSend={handleSendText}
+        onAttach={() => {
+          const input = document.querySelector('input[type="file"]') as HTMLInputElement | null;
+          input?.click();
+        }}
+        onVoiceNote={handleSendVoiceNote}
+        placeholder={
+          conversationClosed
+            ? 'This conversation is closed'
+            : requestBlocked
+              ? 'Request limit reached — wait for acceptance'
+              : canSend
+                ? 'Type a message...'
+                : 'Messaging is paused'
+        }
+        voiceEnabled
+      />
+
+      <input
+        type="file"
+        accept="image/*,video/*,audio/*"
+        className="hidden"
+        onChange={handleMediaPicked}
+      />
+
+      {/* Call modals */}
+      <IncomingCallModal
+        isOpen={!!incomingCall}
+        onClose={() => setIncomingCall(null)}
+        onAccept={(callType) => {
+          setIncomingCall(null);
+          setActiveCall(true);
+          void callSignaling.acceptCall();
+          setTimeout(() => {
+            if (callType === 'video') {
+              void webrtc.accept({ audio: true, video: true });
+            } else {
+              void webrtc.accept({ audio: true, video: false });
+            }
+          }, 500);
+        }}
+        onReject={handleRejectCall}
+        callerName={incomingCall?.callerName ?? 'Member'}
+        callerAvatar={incomingCall?.callerAvatar ?? null}
+        callType={incomingCall?.callType ?? 'voice'}
+        isIncoming
+      />
+
+      <ActiveCallScreen
+        isOpen={activeCall}
+        onEnd={handleEndCall}
+        onMute={webrtc.toggleMute}
+        onCamera={webrtc.toggleCamera}
+        onSpeaker={() => {}}
+        callType={incomingCall?.callType ?? 'voice'}
+        isMuted={webrtc.isMuted}
+        isCameraOff={webrtc.isCameraOff}
+        localStream={webrtc.localStream}
+        remoteStream={webrtc.remoteStream}
+        duration={webrtc.duration}
+        state={webrtc.state}
+        error={webrtc.error}
+      />
 
       <ReportModal
         isOpen={reportOpen}
@@ -916,6 +931,7 @@ export default function ChatPage({
         userName={conversationName}
         userUsername={conversationUsername ? conversationUsername.replace(/^@/, '') : null}
         avatarUrl={senderAvatar}
+        matchId={matchId}
       />
     </div>
   );

@@ -25,21 +25,16 @@ import {
   type MessageReaction,
 } from '@/lib/reactions';
 import { unsendMessage } from '@/lib/messages';
-import { pinMessage, unpinMessage, fetchPinnedMessages } from '@/lib/pins';
+import { pinMessage, unpinMessage } from '@/lib/pins';
 import ReactionBar from '@/app/components/chat/ReactionBar';
 import ReactionPill from '@/app/components/chat/ReactionPill';
 import MessageStatus from '@/app/components/chat/MessageStatus';
-import TranslatableMessage from '@/app/components/chat/TranslatableMessage';
-import { usePreferredTranslationLanguage } from '@/app/components/chat/usePreferredTranslationLanguage';
-import EmojiText from '@/app/components/chat/EmojiText';
-import { MessageRow } from '@/lib/types';
-import ChatMediaMessage from '@/app/components/chat/ChatMediaMessage';
-import { ChatMediaReport } from '@/app/components/chat/ChatMediaMessage';
-import { type ChatMediaByMessage } from '@/lib/chatMedia';
+import { formatMessageTime } from '@/lib/chat-tokens';
+import { type MessageRow } from '@/lib/types';
 
 interface MessageBubbleProps {
   message: MessageRow;
-  media: ChatMediaByMessage[string] | null;
+  media: { media_type: string; id: string } | null;
   isMe: boolean;
   currentUserId: string | null;
   isPinned: boolean;
@@ -47,8 +42,16 @@ interface MessageBubbleProps {
   onPinToggle?: () => void;
   onReply?: (message: MessageRow) => void;
   onForward?: (message: MessageRow) => void;
-  /** Small circular avatar of the sender (shown on incoming messages). */
+  /** Show sender avatar on received messages. */
+  showAvatar?: boolean;
+  /** Whether this is the first message from this sender in a group. */
+  isGroupStart?: boolean;
+  /** Whether the previous message is from the same sender. */
+  isGrouped?: boolean;
+  /** Sender's avatar URL (for received messages). */
   senderAvatar?: string | null;
+  /** Sender's display name (shown on group start). */
+  senderName?: string | null;
 }
 
 const ROSE = '#C24A6E';
@@ -105,10 +108,12 @@ export default function MessageBubble({
   onPinToggle,
   onReply,
   onForward,
-  senderAvatar,
+  showAvatar = true,
+  isGroupStart = true,
+  isGrouped = false,
+  senderAvatar = null,
+  senderName = null,
 }: MessageBubbleProps) {
-  const { language: preferredTranslationLanguage } =
-    usePreferredTranslationLanguage();
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuPos, setMenuPos] = useState({ x: 0, y: 0 });
   const [reactionBarOpen, setReactionBarOpen] = useState(false);
@@ -358,7 +363,10 @@ export default function MessageBubble({
         ? translationState.translated ?? message.content
         : message.content;
     const highlighted = highlightMatches(textToShow, searchQuery);
-    return <EmojiText text={highlighted} size={16} />;
+    return <div
+      className="prose-sm prose-invert max-w-none text-[14px] leading-relaxed break-words whitespace-pre-wrap"
+      dangerouslySetInnerHTML={{ __html: highlighted }}
+    />;
   }, [message.content, translationState, searchQuery]);
 
   const callLabel = (): string => {
@@ -367,17 +375,23 @@ export default function MessageBubble({
     return '';
   };
 
+  const bubbleClass = isMe
+    ? `bg-[#C24A6E] text-white rounded-2xl rounded-tr-sm p-3`
+    : `bg-[#1C1822] text-[#F2E9E4] border border-[#34283F] rounded-2xl rounded-tl-sm p-3`;
+
+  const containerClass = `flex items-end gap-2 ${isMe ? 'justify-end' : 'justify-start'}`;
+
   return (
     <div
       ref={messageRef}
-      className={`flex items-end gap-2 ${isMe ? 'justify-end' : 'justify-start'}`}
+      className={`mb-2 ${containerClass} w-full`}
       onPointerDown={onPointerDown}
       onPointerUp={onPointerUp}
       onPointerLeave={onPointerLeave}
       onContextMenu={(e) => openMenu(e, 'menu')}
       onDoubleClick={() => setReactionBarOpen((o) => !o)}
     >
-      {/* Call log — centered system message (WhatsApp style). */}
+      {/* Call log — centered system message */}
       {isCallLog && !isMe ? (
         <div className="flex flex-col items-center justify-center my-4 w-full">
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#1C1822] border border-[#34283F] shadow-sm">
@@ -398,13 +412,14 @@ export default function MessageBubble({
 
       {!isCallLog && (
         <>
-          {/* Incoming message: small circular sender avatar + bubble. */}
-          {!isMe && senderAvatar ? (
+          {/* Received message: avatar on the left */}
+          {!isMe && showAvatar && senderAvatar && isGroupStart ? (
             <img
               src={senderAvatar}
               alt=""
-              className="w-6 h-6 rounded-full border border-[#34283F] object-cover shrink-0"
+              className="w-6 h-6 rounded-full border border-[#34283F] object-cover shrink-0 flex-shrink-0"
               style={{ width: 24, height: 24 }}
+              aria-hidden
             />
           ) : null}
 
@@ -432,18 +447,19 @@ export default function MessageBubble({
             <div className="relative group">
               {media ? (
                 <>
-                  {!isMe && <ChatMediaReport media={media} />}
-                  <ChatMediaMessage media={media} isOwn={isMe} />
+                  <div className={bubbleClass}>
+                    {media.media_type === 'video' ? '🎬' : '🖼️'}
+                    <span className="ml-1 text-xs">{isMe ? 'Your media' : 'Photo or video'}</span>
+                  </div>
                 </>
               ) : (
                 <div className="relative group">
-                  <div
-                    className={`p-3 rounded-2xl max-w-[75%] ${
-                      isMe
-                        ? `bg-[#${ROSE.slice(1)}] text-white rounded-tr-none`
-                        : `bg-[#1C1822] text-[#F2E9E4] rounded-tl-none border border-[#34283F]`
-                    }`}
-                  >
+                  <div className={bubbleClass}>
+                    {isGroupStart && senderName && !isMe ? (
+                      <span className="text-[10px] text-[#D4B18A]/70 font-medium mb-1 block">
+                        {senderName}
+                      </span>
+                    ) : null}
                     {displayContent}
                     {translationState && (
                       <div className="mt-1 flex items-center gap-2">
@@ -523,7 +539,7 @@ export default function MessageBubble({
               )}
             </div>
 
-            {reactionCounts.size > 0 && (
+            {reactionCounts.size > 0 && !isGrouped && (
               <div
                 style={{
                   display: 'flex',
@@ -549,17 +565,30 @@ export default function MessageBubble({
               </div>
             )}
 
-            <span
-              style={{
-                fontSize: '10px',
-                color: isMe ? '#F2E9E4' : '#B58A83',
-                marginTop: '2px',
-                alignSelf: isMe ? 'flex-end' : 'flex-start',
-              }}
-            >
-              {formatRelative(message.created_at)}
-            </span>
+            {!isGrouped && (
+              <span
+                style={{
+                  fontSize: '10px',
+                  color: isMe ? '#F2E9E4' : '#B58A83',
+                  marginTop: '2px',
+                  alignSelf: isMe ? 'flex-end' : 'flex-start',
+                }}
+              >
+                {formatRelative(message.created_at)}
+              </span>
+            )}
           </div>
+
+          {/* Sent message: avatar on the right */}
+          {isMe && showAvatar && senderAvatar && isGroupStart ? (
+            <img
+              src={senderAvatar}
+              alt=""
+              className="w-6 h-6 rounded-full border border-[#34283F] object-cover shrink-0 flex-shrink-0"
+              style={{ width: 24, height: 24 }}
+              aria-hidden
+            />
+          ) : null}
         </>
       )}
 
