@@ -23,9 +23,7 @@ import { ReportButton } from '@/app/components/moderation/ReportButton';
  * used up.
  *
  * ANTI-SAVE (best effort on the open web)
- *   * The image is painted onto a `<canvas>` rather than an `<img loading="lazy"
-
- src>`, so the
+ *   * The image is painted onto a `<canvas>` rather than an `<img src>`, so the
  *     browser offers no "Save image as…" entry.
  *   * The context menu, drag-to-desktop and picture-in-picture are disabled.
  *   * The overlay is covered the moment the tab loses focus or is hidden, so a
@@ -76,9 +74,7 @@ export default function ChatMediaMessage({ media, isOwn }: ChatMediaMessageProps
     };
   }, []);
 
-  // Paint images to a canvas so no `<img loading="lazy"
-
- src>` is ever offered for saving.
+  // Paint images to a canvas so no `<img src>` is ever offered for saving.
   useEffect(() => {
     if (state !== 'open' || urlType !== 'image' || !url) return;
     const canvas = canvasRef.current;
@@ -134,15 +130,22 @@ export default function ChatMediaMessage({ media, isOwn }: ChatMediaMessageProps
     setUrl(null);
   };
 
-  const subtitle = gone
-    ? 'Disappeared'
-    : state === 'loading'
-      ? 'Loading…'
-      : isOwn
-        ? `Your media · ${remaining} view${remaining === 1 ? '' : 's'} left`
-        : usedUp
-          ? 'No views left'
-          : `Tap to view · ${remaining} view${remaining === 1 ? '' : 's'} left`;
+  // Replaced the nested ternary with a readable if/else to prevent Turbopack crashes
+  let subtitle = '';
+  if (gone) {
+    subtitle = 'Disappeared';
+  } else if (state === 'loading') {
+    subtitle = 'Loading…';
+  } else {
+    const plural = remaining === 1 ? '' : 's';
+    if (isOwn) {
+      subtitle = `Your media · ${remaining} view${plural} left`;
+    } else if (usedUp) {
+      subtitle = 'No views left';
+    } else {
+      subtitle = `Tap to view · ${remaining} view${plural} left`;
+    }
+  }
 
   return (
     <div className="flex flex-col gap-1" onContextMenu={stop} onDragStart={stop}>
