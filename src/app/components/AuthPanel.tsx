@@ -87,7 +87,7 @@ const PANEL_WIDTH = 360;
 
 export default function AuthPanel() {
   const router = useRouter();
-  const [authMode, setAuthMode] = useState<'signup' | 'login'>('signup');
+  const [authMode, setAuthMode] = useState<'signup' | 'login'>('login');
   const [isAgeVerified, setIsAgeVerified] = useState(false);
   const [loading, setLoading] = useState(false);
   const [email, setEmail] = useState('');
@@ -165,7 +165,11 @@ export default function AuthPanel() {
     });
 
     void supabase.auth.getSession().then(({ data: { session } }) => {
-      setSessionEmail(session?.user?.email ?? null);
+      if (session?.user) {
+        router.replace('/');
+        return;
+      }
+      setSessionEmail(null);
     });
 
     return () => subscription.unsubscribe();
@@ -260,7 +264,22 @@ export default function AuthPanel() {
           password,
           options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
         });
-        if (error) throw error;
+        if (error) {
+          if (/already registered|already exists/i.test(error.message)) {
+            setFormError('Account already exists. Please log in.');
+            switchMode('login');
+            setLoading(false);
+            return;
+          }
+          throw error;
+        }
+
+        if (data.user && (!data.user.identities || data.user.identities.length === 0)) {
+          setFormError('Account already exists. Please log in.');
+          switchMode('login');
+          setLoading(false);
+          return;
+        }
 
         // With email confirmation on there is no session yet, and saying so is
         // far clearer than silently doing nothing.
@@ -277,14 +296,24 @@ export default function AuthPanel() {
           email: address,
           password,
         });
-        if (error) throw error;
+        if (error) {
+          if (/invalid login credentials/i.test(error.message)) {
+            setFormError('No account found with this email. Please sign up first.');
+            setLoading(false);
+            return;
+          }
+          throw error;
+        }
         // `onAuthStateChange` fires SIGNED_IN; `signedInHereRef` lets it route.
         signedInHereRef.current = true;
       }
     } catch (error) {
-      setFormError(
-        error instanceof Error ? error.message : 'Authentication failed. Please try again.'
-      );
+      const msg = error instanceof Error ? error.message : 'Authentication failed. Please try again.';
+      if (/invalid login credentials/i.test(msg)) {
+        setFormError('No account found with this email. Please sign up first.');
+      } else {
+        setFormError(msg);
+      }
     } finally {
       // CONSTITUTION Article 2.8: loading must always terminate.
       setLoading(false);
@@ -765,17 +794,6 @@ export default function AuthPanel() {
       <div style={styles.tabContainer}>
         <button
           type="button"
-          onClick={() => switchMode('signup')}
-          aria-pressed={isSignup}
-          style={{
-            ...styles.tabButton,
-            ...(isSignup ? styles.tabActive : styles.tabInactive),
-          }}
-        >
-          Sign Up
-        </button>
-        <button
-          type="button"
           onClick={() => switchMode('login')}
           aria-pressed={!isSignup}
           style={{
@@ -784,6 +802,17 @@ export default function AuthPanel() {
           }}
         >
           Log In
+        </button>
+        <button
+          type="button"
+          onClick={() => switchMode('signup')}
+          aria-pressed={isSignup}
+          style={{
+            ...styles.tabButton,
+            ...(isSignup ? styles.tabActive : styles.tabInactive),
+          }}
+        >
+          Sign Up
         </button>
       </div>
 
