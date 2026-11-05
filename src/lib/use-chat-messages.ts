@@ -262,7 +262,7 @@ export function useChatMessages(
             const last = prev[prev.length - 1];
             const lastCreatedAt = 'createdAt' in last ? last.createdAt : null;
             const needsDateSep =
-              !last || ('type' in last && last.type === 'date') || !isSameDay(msg.createdAt, lastCreatedAt);
+              !last || ('type' in last && last.type === 'date') || (lastCreatedAt && !isSameDay(msg.createdAt, lastCreatedAt));
             const sep: ChatListItem | null = needsDateSep
               ? {
                   type: 'date',

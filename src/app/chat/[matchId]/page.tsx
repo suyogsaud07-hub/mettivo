@@ -97,14 +97,18 @@ export default function ChatPage({
 
   const currentUserIdRef = useRef<string | null>(null);
   const otherUserIdRef = useRef<string | null>(null);
-  const callSignalingRef = useRef<any>(null);
+  const callSignalingRef = useRef<ReturnType<typeof useCallSignaling> | null>(null);
 
   // --- WebRTC + Call Signaling ---
   const webrtc = useWebRTC((payload) => {
     callSignalingRef.current?.onSignal(payload);
   });
   const callSignaling = useCallSignaling(webrtc);
-  callSignalingRef.current = callSignaling;
+
+  // Keep ref in sync so the WebRTC callback can reach the signaling instance.
+  useEffect(() => {
+    callSignalingRef.current = callSignaling;
+  }, [callSignaling]);
 
   const [incomingCall, setIncomingCall] = useState<{
     callerId: string;

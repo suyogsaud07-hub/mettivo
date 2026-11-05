@@ -115,6 +115,7 @@ export function useCallSignaling(
 
       // Cast to any to work with Supabase Realtime broadcast API which may not
       // be fully typed in the installed version of @supabase/supabase-js.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const channel: any = supabase.channel(`call:${matchId}`);
 
       channel
@@ -241,7 +242,7 @@ export function useCallSignaling(
   const broadcast = useCallback(
     (signal: Omit<CallSignal, 'timestamp'>) => {
       if (!channelRef.current || !myUserIdRef.current) return;
-      void (channelRef.current as any).send({
+      void (channelRef.current as any /* eslint-disable-line @typescript-eslint/no-explicit-any */).send({
         type: 'broadcast',
         event: signal.type,
         payload: { ...signal, timestamp: Date.now() },
@@ -271,7 +272,7 @@ export function useCallSignaling(
         to: targetUserId,
         callType,
         callId,
-      } as any);
+      } as any /* eslint-disable-line @typescript-eslint/no-explicit-any */);
 
       // The WebRTC offer is sent after the recipient accepts the invite.
       // We wait for call-accept from the remote side before creating offer.

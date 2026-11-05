@@ -92,6 +92,7 @@ export function useTyping(): UseTypingResult {
       }
 
       // Cast to any to work with Supabase Realtime broadcast API.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const channel: any = supabase.channel(`typing:${matchId}`);
 
       channel
@@ -102,7 +103,7 @@ export function useTyping(): UseTypingResult {
             const payload = event.payload;
             if (!payload || payload.userId === userId) return;
             addOrRefresh(payload.userId, payload.userName);
-          }) as any
+          }) as any /* eslint-disable-line @typescript-eslint/no-explicit-any */
         )
         .on(
           'broadcast',
@@ -111,9 +112,9 @@ export function useTyping(): UseTypingResult {
             const payload = event.payload;
             if (!payload || payload.userId === userId) return;
             remove(payload.userId);
-          }) as any
+          }) as any /* eslint-disable-line @typescript-eslint/no-explicit-any */
         )
-        .subscribe((status) => {
+        .subscribe((status: string) => {
           if (status === 'SUBSCRIBED') {
             // Announce presence when joining.
             void channel.send({
