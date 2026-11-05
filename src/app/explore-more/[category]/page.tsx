@@ -10,6 +10,7 @@ import ProfileLink from '@/app/components/profile/ProfileLink';
 import { recordLike, LikeError } from '@/lib/likes';
 import { blockMember, BlockingError } from '@/lib/blocking';
 import {
+  EXPLORE_CATEGORY_IDS,
   EXPLORE_GOALS,
   EXPLORE_PAGE_SIZE,
   ExploreMoreError,
@@ -117,11 +118,21 @@ function ExploreCategoryContent() {
       setCursor(page.nextCursor);
       setHasMore(page.nextCursor !== null);
     } catch (err) {
-      setError(
-        err instanceof ExploreMoreError
-          ? err.message
-          : 'We could not load this category right now. Please try again.'
-      );
+      // Unknown / dynamic categories (e.g. a new slug like `free_tonight`) have
+      // no server-side feed. Render the category shell with an empty state
+      // instead of surfacing a "category not found" error.
+      if (categoryId && !EXPLORE_CATEGORY_IDS.some((id) => id === categoryId)) {
+        setCandidates([]);
+        setCursor(null);
+        setHasMore(false);
+        setError(null);
+      } else {
+        setError(
+          err instanceof ExploreMoreError
+            ? err.message
+            : 'We could not load this category right now. Please try again.'
+        );
+      }
     } finally {
       setLoading(false);
     }

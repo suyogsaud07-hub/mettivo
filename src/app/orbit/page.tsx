@@ -11,7 +11,7 @@ import MobileNav from '@/app/components/layout/MobileNav';
 import { getCasualIntentEmoji } from '@/components/profile/CasualIntentChips';
 
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN || process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;
-const MAP_STYLE = 'mapbox://styles/mapbox/dark-v11';
+const MAP_STYLE = 'mapbox://styles/mapbox/satellite-streets-v12';
 
 const DEFAULT_VIEWPORT = {
   latitude: 20,
@@ -321,33 +321,51 @@ export default function OrbitPage() {
   }, [viewport.latitude, viewport.longitude, filters, router]);
 
   useEffect(() => {
-    const getUserLocation = () => {
-      if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(
-          (position) => {
-            setViewport({
-              latitude: position.coords.latitude,
-              longitude: position.coords.longitude,
-              zoom: 10,
-            });
-            setInitialLoad(false);
-          },
-          () => {
-            // IF LOCATION FAILS: Just show the global view and a small banner
-            setViewport({ latitude: 20, longitude: 0, zoom: 1.5 });
-            setInitialLoad(false);
-            setLocationError('Location blocked. Showing global view.');
-          },
-          { enableHighAccuracy: false, timeout: 10000, maximumAge: 5 * 60 * 1000 }
-        );
-      } else {
+    let mounted = true;
+
+    const tryIpLocation = async () => {
+      try {
+        const res = await fetch('https://ipapi.co/json/');
+        if (!res.ok) throw new Error('IP lookup failed');
+        const data = await res.json();
+        if (mounted && data.latitude != null && data.longitude != null) {
+          setViewport({ latitude: data.latitude, longitude: data.longitude, zoom: 10 });
+          setInitialLoad(false);
+          return;
+        }
+      } catch {
+        // fall through to global view below
+      }
+      if (mounted) {
         setViewport({ latitude: 20, longitude: 0, zoom: 1.5 });
         setInitialLoad(false);
-        setLocationError('Geolocation not supported. Showing global view.');
+        setLocationError('Location unavailable. Showing global view.');
       }
     };
 
-    getUserLocation();
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          if (!mounted) return;
+          setViewport({
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+            zoom: 10,
+          });
+          setInitialLoad(false);
+        },
+        () => {
+          void tryIpLocation();
+        },
+        { enableHighAccuracy: false, timeout: 10000, maximumAge: 5 * 60 * 1000 }
+      );
+    } else {
+      void tryIpLocation();
+    }
+
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -436,7 +454,7 @@ export default function OrbitPage() {
         </div>
       )}
 
-      <main className="absolute inset-0">
+      <div className="fixed inset-0 w-full h-full z-0" style={{ overflow: 'hidden', filter: 'brightness(0.6) saturate(1.2)' }}>
         <Map
           initialViewState={viewport}
           mapStyle={MAP_STYLE}
@@ -536,8 +554,9 @@ export default function OrbitPage() {
             </div>
           )}
         </Map>
+      </div>
 
-        <button
+      <button
           type="button"
           onClick={() => setFiltersOpen(true)}
           className="absolute bottom-24 right-4 z-10 w-12 h-12 rounded-full bg-[#D4B18A] border-4 border-[#1C1822] shadow-lg flex items-center justify-center hover:scale-110 transition-transform"
@@ -564,7 +583,6 @@ export default function OrbitPage() {
             </div>
           </div>
         )}
-      </main>
 
       {filtersOpen && (
         <FilterPanel
