@@ -74,9 +74,7 @@ interface FilterPanelProps {
 }
 
 const formatDistance = (meters: number): string => {
-  if (meters < 1000) {
-    return `${Math.round(meters)}m`;
-  }
+  if (meters < 1000) return `${Math.round(meters)}m`;
   const km = meters / 1000;
   return km < 10 ? `${km.toFixed(1)}km` : `${Math.round(km)}km`;
 };
@@ -166,13 +164,11 @@ const FilterPanel = ({ filters, onChange, onReset, onClose }: FilterPanelProps) 
   return (
     <div className="absolute inset-0 z-30 flex flex-col justify-end">
       <div className="flex-1 bg-black/50 backdrop-blur-sm" onClick={onClose} />
-
       <div className="bg-[#1C1822] border-t border-[#34283F] rounded-t-xl p-6 max-h-[80vh] overflow-y-auto">
         <div className="flex justify-between items-center mb-6">
           <h2 className="text-xl font-bold text-[#F2E9E4]">Filters</h2>
           <button type="button" onClick={onClose} className="text-[#B58A83] text-2xl hover:text-[#D4B18A]">×</button>
         </div>
-
         <div className="mb-6">
           <div className="flex justify-between items-center mb-3">
             <label className="text-sm font-semibold text-[#D4B18A] uppercase tracking-wider">Distance</label>
@@ -195,7 +191,6 @@ const FilterPanel = ({ filters, onChange, onReset, onClose }: FilterPanelProps) 
             </button>
           </div>
         </div>
-
         <div className="mb-6">
           <label className="block text-sm font-semibold text-[#D4B18A] uppercase tracking-wider mb-3">Age Range</label>
           <div className="flex gap-2">
@@ -209,7 +204,6 @@ const FilterPanel = ({ filters, onChange, onReset, onClose }: FilterPanelProps) 
             </div>
           </div>
         </div>
-
         <div className="mb-6">
           <label className="block text-sm font-semibold text-[#D4B18A] uppercase tracking-wider mb-3">Gender</label>
           <div className="flex gap-2 flex-wrap">
@@ -220,7 +214,6 @@ const FilterPanel = ({ filters, onChange, onReset, onClose }: FilterPanelProps) 
             ))}
           </div>
         </div>
-
         <div className="mb-6">
           <div className="flex justify-between items-center">
             <label className="text-sm font-semibold text-[#D4B18A] uppercase tracking-wider">Online Now</label>
@@ -229,12 +222,10 @@ const FilterPanel = ({ filters, onChange, onReset, onClose }: FilterPanelProps) 
             </button>
           </div>
         </div>
-
         <div className="mb-6">
           <label className="block text-sm font-semibold text-[#D4B18A] uppercase tracking-wider mb-3">Country</label>
           <input type="text" value={filters.country || ''} onChange={(e) => onChange({ country: e.target.value || null })} placeholder="Enter country name" className="w-full bg-[#29202D] border border-[#34283F] rounded-lg p-3 text-[#F2E9E4] focus:outline-none focus:ring-1 focus:ring-[#D4B18A]" />
         </div>
-
         <div className="flex gap-2">
           <button type="button" onClick={onReset} className="flex-1 py-3 rounded-full bg-transparent border border-[#34283F] text-[#B58A83] font-medium hover:bg-[#29202D] transition-colors">Reset</button>
           <button type="button" onClick={onClose} className="flex-1 py-3 rounded-full bg-[#D4B18A] text-[#17121C] font-medium hover:bg-[#E4C9A0] transition-colors">Apply</button>
@@ -342,9 +333,10 @@ export default function OrbitPage() {
             setInitialLoad(false);
           },
           () => {
+            // IF LOCATION FAILS: Just show the global view and a small banner
             setViewport({ latitude: 20, longitude: 0, zoom: 1.5 });
             setInitialLoad(false);
-            setLocationError('Could not get your location. Showing global view.');
+            setLocationError('Location blocked. Showing global view.');
           },
           { enableHighAccuracy: false, timeout: 10000, maximumAge: 5 * 60 * 1000 }
         );
@@ -423,22 +415,8 @@ export default function OrbitPage() {
     );
   }
 
-  if (locationError && !initialLoad) {
-    return (
-      <div className="min-h-screen bg-[#131017] text-[#F2E9E4] flex flex-col">
-        <header className="flex justify-between items-center p-6">
-          <h1 className="text-2xl font-bold">Live Orbit</h1>
-        </header>
-        <main className="flex-1 flex flex-col items-center justify-center gap-4 px-6 text-center">
-          <div className="text-6xl">🌍</div>
-          <h2 className="text-xl font-semibold">Location Required</h2>
-          <p className="text-[#B58A83] max-w-md">{locationError}</p>
-          <p className="text-sm text-[#B58A83]/70">Using global view instead</p>
-        </main>
-        <MobileNav />
-      </div>
-    );
-  }
+  // REMOVED THE BLOCKING LOCATION ERROR SCREEN HERE.
+  // The map will now always render, even if location fails.
 
   return (
     <div className="min-h-screen bg-[#131017] text-[#F2E9E4] flex flex-col relative">
@@ -450,6 +428,13 @@ export default function OrbitPage() {
           <span className="text-xs text-[#B58A83]">{profiles.length} online</span>
         </div>
       </header>
+
+      {/* Show a small banner if location was blocked, instead of blocking the map */}
+      {locationError && (
+        <div className="absolute top-20 left-1/2 -translate-x-1/2 z-20 bg-[#3B1220] border border-[#7F1D2E] text-[#FCA5B5] rounded-full px-4 py-1.5 text-xs whitespace-nowrap shadow-lg">
+          {locationError}
+        </div>
+      )}
 
       <main className="flex-1 relative">
         <Map
