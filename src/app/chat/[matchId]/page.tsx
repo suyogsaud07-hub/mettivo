@@ -41,22 +41,12 @@ import { ReportModal } from '@/app/components/moderation/ReportModal';
 import MessageBubble from '@/app/components/chat/MessageBubble';
 import { fetchPublicIdentities, type PublicIdentity } from '@/lib/public-profiles';
 import { usePreferredTranslationLanguage } from '@/app/components/chat/usePreferredTranslationLanguage';
+import ProfileStoryModal from '@/components/chat/ProfileStoryModal';
 
 /** The 24-hour window offered by the disappearing-chat toggle. */
 const DISAPPEARING_SECONDS = 86_400;
 
-/**
- * The browser's language, as an external store.
- *
- * Declared at module scope so the function identities are stable across
- * renders — `useSyncExternalStore` re-subscribes whenever `subscribe` changes
- * identity. No subscription is actually needed: `navigator.language` cannot
- * change without a page reload, so the only risk would be subscribing and never
- * unsubscribing, which this deliberately avoids.
- */
 function subscribeToBrowserLanguage(): () => void {
-
-
   return () => {};
 }
 
@@ -71,8 +61,6 @@ export default function ChatPage({
   params: Promise<{ matchId: string }>;
   searchParams: Promise<{ search?: string }>;
 }) {
-  // Next.js 16 passes `params` as a promise; `use()` unwraps it in a client
-  // component without blocking the initial render.
   const resolvedParams = use(params);
   const matchId = resolvedParams.matchId;
   const resolvedSearchParams = use(searchParams);
@@ -100,6 +88,8 @@ export default function ChatPage({
   const [sendingMedia, setSendingMedia] = useState(false);
   const [disappearing, setDisappearing] = useState<number | null>(null);
   const [togglingDisappearing, setTogglingDisappearing] = useState(false);
+
+  const [storyOpen, setStoryOpen] = useState(false);
   const deleteForMe = async (messageId: string) => {
     const { data } = await supabase.auth.getUser();
     const user = data?.user ?? null;
@@ -129,44 +119,15 @@ export default function ChatPage({
   const [responding, setResponding] = useState(false);
   const mediaInputRef = useRef<HTMLInputElement | null>(null);
 
-  /**
-   * The language this member wants incoming messages translated into.
-   *
-   * Only incoming bubbles get a translate control, so this is read here and
-   * passed down rather than being fetched per message.
-   */
   const { language: preferredTranslationLanguage } =
     usePreferredTranslationLanguage();
 
-  /**
-   * Best-effort hint for the language a message is written in.
-   *
-   * External, non-React state, so it is read with `useSyncExternalStore` rather
-   * than `useEffect` + `setState` — the pattern CODING_STANDARDS §2 mandates,
-   * and the only one that is hydration-safe here: the SERVER snapshot is `null`
-   * ("let the provider detect it") while the client snapshot is the browser's
-   * language. Reading `navigator` during render would produce different markup
-   * on the server and the client.
-   *
-   * The value feeds an on-demand request only — it is never part of the first
-   * paint — so no subscription is needed for it to stay correct; the language
-   * cannot change without a reload.
-   */
   const sourceLanguageHint = useSyncExternalStore(
     subscribeToBrowserLanguage,
     getBrowserLanguageSnapshot,
     () => null
   );
 
-  /**
-   * Stable references to the identities the realtime handler needs.
-   *
-   * The subscription effect may only depend on `matchId`: if it depended on
-   * `currentUserId`/`otherUserId` — which the effect itself sets — every message
-   * that resolved `otherUserId` would tear the channel down and rebuild it, and
-   * the fresh `init()` would overwrite `messages` with the first fetch, erasing
-   * realtime additions. Refs keep the handler current without re-subscribing.
-   */
   const currentUserIdRef = useRef<string | null>(null);
   const otherUserIdRef = useRef<string | null>(null);
 
@@ -193,21 +154,15 @@ export default function ChatPage({
       currentUserIdRef.current = user?.id ?? null;
       if (user) setCurrentUserId(user.id);
 
-      // M21: a banned or suspended member can read but not compose. The
-      // database enforces this too (a BEFORE INSERT trigger); the notice just
-      // explains the disabled composer instead of letting a send silently fail.
       const myRestrictions = await fetchMyRestrictions();
       if (isMounted) setRestrictions(myRestrictions);
 
-      // M38: request state and the three-message cap are enforced by a
-      // BEFORE INSERT trigger. This projection only lets the composer and the
-      // accept/decline banner explain it in advance.
       const requestState = await fetchConversationSendState(matchId);
       if (isMounted) setSendState(requestState);
 
       const { data, error: fetchError } = await supabase
         .from('messages')
-        .select('id, match_id, sender_id, content, created_at, delivered_at, seen_at')
+        .select('id, match_id, sender_id, content, created_at, message_type, delivered_at, seen_at')
         .eq('match_id', matchId)
         .order('created_at', { ascending: true });
 
@@ -222,12 +177,9 @@ export default function ChatPage({
       const messagesData = (data ?? []) as MessageRow[];
       setMessages(messagesData);
 
-      // The media ledger is fetched alongside the thread. A media message has an
-      // empty `content`, so without this the bubble would render blank.
       const mediaMap = await fetchChatMedia(matchId);
       if (isMounted) setChatMedia(mediaMap);
 
-      // M26: the retention setting drives the header toggle and banner.
       const window = await fetchChatSettings(matchId);
       if (isMounted) setDisappearing(window);
 
@@ -237,22 +189,13 @@ export default function ChatPage({
       const pinned = await fetchPinnedMessages(matchId);
       if (isMounted) setPinnedMessageIds(new Set(pinned));
 
-      // M11: opening a thread reads it. The badge is computed server-side from
-      // `last_read_at`, so it must be stamped here or the count never clears.
-      // M26: the same call stamps the "seen" receipts on incoming messages.
       markConversationRead(matchId).catch(() => undefined);
 
-      // Best-effort: acknowledge delivery and sweep anything that has aged out
-      // of a disappearing window. RLS already hides expired rows, so neither can
-      // fail visibly.
       void markMessagesDelivered(matchId);
       void purgeExpiredChatContent();
 
       if (!user) return;
 
-      // Resolve the other participant. Prefer the messages we already have, but
-      // fall back to the match row so a brand-new, empty conversation still has
-      // a report/block target (otherwise Report is disabled and Block is a no-op).
       const otherSender = messagesData.find((m) => m.sender_id !== user.id);
       if (otherSender) {
         applyOtherUserId(otherSender.sender_id);
@@ -285,27 +228,19 @@ export default function ChatPage({
         },
         (payload: RealtimePostgresChangesPayload<MessageRow>) => {
           const inserted = payload.new as MessageRow;
-          // De-dupe: the sender appends locally on a successful insert, so the
-          // same row can arrive twice (once from the send, once from realtime).
           setMessages((prev) =>
             prev.some((m) => m.id === inserted.id) ? prev : [...prev, inserted]
           );
 
-          // A media message arrives as an empty-content row; pull its ledger
-          // entry so the bubble can render and be opened.
           if (inserted.content === '') refreshMedia();
 
           if (!otherUserIdRef.current && inserted.sender_id !== currentUserIdRef.current) {
             applyOtherUserId(inserted.sender_id);
           }
 
-          // An incoming message while the thread is open is delivered at once,
-          // and — because the member is looking at it — seen as well.
           if (inserted.sender_id !== currentUserIdRef.current) {
             void markMessagesDelivered(matchId);
             markConversationRead(matchId).catch(() => undefined);
-            // A recipient reply auto-accepts a pending request; refresh so the
-            // composer unlocks without a reload.
             void fetchConversationSendState(matchId).then((state) => {
               if (state) setSendState(state);
             });
@@ -322,8 +257,6 @@ export default function ChatPage({
         },
         (payload: RealtimePostgresChangesPayload<MessageRow>) => {
           const updated = payload.new as MessageRow;
-          // Receipt timestamps land here; merge them into the existing bubble so
-          // the ticks flip from delivered to seen live.
           setMessages((prev) =>
             prev.map((m) => (m.id === updated.id ? { ...m, ...updated } : m))
           );
@@ -331,7 +264,6 @@ export default function ChatPage({
       )
       .subscribe();
 
-    // An item the recipient exhausts must vanish on the sender's screen too.
     const unsubscribeMedia = subscribeToChatMedia(matchId, refreshMedia);
 
     return () => {
@@ -341,8 +273,6 @@ export default function ChatPage({
     };
   }, [matchId]);
 
-  // The header shows the other member's public identity (name and @handle),
-  // never their private profile fields. Read through the allow-listed view.
   useEffect(() => {
     if (!otherUserId) return;
 
@@ -353,7 +283,6 @@ export default function ChatPage({
         if (!cancelled) setOtherIdentity(identities.get(otherUserId) ?? null);
       })
       .catch((identityError: unknown) => {
-        // The thread remains usable without a header name; do not block it.
         console.error('Failed to load conversation identity:', identityError);
         if (!cancelled) setOtherIdentity(null);
       });
@@ -371,6 +300,12 @@ export default function ChatPage({
     ? `@${activeIdentity.username.replace(/^@/, '')}`
     : null;
 
+  const senderAvatar = activeIdentity?.avatar_url ?? null;
+
+  const openStory = () => {
+    if (otherUserId) setStoryOpen(true);
+  };
+
   const sendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -378,17 +313,15 @@ export default function ChatPage({
     const me = currentUserIdRef.current;
     if (!content || !me) return;
 
-    // `.select().single()` returns the stored row so it can be shown at once,
-    // independently of whether Realtime is enabled for `messages`. The realtime
-    // INSERT de-dupes by id, so there is no double bubble either way.
     const { data, error: insertError } = await supabase
       .from('messages')
       .insert({
         match_id: matchId,
         sender_id: me,
         content,
+        message_type: 'text',
       })
-      .select('id, match_id, sender_id, content, created_at, delivered_at, seen_at')
+      .select('id, match_id, sender_id, content, created_at, message_type, delivered_at, seen_at')
       .single();
 
     if (insertError) {
@@ -436,7 +369,6 @@ export default function ChatPage({
   };
 
   const handleMediaPicked = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    // Snapshot BEFORE clearing: emptying `value` clears the live FileList.
     const files = event.target.files ? Array.from(event.target.files) : [];
     event.target.value = '';
     const picked = files[0];
@@ -446,8 +378,6 @@ export default function ChatPage({
     setSendingMedia(true);
     setError(null);
     try {
-      // Every chat item is a strict 2-view; videos are capped at 10s by
-      // `prepareMedia`, which rejects a longer clip before anything uploads.
       const sent = await sendChatMedia(matchId, me, picked);
       const now = new Date();
       const messageRow: MessageRow = {
@@ -456,6 +386,7 @@ export default function ChatPage({
         sender_id: me,
         content: '',
         created_at: now.toISOString(),
+        message_type: 'text',
         delivered_at: null,
         seen_at: null,
       };
@@ -504,9 +435,6 @@ export default function ChatPage({
     setError(null);
 
     try {
-      // `blockMember` records the block AND severs the match in one transaction.
-      // Inserting straight into `blocked_users` skipped that severing, leaving a
-      // dead conversation that still listed the member.
       await blockMember(target);
       setMenuOpen(false);
       setBlocked(true);
@@ -531,7 +459,6 @@ export default function ChatPage({
         disappearing ? null : DISAPPEARING_SECONDS
       );
       setDisappearing(next);
-      // Enabling the mode retires anything already older than the window.
       if (next) await purgeExpiredChatContent();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not change disappearing messages.');
@@ -562,7 +489,6 @@ export default function ChatPage({
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('You must be signed in.');
 
-      // Fetch every message id in the conversation (not just the loaded page).
       const { data: allMessages, error: fetchError } = await supabase
         .from('messages')
         .select('id')
@@ -570,7 +496,6 @@ export default function ChatPage({
 
       if (fetchError) throw fetchError;
 
-      // Insert a deletion record for each message, idempotently.
       if (allMessages && allMessages.length > 0) {
         const { error: insertError } = await supabase
           .from('message_deletions')
@@ -590,7 +515,6 @@ export default function ChatPage({
     }
   };
 
-  // Client-side search over currently loaded messages, derived reactively.
   const searchResults = useMemo(() => {
     if (!searchQuery.trim()) return [];
     const q = searchQuery.toLowerCase();
@@ -611,33 +535,41 @@ export default function ChatPage({
       ? Math.max(0, sendState.sendLimit - sendState.sentCount)
       : null;
 
+  const ROSE = '#C24A6E';
+  const SURFACE = '#131017';
+  const PANEL = '#1C1822';
+  const BORDER = '#34283F';
+  const TEXT = '#F2E9E4';
+  const MUTED = '#B58A83';
+  const ACCENT = '#D4B18A';
+
   return (
-    <div className="flex flex-col h-screen max-w-md mx-auto p-4 bg-neutral-950 text-white">
-      {/* Header with back button, the other member's public identity and menu */}
-      <div className="flex items-center justify-between gap-2 mb-4">
+    <div className="flex flex-col h-screen max-w-md mx-auto p-0 bg-[#131017] text-[#F2E9E4]">
+      {/* Header */}
+      <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-[#34283F] shrink-0 bg-[#131017]/80 backdrop-blur">
         <button
           onClick={() => window.history.back()}
-          className="px-3 py-1 rounded text-sm bg-neutral-800 hover:bg-neutral-700 shrink-0"
+          className="px-3 py-1.5 rounded-md text-sm bg-[#1C1822] border border-[#34283F] hover:bg-[#29202D] text-[#F2E9E4] shrink-0"
         >
           ← Back
         </button>
-        <div className="min-w-0 flex-1 text-center">
+        <div className="min-w-0 flex-1 text-center cursor-pointer" onClick={openStory}>
           {otherUserId ? (
-            <Link href={`/profile/${otherUserId}`} className="block">
-              <p className="truncate text-sm font-semibold text-neutral-100 hover:underline">
+            <Link href={`/profile/${otherUserId}`} className="block" onClick={(e) => e.stopPropagation()}>
+              <p className="truncate text-sm font-semibold text-[#F2E9E4] hover:underline">
                 {conversationName}
               </p>
               {conversationUsername ? (
-                <p className="truncate text-xs text-amber-200/80">{conversationUsername}</p>
+                <p className="truncate text-xs text-[#D4B18A]/90">{conversationUsername}</p>
               ) : null}
             </Link>
           ) : (
             <>
-              <p className="truncate text-sm font-semibold text-neutral-100">
+              <p className="truncate text-sm font-semibold text-[#F2E9E4]">
                 {conversationName}
               </p>
               {conversationUsername ? (
-                <p className="truncate text-xs text-amber-200/80">{conversationUsername}</p>
+                <p className="truncate text-xs text-[#D4B18A]/90">{conversationUsername}</p>
               ) : null}
             </>
           )}
@@ -645,7 +577,7 @@ export default function ChatPage({
         <div className="flex items-center gap-2 relative shrink-0">
           <button
             onClick={() => setMenuOpen(!menuOpen)}
-            className="p-1 rounded bg-neutral-800 hover:bg-neutral-700"
+            className="p-1.5 rounded-md bg-[#1C1822] border border-[#34283F] hover:bg-[#29202D] text-[#F2E9E4] aria-label='Conversation options'"
             aria-label="Conversation options"
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -653,17 +585,16 @@ export default function ChatPage({
             </svg>
           </button>
 
-          {/* Conversation options menu */}
           {menuOpen && (
-            <div className="absolute right-0 mt-2 w-56 bg-neutral-800 rounded-lg shadow-lg border border-neutral-700 z-10">
-              <div className="px-4 py-2">
-                <p className="text-sm font-medium text-neutral-100 mb-2">Conversation</p>
+            <div className="absolute right-0 mt-2 w-60 bg-[#1C1822] rounded-xl shadow-2xl border border-[#34283F] z-20">
+              <div className="px-4 py-3">
+                <p className="text-xs font-semibold text-[#B58A83] uppercase tracking-wider mb-3">Conversation</p>
                 <button
                   onClick={() => {
                     setMenuOpen(false);
                     router.push(`/chat/${matchId}/info`);
                   }}
-                  className="w-full text-left px-3 py-2 rounded hover:bg-neutral-700"
+                  className="w-full text-left px-3 py-2 rounded-lg text-sm text-[#F2E9E4] hover:bg-[#29202D]"
                 >
                   View contact
                 </button>
@@ -672,14 +603,16 @@ export default function ChatPage({
                     setMenuOpen(false);
                     router.push(`/chat/${matchId}?search=1`);
                   }}
-                  className="w-full text-left px-3 py-2 rounded hover:bg-neutral-700 mt-1"
+                  className="w-full text-left px-3 py-2 rounded-lg text-sm text-[#F2E9E4] hover:bg-[#29202D] mt-1"
                 >
                   Search
                 </button>
                 <button
                   onClick={handleToggleMute}
                   disabled={muted === null || togglingDisappearing}
-                  className={`w-full text-left px-3 py-2 rounded hover:bg-neutral-700 mt-1 ${muted === null || togglingDisappearing ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  className={`w-full text-left px-3 py-2 rounded-lg text-sm hover:bg-[#29202D] mt-1 ${
+                    muted === null || togglingDisappearing ? 'opacity-50 cursor-not-allowed text-[#6B5B79]' : 'text-[#F2E9E4]'
+                  }`}
                 >
                   {muted ? 'Unmute notifications' : 'Mute notifications'}
                 </button>
@@ -689,7 +622,7 @@ export default function ChatPage({
                     setReportTargetType('user');
                     setReportOpen(true);
                   }}
-                  className="w-full text-left px-3 py-2 rounded hover:bg-neutral-700 mt-1"
+                  className="w-full text-left px-3 py-2 rounded-lg text-sm text-[#F2E9E4] hover:bg-[#29202D] mt-1"
                   disabled={!otherUserId}
                 >
                   Report User
@@ -700,14 +633,14 @@ export default function ChatPage({
                     setReportTargetType('chat');
                     setReportOpen(true);
                   }}
-                  className="w-full text-left px-3 py-2 rounded hover:bg-neutral-700 mt-1"
+                  className="w-full text-left px-3 py-2 rounded-lg text-sm text-[#F2E9E4] hover:bg-[#29202D] mt-1"
                   disabled={!otherUserId}
                 >
                   Report Conversation
                 </button>
                 <button
                   onClick={blocked ? handleUnblock : handleBlock}
-                  className="w-full text-left px-3 py-2 rounded hover:bg-neutral-700 mt-1"
+                  className="w-full text-left px-3 py-2 rounded-lg text-sm hover:bg-[#29202D] mt-1 text-[#F2E9E4]"
                   disabled={blocking || !otherUserId}
                 >
                   {blocked ? 'Unblock User' : (blocking ? 'Blocking…' : 'Block User')}
@@ -715,13 +648,13 @@ export default function ChatPage({
                 <button
                   onClick={handleClearChat}
                   disabled={togglingDisappearing}
-                  className="w-full text-left px-3 py-2 rounded hover:bg-neutral-700 mt-1 text-rose-400"
+                  className="w-full text-left px-3 py-2 rounded-lg text-sm hover:bg-[#29202D] mt-1 text-[#C24A6E]"
                 >
                   Clear chat
                 </button>
                 <button
                   onClick={toggleDisappearing}
-                  className="w-full text-left px-3 py-2 rounded hover:bg-neutral-700 mt-1"
+                  className="w-full text-left px-3 py-2 rounded-lg text-sm hover:bg-[#29202D] mt-1 text-[#F2E9E4]"
                   disabled={togglingDisappearing}
                 >
                   {togglingDisappearing
@@ -737,20 +670,10 @@ export default function ChatPage({
       </div>
 
       {searchActive && (
-        <div
-          className="mb-2 relative"
-          style={{
-            animation: 'slideDown 0.2s ease-out',
-          }}
-        >
-          <div
-            className="flex items-center gap-2"
-            style={{
-              position: 'relative',
-            }}
-          >
+        <div className="mb-2 px-4 relative" style={{ animation: 'slideDown 0.2s ease-out' }}>
+          <div className="flex items-center gap-2 relative">
             <svg
-              className="w-4 h-4 text-neutral-400"
+              className="w-4 h-4 text-[#B58A83]"
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"
@@ -764,24 +687,20 @@ export default function ChatPage({
               placeholder="Search messages…"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="flex-1 bg-neutral-800 border border-neutral-700 rounded-md px-3 py-2 text-sm text-neutral-100 focus:outline-none focus:ring-2 focus:ring-amber-500"
+              className="flex-1 bg-[#1C1822] border border-[#34283F] rounded-xl px-3 py-2 text-sm text-[#F2E9E4] focus:outline-none focus:ring-1 focus:ring-[#D4B18A]"
               autoFocus
             />
             {searchQuery && (
               <button
-                onClick={() => {
-                  setSearchQuery('');
-                }}
-                className="p-1 text-neutral-400 hover:text-neutral-200"
+                onClick={() => setSearchQuery('')}
+                className="p-1 text-[#B58A83] hover:text-[#F2E9E4]"
               >
                 ✕
               </button>
             )}
           </div>
           {searchQuery && (
-            <div
-              className="mt-1 px-2 text-xs text-neutral-400"
-            >
+            <div className="mt-1 px-2 text-xs text-[#B58A83]">
               {searchResults.length} result{searchResults.length !== 1 ? 's' : ''}
             </div>
           )}
@@ -791,7 +710,7 @@ export default function ChatPage({
       {disappearing && (
         <div
           role="status"
-          className="mb-3 rounded-xl border border-amber-700/40 bg-amber-950/30 p-2 text-center text-xs text-amber-200"
+          className="mb-3 px-4 rounded-xl border border-[#D4B18A]/40 bg-[#D4B18A]/10 p-2 text-center text-xs text-[#D4B18A]"
         >
           Disappearing messages on — everything here clears 24 hours after it is sent.
         </div>
@@ -800,18 +719,15 @@ export default function ChatPage({
       {blocked && (
         <div
           role="status"
-          className="mb-3 rounded-xl border border-rose-800/50 bg-rose-950/30 p-2 text-center text-xs text-rose-200"
+          className="mb-3 px-4 rounded-xl border border-[#C24A6E]/40 bg-[#C24A6E]/10 p-2 text-center text-xs text-[#C24A6E]"
         >
           You blocked this member. The conversation is closed and you will not see each other again.
         </div>
       )}
 
-      {/* Scrollable message list. This container both makes the list scroll and
-          balances the closing </div> below; without it the root element closed
-          early and the JSX failed to parse. */}
-      <div className="flex-1 overflow-y-auto space-y-3 mb-4 pr-2">
+      <div className="flex-1 overflow-y-auto space-y-3 pb-2 pr-2 px-4 scrollbar-hide">
         {messages.length === 0 && (
-          <p className="text-center text-sm text-neutral-500 mt-8">
+          <p className="text-center text-sm text-[#B58A83] mt-12">
             No messages yet. Say hello.
           </p>
         )}
@@ -821,30 +737,30 @@ export default function ChatPage({
           const media = chatMedia[msg.id];
           const isPinned = pinnedMessageIds.has(msg.id);
 
-          // When searching, skip non-matching messages.
           if (searchQuery.trim() && !msg.content.toLowerCase().includes(searchQuery.toLowerCase())) {
             return null;
           }
 
-          // An exhausted or expired item is gone for BOTH members, exactly as if
-          // it had never been sent.
           if (media && isGone(media)) return null;
 
           return (
-            <div key={msg.id} className="mb-2 relative">
+            <div key={msg.id} className="mb-2 relative w-full">
               <MessageBubble
                 message={msg}
                 media={media ?? null}
                 isMe={isMe}
                 currentUserId={currentUserId ?? null}
-                searchQuery={searchQuery}
                 isPinned={isPinned}
+                searchQuery={searchQuery}
                 onPinToggle={() => {
                   const next = new Set(pinnedMessageIds);
                   if (isPinned) next.delete(msg.id);
                   else next.add(msg.id);
                   setPinnedMessageIds(next);
                 }}
+                onReply={() => {}}
+                onForward={() => {}}
+                senderAvatar={!isMe ? senderAvatar : null}
               />
             </div>
           );
@@ -854,7 +770,7 @@ export default function ChatPage({
       {pinnedMessageIds.size > 0 && (
         <div
           role="status"
-          className="mt-2 rounded-xl border border-amber-700/50 bg-amber-950/40 p-2 text-xs text-amber-200"
+          className="mt-2 px-4 rounded-xl border border-[#D4B18A]/50 bg-[#D4B18A]/20 p-2 text-xs text-[#D4B18A]"
         >
           {pinnedMessageIds.size} pinned message{pinnedMessageIds.size > 1 ? 's' : ''} in this conversation.
         </div>
@@ -863,7 +779,7 @@ export default function ChatPage({
       {restrictionMessage && (
         <div
           role="status"
-          className="mb-3 rounded-xl border border-amber-700/50 bg-amber-950/40 p-3 text-xs text-amber-200"
+          className="mb-3 px-4 rounded-xl border border-[#D4B18A]/50 bg-[#D4B18A]/20 p-3 text-xs text-[#D4B18A]"
         >
           {restrictionMessage}
         </div>
@@ -872,7 +788,7 @@ export default function ChatPage({
       {!blocked && requestPending && sendState?.requestedByMe && (
         <div
           role="status"
-          className="mb-3 rounded-xl border border-amber-700/40 bg-amber-950/20 p-3 text-center text-xs text-amber-200"
+          className="mb-3 px-4 rounded-xl border border-[#D4B18A]/40 bg-[#D4B18A]/10 p-3 text-center text-xs text-[#D4B18A]"
         >
           Message request pending. You can send three messages until{' '}
           {conversationName} accepts.
@@ -887,7 +803,7 @@ export default function ChatPage({
       {!blocked && requestPending && sendState?.canRespond && (
         <div
           role="status"
-          className="mb-3 rounded-xl border border-amber-700/40 bg-amber-950/20 p-3 text-xs text-amber-200"
+          className="mb-3 px-4 rounded-xl border border-[#D4B18A]/40 bg-[#D4B18A]/10 p-3 text-xs text-[#D4B18A]"
         >
           <p className="mb-3 text-center">
             {conversationName} sent you a message request.
@@ -897,7 +813,7 @@ export default function ChatPage({
               type="button"
               onClick={() => void handleRespond(true)}
               disabled={responding}
-              className="flex-1 rounded-lg bg-amber-400 px-3 py-2 font-semibold text-neutral-950 disabled:opacity-50"
+              className="flex-1 rounded-xl bg-[#D4B18A] px-3 py-2 font-semibold text-[#17121C] disabled:opacity-50"
             >
               {responding ? 'Saving…' : 'Accept'}
             </button>
@@ -905,7 +821,7 @@ export default function ChatPage({
               type="button"
               onClick={() => void handleRespond(false)}
               disabled={responding}
-              className="flex-1 rounded-lg border border-amber-700/60 px-3 py-2 font-semibold text-amber-100 disabled:opacity-50"
+              className="flex-1 rounded-xl border border-[#D4B18A]/60 px-3 py-2 font-semibold text-[#F2E9E4] disabled:opacity-50"
             >
               Decline
             </button>
@@ -916,17 +832,16 @@ export default function ChatPage({
       {!blocked && conversationClosed && (
         <div
           role="alert"
-          className="mb-3 rounded-xl border border-neutral-700 bg-neutral-900 p-3 text-center text-xs text-neutral-300"
+          className="mb-3 px-4 rounded-xl border border-[#34283F] bg-[#1C1822] p-3 text-center text-xs text-[#B58A83]"
         >
-          This conversation is closed. You can read the history, but no new
-          messages can be sent.
+          This conversation is closed. You can read the history, but no new messages can be sent.
         </div>
       )}
 
       {!blocked && requestBlocked && (
         <div
           role="alert"
-          className="mb-3 rounded-xl border border-rose-800/50 bg-rose-950/30 p-3 text-center text-xs text-rose-200"
+          className="mb-3 px-4 rounded-xl border border-[#C24A6E]/50 bg-[#C24A6E]/10 p-3 text-center text-xs text-[#C24A6E]"
         >
           You have sent {sendState?.sentCount ?? 0} messages. Wait for{' '}
           {conversationName} to accept your request before sending more.
@@ -934,15 +849,12 @@ export default function ChatPage({
       )}
 
       {error && (
-        <p role="alert" className="mb-3 text-center text-xs text-rose-400">
+        <p role="alert" className="mb-3 px-4 text-center text-xs text-[#C24A6E]">
           {error}
         </p>
       )}
 
-      <form onSubmit={sendMessage} className="flex gap-2">
-        {/* Disappearing media: a paperclip opens the picker. Photos and clips are
-            always a strict 2-view and vanish after the recipient's second open;
-            the database, not this UI, enforces it. */}
+      <form onSubmit={sendMessage} className="flex gap-2 px-4 pb-4 shrink-0">
         <input
           ref={mediaInputRef}
           type="file"
@@ -955,9 +867,9 @@ export default function ChatPage({
           type="button"
           onClick={() => mediaInputRef.current?.click()}
           disabled={!canSend || sendingMedia}
-          aria-label="Attach a 2-view photo or video"
-          title="Attach a 2-view photo or video (max 10s)"
-          className="px-3 py-3 rounded-xl bg-neutral-900 border border-neutral-800 text-neutral-300 disabled:opacity-50"
+          aria-label="Attach a photo or video"
+          title="Attach a photo or video"
+          className="p-2.5 rounded-full bg-[#1C1822] border border-[#34283F] text-[#F2E9E4] disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[#29202D] shrink-0"
         >
           {sendingMedia ? '…' : '📎'}
         </button>
@@ -976,18 +888,18 @@ export default function ChatPage({
           }
           aria-label="Message"
           disabled={!canSend}
-          className="flex-1 p-3 rounded-xl bg-neutral-900 border border-neutral-800 text-white focus:outline-none disabled:opacity-50"
+          className="flex-1 px-4 py-3 rounded-2xl bg-[#1C1822] border border-[#34283F] text-[#F2E9E4] focus:outline-none focus:ring-1 focus:ring-[#D4B18A] disabled:opacity-50"
         />
         <button
           type="submit"
           disabled={!canSend}
-          className="px-5 py-3 bg-rose-500 font-semibold rounded-xl text-white disabled:opacity-50 disabled:cursor-not-allowed"
+          className={`w-12 h-12 rounded-full bg-[#C24A6E] text-white flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed shrink-0 shadow-lg hover:bg-[#B33E5E] transition`}
+          aria-label="Send"
         >
-          Send
+          ➤
         </button>
       </form>
 
-      {/* Report dialog — shared with every other surface. */}
       <ReportModal
         isOpen={reportOpen}
         onClose={() => setReportOpen(false)}
@@ -995,6 +907,15 @@ export default function ChatPage({
         targetType={reportTargetType}
         title={reportTargetType === 'chat' ? 'Report this conversation' : 'Report member'}
         onSubmitted={handleReported}
+      />
+
+      <ProfileStoryModal
+        isOpen={storyOpen}
+        onClose={() => setStoryOpen(false)}
+        userId={otherUserId ?? ''}
+        userName={conversationName}
+        userUsername={conversationUsername ? conversationUsername.replace(/^@/, '') : null}
+        avatarUrl={senderAvatar}
       />
     </div>
   );

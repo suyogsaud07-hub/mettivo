@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLanguage } from '@/context/LanguageContext';
-import { supabase } from '@/lib/supabase'; // <-- ADDED IMPORT
+import { supabase } from '@/lib/supabase';
 import InstallButton from '@/app/components/InstallButton';
 import HeaderLanguageDropdown from '@/app/components/HeaderLanguageDropdown';
 import MobileDrawer from '@/app/components/MobileDrawer';
@@ -21,15 +21,30 @@ export default function LandingPage() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [isIntroComplete, setIsIntroComplete] = useState(true);
   const introDoneRef = useRef(false);
-  
-  // NEW: Track if the user is already logged in
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
 
-  // NEW: Check the session when the page loads
+  // Session + online state for smart routing.
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [isOnline, setIsOnline] = useState(true);
+
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setIsLoggedIn(!!session);
     });
+  }, []);
+
+  useEffect(() => {
+    // Initial online state read during effect setup; subsequent changes come
+    // from the online/offline listeners.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setIsOnline(navigator.onLine);
+    const onOnline = () => setIsOnline(true);
+    const onOffline = () => setIsOnline(false);
+    window.addEventListener('online', onOnline);
+    window.addEventListener('offline', onOffline);
+    return () => {
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('offline', onOffline);
+    };
   }, []);
 
   useEffect(() => {
@@ -56,6 +71,18 @@ export default function LandingPage() {
     }
     setIsIntroComplete(true);
   }, []);
+
+  // SMART ROUTING
+  // - logged in AND online   → /discover
+  // - logged in AND offline  → /discover (loads from IndexedDB cache)
+  // - not logged in          → /auth
+  const handleGetStarted = useCallback(() => {
+    if (isLoggedIn) {
+      router.push('/discover');
+    } else {
+      router.push('/auth');
+    }
+  }, [isLoggedIn, router]);
 
   return (
     <div className="relative isolate min-h-screen flex flex-col overflow-x-hidden bg-[#17121C] text-[#F2E9E4] font-sans antialiased">
@@ -94,6 +121,13 @@ export default function LandingPage() {
         </div>
       </nav>
 
+      {/* Offline banner (shown when logged-in users open the app while offline). */}
+      {!isOnline && isLoggedIn && (
+        <div className="sticky top-0 z-[60] px-6 py-2 text-center bg-[#1C1822] border-b border-[#34283F] text-xs text-[#FCA5B5]">
+          You are offline — cached data may be shown.
+        </div>
+      )}
+
       {/* ============================== HERO ============================== */}
       <main className="flex-1 flex flex-col items-center justify-center pt-24 pb-16 text-center px-6">
         <div className="max-w-xl w-full">
@@ -117,10 +151,10 @@ export default function LandingPage() {
             </div>
 
             <div className="group w-full">
-              {/* UPDATED BUTTON: Routes to /discover if logged in, /auth if not */}
+              {/* SMART ROUTING BUTTON */}
               <button
                 type="button"
-                onClick={() => router.push(isLoggedIn ? '/discover' : '/auth')}
+                onClick={handleGetStarted}
                 className="group w-full inline-flex items-center justify-center gap-1 py-3.5 px-6 rounded-full bg-[#D4B18A] text-[#17121C] text-sm font-bold tracking-tight uppercase shadow-lg shadow-[#D4B18A]/35 transition-all hover:bg-[#E4C9A0] hover:shadow-[#D4B18A]/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D4B18A] focus-visible:ring-offset-2 focus-visible:ring-offset-[#17121C]"
                 data-testid="landing-primary-cta"
               >

@@ -12,6 +12,8 @@ export interface MessageRow {
   sender_id: string;
   content: string;
   created_at: string;
+  /** 'text' | 'video_call' | 'audio_call'; defaults to 'text' on legacy rows. */
+  message_type?: string | null;
   /** M26: when the OTHER participant's device received the message. */
   delivered_at?: string | null;
   /** M26: when the OTHER participant read the message. */

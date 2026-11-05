@@ -9,16 +9,7 @@
    cross-origin Supabase/CDN traffic, non-GET requests) are ignored.
    ------------------------------------------------------------------ */
 
-/*
- * Bump this whenever a cache-first asset changes.
- *
- * `v2` exists because the brand icons in `/icons/` are NOT content-hashed and
- * are served cache-first: clients that installed the previous version would keep
- * the old logo in their installed app and tab icon forever. Raising the version
- * makes `activate` drop `mettivo-static-v1` / `mettivo-pages-v1` on their next
- * visit.
- */
-const VERSION = 'v2';
+const VERSION = 'v3';
 const STATIC_CACHE = `mettivo-static-${VERSION}`;
 const PAGES_CACHE = `mettivo-pages-${VERSION}`;
 const OFFLINE_URL = '/offline';
@@ -40,8 +31,6 @@ self.addEventListener('install', (event) => {
   event.waitUntil(
     (async () => {
       const cache = await caches.open(PAGES_CACHE);
-      // Cache entries individually: one failing URL must not abort the whole
-      // install, which would leave the app with no service worker at all.
       await Promise.all(
         PRECACHE_URLS.map(async (url) => {
           try {
@@ -60,7 +49,6 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     (async () => {
-      // Drop caches from previous versions.
       const keys = await caches.keys();
       await Promise.all(
         keys.filter((key) => !KEEP_CACHES.includes(key)).map((key) => caches.delete(key))
@@ -121,8 +109,6 @@ async function handleNavigate(event) {
   const { request } = event;
 
   try {
-    // Navigation preload lets the browser start the request while the worker
-    // boots, which removes the service-worker startup cost.
     const preloaded = await event.preloadResponse;
     if (preloaded) return preloaded;
 
@@ -133,15 +119,21 @@ async function handleNavigate(event) {
     }
     return response;
   } catch {
+    // Network failed: try the cache, then the offline page, then a plain text
+    // fallback so the user is never left with a browser "Unable to connect"
+    // screen.
     const cache = await caches.open(PAGES_CACHE);
     const cached =
-      (await cache.match(request)) || (await cache.match(OFFLINE_URL));
-    return (
-      cached ||
-      new Response('You are offline.', {
+      (await cache.match(request)) ||
+      (await cache.match(OFFLINE_URL));
+    if (cached) return cached;
+
+    return new Response(
+      '<!doctype><html><body style="background:#131017;color:#F2E9E4;font-family:sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;margin:0;text-align:center;padding:2rem"><div style="font-size:2rem;font-weight:700;margin-bottom:0.5rem">You&apos;re offline</div><p style="color:#B58A83;max-width:320px">Mettivo needs a connection to load new content. Check your network and try again.</p><button onclick="location.reload()" style="margin-top:1rem;background:#D4B18A;color:#17121C;border:none;border-radius:30px;padding:12px 32px;font-weight:700;cursor:pointer">Try again</button></body></html>',
+      {
         status: 503,
-        headers: { 'Content-Type': 'text/plain; charset=utf-8' },
-      })
+        headers: { 'Content-Type': 'text/html; charset=utf-8' },
+      }
     );
   }
 }
@@ -164,7 +156,6 @@ async function cacheFirst(request, cacheName) {
 
 /* ------------------------------ messages ----------------------------- */
 self.addEventListener('message', (event) => {
-  // Lets the page activate a waiting worker immediately after an update.
   if (event.data && event.data.type === 'SKIP_WAITING') {
     self.skipWaiting();
   }
@@ -185,16 +176,26 @@ self.addEventListener('push', (event) => {
   const options = {
     body: payload.body || '',
     icon: payload.icon || '/icons/icon-192.png',
-    badge: '/icons/badge-96.png',
-    data: { url: payload.url || '/' },
+    badge: payload.badge || '/icons/badge-96.png',
+    data: {
+      url: payload.url || '/',
+      match_id: payload.match_id,
+      sender_id: payload.sender_id,
+    },
+    tag: payload.tag || 'mettivo-message',
+    renotify: payload.renotify !== false,
+    requireInteraction: false,
   };
 
   event.waitUntil(self.registration.showNotification(title, options));
 });
 
+/* ----------------------------- notification click -------------------- */
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const target = (event.notification.data && event.notification.data.url) || '/';
+
+  const data = event.notification.data || {};
+  const target = data.url || '/';
 
   event.waitUntil(
     (async () => {
@@ -203,10 +204,14 @@ self.addEventListener('notificationclick', (event) => {
         includeUncontrolled: true,
       });
 
+      // If the app is already open on the target URL, focus it.
       for (const client of clientList) {
-        if (client.url === target && 'focus' in client) return client.focus();
+        if (client.url === self.location.origin + target && 'focus' in client) {
+          return client.focus();
+        }
       }
 
+      // Otherwise open the target URL.
       return self.clients.openWindow(target);
     })()
   );

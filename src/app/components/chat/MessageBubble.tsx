@@ -13,6 +13,7 @@ import {
   Languages,
   MessageCircle as ReplyIcon,
   Pin,
+  Share2 as ForwardIcon,
   Trash2,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
@@ -45,7 +46,18 @@ interface MessageBubbleProps {
   searchQuery?: string;
   onPinToggle?: () => void;
   onReply?: (message: MessageRow) => void;
+  onForward?: (message: MessageRow) => void;
+  /** Small circular avatar of the sender (shown on incoming messages). */
+  senderAvatar?: string | null;
 }
+
+const ROSE = '#C24A6E';
+const ROSE_HOVER = '#B33E5E';
+const SURFACE = '#1C1822';
+const BORDER = '#34283F';
+const TEXT = '#F2E9E4';
+const MUTED = '#B58A83';
+const ACCENT = '#D4B18A';
 
 function formatRelative(value: string): string {
   const date = new Date(value);
@@ -53,9 +65,9 @@ function formatRelative(value: string): string {
   const now = new Date();
   const diffMins = Math.floor((now.getTime() - date.getTime()) / 60_000);
   if (diffMins < 1) return 'just now';
-  if (diffMins < 60) return `${diffMins}m ago`;
+  if (diffMins < 60) return `${diffMins}m`;
   const diffHours = Math.floor((now.getTime() - date.getTime()) / 3_600_000);
-  if (diffHours < 24) return `${diffHours}h ago`;
+  if (diffHours < 24) return `${diffHours}h`;
   const startOfToday = new Date(now);
   startOfToday.setHours(0, 0, 0, 0);
   const startOfYesterday = new Date(startOfToday);
@@ -80,7 +92,7 @@ function highlightMatches(text: string, query?: string): string {
   if (!query?.trim()) return text;
   const q = query.trim();
   const regex = new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
-  return text.replace(regex, '<mark class="bg-amber-500/30 px-0.5 rounded">$1</mark>');
+  return text.replace(regex, '<mark class="bg-[#D4B18A]/30 px-0.5 rounded">$1</mark>');
 }
 
 export default function MessageBubble({
@@ -92,6 +104,8 @@ export default function MessageBubble({
   searchQuery,
   onPinToggle,
   onReply,
+  onForward,
+  senderAvatar,
 }: MessageBubbleProps) {
   const { language: preferredTranslationLanguage } =
     usePreferredTranslationLanguage();
@@ -114,6 +128,9 @@ export default function MessageBubble({
   const [reactionBarMounted, setReactionBarMounted] = useState(false);
   const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const showMenuRef = useRef(false);
+
+  const messageType = message.message_type ?? 'text';
+  const isCallLog = messageType === 'video_call' || messageType === 'audio_call';
 
   useEffect(() => {
     let cancelled = false;
@@ -195,6 +212,11 @@ export default function MessageBubble({
       closeMenu();
     }
   }, [message.content, closeMenu]);
+
+  const handleForward = useCallback(() => {
+    closeMenu();
+    if (onForward) onForward(message);
+  }, [message, closeMenu, onForward]);
 
   const handleDeleteForMe = useCallback(async () => {
     const {
@@ -339,179 +361,207 @@ export default function MessageBubble({
     return <EmojiText text={highlighted} size={16} />;
   }, [message.content, translationState, searchQuery]);
 
+  const callLabel = (): string => {
+    if (messageType === 'video_call') return 'Missed video call';
+    if (messageType === 'audio_call') return message.content || 'Audio call';
+    return '';
+  };
+
   return (
     <div
       ref={messageRef}
-      className={`flex items-end gap-1 ${isMe ? 'justify-end' : 'justify-start'}`}
+      className={`flex items-end gap-2 ${isMe ? 'justify-end' : 'justify-start'}`}
       onPointerDown={onPointerDown}
       onPointerUp={onPointerUp}
       onPointerLeave={onPointerLeave}
       onContextMenu={(e) => openMenu(e, 'menu')}
       onDoubleClick={() => setReactionBarOpen((o) => !o)}
     >
-      {isPinned && (
-        <div
-          style={{
-            position: 'absolute',
-            top: -18,
-            left: isMe ? 'auto' : 0,
-            right: isMe ? 0 : 'auto',
-          }}
-          className="px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-300 text-[10px] font-bold"
-        >
-          Pinned
-        </div>
-      )}
-      <div className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
-        {reactionBarOpen && reactionBarMounted ? (
-          <div
-            ref={reactionBarRef}
-            style={{
-              position: 'fixed',
-              left: reactionBarPos.x,
-              top: reactionBarPos.y,
-              zIndex: 50,
-            }}
-          >
-            <ReactionBar
-              messageId={message.id}
-              myReactions={myEmojis}
-              onClose={() => setReactionBarOpen(false)}
-              x={reactionBarPos.x}
-              y={reactionBarPos.y}
-            />
-          </div>
-        ) : null}
-
-        <div className="relative group">
-          {media ? (
-            <>
-              {!isMe && <ChatMediaReport media={media} />}
-              <ChatMediaMessage media={media} isOwn={isMe} />
-            </>
-          ) : (
-            <div className="relative group">
-              <div
-                className={`p-3 rounded-2xl max-w-[75%] ${
-                  isMe ? 'bg-rose-500 text-white' : 'bg-neutral-800 text-neutral-200'
-                }`}
-              >
-                {displayContent}
-                {translationState && (
-                  <div className="mt-1 flex items-center gap-2">
-                    {translationState.loading ? (
-                      <span className="text-[10px] text-neutral-400">Translating…</span>
-                    ) : (
-                      <>
-                        <button
-                          onClick={() =>
-                            setTranslationState((prev) =>
-                              prev
-                                ? {
-                                    ...prev,
-                                    showing:
-                                      prev.showing === 'original'
-                                        ? 'translated'
-                                        : 'original',
-                                  }
-                                : null
-                            )
-                          }
-                          className="text-[10px] underline hover:text-neutral-300"
-                        >
-                          {translationState.showing === 'original'
-                            ? 'Translate'
-                            : 'Show Original'
-                        }
-                        </button>
-                      </>
-                    )}
-                  </div>
-                )}
+      {/* Call log — centered system message (WhatsApp style). */}
+      {isCallLog && !isMe ? (
+        <div className="flex flex-col items-center justify-center my-4 w-full">
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#1C1822] border border-[#34283F] shadow-sm">
+            {messageType === 'video_call' ? (
+              <div className="w-5 h-5 rounded-full bg-[#EF4444]/15 text-[#EF4444] flex items-center justify-center text-xs">
+                📹
               </div>
-              <div className={`absolute top-0 ${isMe ? '-left-24' : '-right-24'} hidden group-hover:flex flex-col gap-1 bg-neutral-800 rounded p-1 text-xs`}>
-                <button onClick={() => handleReply()} className="px-2 py-1 hover:bg-neutral-700 rounded text-left whitespace-nowrap">
-                  Reply
-                </button>
-                <button onClick={handleCopy} className="px-2 py-1 hover:bg-neutral-700 rounded text-left whitespace-nowrap">
-                  Copy
-                </button>
-                {!isMe && (
-                  <button onClick={handleDeleteForMe} className="px-2 py-1 hover:bg-neutral-700 rounded text-left whitespace-nowrap">
-                    Delete for Me
-                  </button>
-                )}
-                {isMe && (
-                  <button
-                    onClick={handleUnsend}
-                    disabled={!showUnsend}
-                    className={`px-2 py-1 hover:bg-neutral-700 rounded text-left whitespace-nowrap text-rose-400 ${
-                      !showUnsend ? 'opacity-50 cursor-not-allowed' : ''
+            ) : (
+              <div className="w-5 h-5 rounded-full bg-[#10B981]/15 text-[#10B981] flex items-center justify-center text-xs">
+                📞
+              </div>
+            )}
+            <span className="text-xs font-medium text-[#F2E9E4]">{callLabel()}</span>
+            <span className="text-[10px] text-[#6B5B79] ml-1">{formatRelative(message.created_at)}</span>
+          </div>
+        </div>
+      ) : null}
+
+      {!isCallLog && (
+        <>
+          {/* Incoming message: small circular sender avatar + bubble. */}
+          {!isMe && senderAvatar ? (
+            <img
+              src={senderAvatar}
+              alt=""
+              className="w-6 h-6 rounded-full border border-[#34283F] object-cover shrink-0"
+              style={{ width: 24, height: 24 }}
+            />
+          ) : null}
+
+          <div className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
+            {reactionBarOpen && reactionBarMounted ? (
+              <div
+                ref={reactionBarRef}
+                style={{
+                  position: 'fixed',
+                  left: reactionBarPos.x,
+                  top: reactionBarPos.y,
+                  zIndex: 50,
+                }}
+              >
+                <ReactionBar
+                  messageId={message.id}
+                  myReactions={myEmojis}
+                  onClose={() => setReactionBarOpen(false)}
+                  x={reactionBarPos.x}
+                  y={reactionBarPos.y}
+                />
+              </div>
+            ) : null}
+
+            <div className="relative group">
+              {media ? (
+                <>
+                  {!isMe && <ChatMediaReport media={media} />}
+                  <ChatMediaMessage media={media} isOwn={isMe} />
+                </>
+              ) : (
+                <div className="relative group">
+                  <div
+                    className={`p-3 rounded-2xl max-w-[75%] ${
+                      isMe
+                        ? `bg-[#${ROSE.slice(1)}] text-white rounded-tr-none`
+                        : `bg-[#1C1822] text-[#F2E9E4] rounded-tl-none border border-[#34283F]`
                     }`}
                   >
-                    Unsend
-                  </button>
-                )}
-                <button
-                  onClick={handlePinToggle}
-                  className={`px-2 py-1 hover:bg-neutral-700 rounded text-left whitespace-nowrap ${
-                    isPinned ? 'text-amber-400' : ''
-                  }`}
-                >
-                  {isPinned ? 'Unpin' : 'Pin'}
-                </button>
-                <button onClick={handleTranslate} className="px-2 py-1 hover:bg-neutral-700 rounded text-left whitespace-nowrap">
-                  <Languages size={14} strokeWidth={2} /> Translate
-                </button>
-              </div>
+                    {displayContent}
+                    {translationState && (
+                      <div className="mt-1 flex items-center gap-2">
+                        {translationState.loading ? (
+                          <span className="text-[10px] text-[#B58A83]">Translating…</span>
+                        ) : (
+                          <>
+                            <button
+                              onClick={() =>
+                                setTranslationState((prev) =>
+                                  prev
+                                    ? {
+                                        ...prev,
+                                        showing:
+                                          prev.showing === 'original'
+                                            ? 'translated'
+                                            : 'original',
+                                      }
+                                    : null
+                                )
+                              }
+                              className="text-[10px] underline hover:text-[#D4B18A]"
+                            >
+                              {translationState.showing === 'original'
+                                ? 'Translate'
+                                : 'Show Original'}
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  <div
+                    className={`absolute top-0 ${isMe ? '-left-24' : '-right-24'} hidden group-hover:flex flex-col gap-1 bg-[#1C1822] rounded p-1 text-xs border border-[#34283F]`}
+                  >
+                    <button onClick={() => handleReply()} className="px-2 py-1 hover:bg-[#34283F] rounded text-left whitespace-nowrap text-[#F2E9E4]">
+                      Reply
+                    </button>
+                    <button onClick={handleForward} className="px-2 py-1 hover:bg-[#34283F] rounded text-left whitespace-nowrap text-[#F2E9E4]">
+                      Forward
+                    </button>
+                    <button onClick={handleCopy} className="px-2 py-1 hover:bg-[#34283F] rounded text-left whitespace-nowrap text-[#F2E9E4]">
+                      Copy
+                    </button>
+                    {!isMe && (
+                      <button onClick={handleDeleteForMe} className="px-2 py-1 hover:bg-[#34283F] rounded text-left whitespace-nowrap text-[#F2E9E4]">
+                        Delete for Me
+                      </button>
+                    )}
+                    {isMe && (
+                      <button
+                        onClick={handleUnsend}
+                        disabled={!showUnsend}
+                        className={`px-2 py-1 hover:bg-[#34283F] rounded text-left whitespace-nowrap text-[#F2E9E4] ${!showUnsend ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      >
+                        Unsend
+                      </button>
+                    )}
+                    <button
+                      onClick={handlePinToggle}
+                      className={`px-2 py-1 hover:bg-[#34283F] rounded text-left whitespace-nowrap text-[#F2E9E4] ${isPinned ? 'text-[#D4B18A]' : ''}`}
+                    >
+                      {isPinned ? 'Unpin' : 'Pin'}
+                    </button>
+                    <button onClick={handleTranslate} className="px-2 py-1 hover:bg-[#34283F] rounded text-left whitespace-nowrap text-[#F2E9E4] flex items-center gap-1">
+                      <Languages size={14} strokeWidth={2} /> Translate
+                    </button>
+                  </div>
+                </div>
+              )}
+              {isMe && !media && (
+                <MessageStatus
+                  deliveredAt={message.delivered_at ?? null}
+                  seenAt={message.seen_at ?? null}
+                  className="mt-0.5 pr-1"
+                />
+              )}
             </div>
-          )}
-          {isMe && !media && (
-            <MessageStatus
-              deliveredAt={message.delivered_at ?? null}
-              seenAt={message.seen_at ?? null}
-              className="mt-0.5 pr-1"
-            />
-          )}
-        </div>
 
-        {reactionCounts.size > 0 && (
-          <div
-            style={{
-              display: 'flex',
-              gap: '4px',
-              marginTop: '2px',
-              marginLeft: isMe ? 'auto' : 0,
-            }}
-          >
-            {[...reactionCounts.entries()].map(([emoji, info]) => (
-              <ReactionPill
-                key={emoji}
-                messageId={message.id}
-                emoji={emoji}
-                count={info.count}
-                mine={info.mine}
-                onToggle={() => {
-                  fetchMessageReactions([message.id]).then((map) => {
-                    setReactions(map.get(message.id) ?? []);
-                  });
+            {reactionCounts.size > 0 && (
+              <div
+                style={{
+                  display: 'flex',
+                  gap: '4px',
+                  marginTop: '2px',
+                  marginLeft: isMe ? 'auto' : 0,
                 }}
-              />
-            ))}
-          </div>
-        )}
+              >
+                {[...reactionCounts.entries()].map(([emoji, info]) => (
+                  <ReactionPill
+                    key={emoji}
+                    messageId={message.id}
+                    emoji={emoji}
+                    count={info.count}
+                    mine={info.mine}
+                    onToggle={() => {
+                      fetchMessageReactions([message.id]).then((map) => {
+                        setReactions(map.get(message.id) ?? []);
+                      });
+                    }}
+                  />
+                ))}
+              </div>
+            )}
 
-        <span
-          style={{
-            fontSize: '10px',
-            color: isMe ? '#F2E9E4' : '#B58A83',
-            marginTop: '2px',
-            alignSelf: isMe ? 'flex-end' : 'flex-start',
-          }}
-        >
-          {formatRelative(message.created_at)}
-        </span>
-      </div>
+            <span
+              style={{
+                fontSize: '10px',
+                color: isMe ? '#F2E9E4' : '#B58A83',
+                marginTop: '2px',
+                alignSelf: isMe ? 'flex-end' : 'flex-start',
+              }}
+            >
+              {formatRelative(message.created_at)}
+            </span>
+          </div>
+        </>
+      )}
 
       {menuOpen && menuMounted && (
         <div
@@ -523,26 +573,33 @@ export default function MessageBubble({
             zIndex: 60,
           }}
         >
-          <div
-            className="bg-neutral-800 rounded-lg shadow-lg border border-neutral-700"
-            style={{ minWidth: '160px' }}
-          >
-            <button
-              onClick={handleReply}
-              className="w-full text-left px-3 py-2 text-sm hover:bg-neutral-700"
-            >
-              <ReplyIcon size={14} strokeWidth={2} /> Reply
-            </button>
+          <div className="bg-[#1C1822] rounded-lg shadow-xl border border-[#34283F]" style={{ minWidth: '170px' }}>
+            {onReply && (
+              <button
+                onClick={handleReply}
+                className="w-full text-left px-3 py-2 text-sm hover:bg-[#34283F] text-[#F2E9E4] flex items-center gap-2"
+              >
+                <ReplyIcon size={14} strokeWidth={2} /> Reply
+              </button>
+            )}
+            {onForward && (
+              <button
+                onClick={handleForward}
+                className="w-full text-left px-3 py-2 text-sm hover:bg-[#34283F] text-[#F2E9E4] flex items-center gap-2"
+              >
+                <ForwardIcon size={14} strokeWidth={2} /> Forward
+              </button>
+            )}
             <button
               onClick={handleCopy}
-              className="w-full text-left px-3 py-2 text-sm hover:bg-neutral-700"
+              className="w-full text-left px-3 py-2 text-sm hover:bg-[#34283F] text-[#F2E9E4] flex items-center gap-2"
             >
               <Copy size={14} strokeWidth={2} /> Copy
             </button>
             {!isMe && (
               <button
                 onClick={handleDeleteForMe}
-                className="w-full text-left px-3 py-2 text-sm hover:bg-neutral-700"
+                className="w-full text-left px-3 py-2 text-sm hover:bg-[#34283F] text-[#F2E9E4] flex items-center gap-2"
               >
                 <EyeOff size={14} strokeWidth={2} /> Delete for Me
               </button>
@@ -551,10 +608,10 @@ export default function MessageBubble({
               <button
                 onClick={handleUnsend}
                 disabled={!showUnsend}
-                className={`w-full text-left px-3 py-2 text-sm hover:bg-neutral-700 ${
+                className={`w-full text-left px-3 py-2 text-sm hover:bg-[#34283F] flex items-center gap-2 ${
                   !showUnsend
-                    ? 'opacity-50 cursor-not-allowed text-neutral-500'
-                    : 'text-rose-400'
+                    ? 'opacity-50 cursor-not-allowed text-[#6B5B79]'
+                    : 'text-[#C24A6E]'
                 }`}
               >
                 <Trash2 size={14} strokeWidth={2} /> Unsend
@@ -562,13 +619,11 @@ export default function MessageBubble({
             )}
             <button
               onClick={handlePinToggle}
-              className={`w-full text-left px-3 py-2 text-sm hover:bg-neutral-700 ${
-                isPinned ? 'text-amber-400' : ''
-              }`}
+              className={`w-full text-left px-3 py-2 text-sm hover:bg-[#34283F] text-[#F2E9E4] flex items-center gap-2 ${isPinned ? 'text-[#D4B18A]' : ''}`}
             >
               <Pin size={14} strokeWidth={2} /> {isPinned ? 'Unpin' : 'Pin'}
             </button>
-            <button onClick={handleTranslate} className="w-full text-left px-3 py-2 text-sm hover:bg-neutral-700">
+            <button onClick={handleTranslate} className="w-full text-left px-3 py-2 text-sm hover:bg-[#34283F] text-[#F2E9E4] flex items-center gap-2">
               <Languages size={14} strokeWidth={2} /> Translate
             </button>
           </div>
