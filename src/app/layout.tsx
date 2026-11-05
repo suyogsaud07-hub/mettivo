@@ -1,5 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
+import { Analytics } from "@vercel/analytics/react";
+import PWAInstallPrompt from '@/app/components/PWAInstallPrompt';
 import { SpeedInsights } from "@vercel/speed-insights/next"
 import { LanguageProvider } from '@/context/LanguageContext';
 import { FollowProvider } from '@/context/FollowContext';
@@ -83,8 +85,9 @@ export default function RootLayout({
           <LocationVerificationGate />
         </LanguageProvider>
         
-        {/* ADD THIS LINE RIGHT HERE */}
         <SpeedInsights />
+        <Analytics />
+        <PWAInstallPrompt />
         
       </body>
     </html>
