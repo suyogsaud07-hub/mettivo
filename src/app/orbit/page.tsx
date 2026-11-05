@@ -53,7 +53,25 @@ interface Filters {
   country: string | null;
 }
 
-// --- Moved OUTSIDE the component to fix ESLint "Static Components" error ---
+interface CustomMarkerProps {
+  user: OrbitProfile;
+  isSelected: boolean;
+  onClick: () => void;
+}
+
+interface CustomPopupProps {
+  user: OrbitProfile;
+  onClose: () => void;
+  formatDistance: (meters: number) => string;
+  getCountryFlag: (country: string | null) => string;
+}
+
+interface FilterPanelProps {
+  filters: Filters;
+  onChange: (newFilters: Partial<Filters>) => void;
+  onReset: () => void;
+  onClose: () => void;
+}
 
 const formatDistance = (meters: number): string => {
   if (meters < 1000) {
@@ -73,15 +91,7 @@ const getCountryFlag = (country: string | null): string => {
   return country ? (flags[country] ?? '🌐') : '🌐';
 };
 
-const CustomMarker = ({ 
-  user, 
-  isSelected, 
-  onClick 
-}: { 
-  user: OrbitProfile; 
-  isSelected: boolean; 
-  onClick: () => void 
-}) => {
+const CustomMarker = ({ user, isSelected, onClick }: CustomMarkerProps) => {
   const intentEmoji = getCasualIntentEmoji(user.casualIntent);
   return (
     <button
@@ -117,13 +127,7 @@ const CustomMarker = ({
   );
 };
 
-const CustomPopup = ({ 
-  user, 
-  onClose 
-}: { 
-  user: OrbitProfile; 
-  onClose: () => void 
-}) => {
+const CustomPopup = ({ user, onClose, formatDistance, getCountryFlag }: CustomPopupProps) => {
   const distance = formatDistance(user.distanceMeters);
   return (
     <div className="bg-[#1C1822] border border-[#34283F] rounded-xl p-4 shadow-xl max-w-70">
@@ -158,7 +162,87 @@ const CustomPopup = ({
   );
 };
 
-// --- Main Page Component ---
+const FilterPanel = ({ filters, onChange, onReset, onClose }: FilterPanelProps) => {
+  return (
+    <div className="absolute inset-0 z-30 flex flex-col justify-end">
+      <div className="flex-1 bg-black/50 backdrop-blur-sm" onClick={onClose} />
+
+      <div className="bg-[#1C1822] border-t border-[#34283F] rounded-t-xl p-6 max-h-[80vh] overflow-y-auto">
+        <div className="flex justify-between items-center mb-6">
+          <h2 className="text-xl font-bold text-[#F2E9E4]">Filters</h2>
+          <button type="button" onClick={onClose} className="text-[#B58A83] text-2xl hover:text-[#D4B18A]">×</button>
+        </div>
+
+        <div className="mb-6">
+          <div className="flex justify-between items-center mb-3">
+            <label className="text-sm font-semibold text-[#D4B18A] uppercase tracking-wider">Distance</label>
+            <span className="text-sm text-[#B58A83]">{filters.radiusKm === 'global' ? 'Global' : `${filters.radiusKm}km`}</span>
+          </div>
+          <div className="flex gap-2 items-center">
+            <input
+              type="range" min="1" max="500"
+              value={filters.radiusKm === 'global' ? 500 : Number(filters.radiusKm)}
+              onChange={(e) => onChange({ radiusKm: Number(e.target.value) })}
+              className="flex-1 h-2 bg-[#29202D] rounded-lg appearance-none cursor-pointer accent-[#D4B18A]"
+              disabled={filters.radiusKm === 'global'}
+            />
+            <button
+              type="button"
+              onClick={() => onChange({ radiusKm: filters.radiusKm === 'global' ? 50 : 'global' })}
+              className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${filters.radiusKm === 'global' ? 'bg-[#D4B18A] text-[#17121C]' : 'bg-[#29202D] text-[#B58A83] border border-[#34283F]'}`}
+            >
+              Global
+            </button>
+          </div>
+        </div>
+
+        <div className="mb-6">
+          <label className="block text-sm font-semibold text-[#D4B18A] uppercase tracking-wider mb-3">Age Range</label>
+          <div className="flex gap-2">
+            <div className="flex-1">
+              <label className="block text-xs text-[#B58A83] mb-1">Min</label>
+              <input type="number" value={filters.minAge} onChange={(e) => onChange({ minAge: Math.max(18, Math.min(99, Number(e.target.value))) })} min="18" max="99" className="w-full bg-[#29202D] border border-[#34283F] rounded-lg p-2 text-[#F2E9E4] focus:outline-none focus:ring-1 focus:ring-[#D4B18A]" />
+            </div>
+            <div className="flex-1">
+              <label className="block text-xs text-[#B58A83] mb-1">Max</label>
+              <input type="number" value={filters.maxAge} onChange={(e) => onChange({ maxAge: Math.max(18, Math.min(99, Number(e.target.value))) })} min="18" max="99" className="w-full bg-[#29202D] border border-[#34283F] rounded-lg p-2 text-[#F2E9E4] focus:outline-none focus:ring-1 focus:ring-[#D4B18A]" />
+            </div>
+          </div>
+        </div>
+
+        <div className="mb-6">
+          <label className="block text-sm font-semibold text-[#D4B18A] uppercase tracking-wider mb-3">Gender</label>
+          <div className="flex gap-2 flex-wrap">
+            {GENDER_OPTIONS.map((option) => (
+              <button key={option.id || 'all'} type="button" onClick={() => onChange({ gender: option.id })} className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${filters.gender === option.id ? 'bg-[#D4B18A] text-[#17121C]' : 'bg-[#29202D] text-[#B58A83] border border-[#34283F]'}`}>
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="mb-6">
+          <div className="flex justify-between items-center">
+            <label className="text-sm font-semibold text-[#D4B18A] uppercase tracking-wider">Online Now</label>
+            <button type="button" onClick={() => onChange({ onlineOnly: !filters.onlineOnly })} className={`relative w-12 h-6 rounded-full transition-colors ${filters.onlineOnly ? 'bg-[#D4B18A]' : 'bg-[#29202D]'}`}>
+              <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${filters.onlineOnly ? 'translate-x-6' : ''}`} />
+            </button>
+          </div>
+        </div>
+
+        <div className="mb-6">
+          <label className="block text-sm font-semibold text-[#D4B18A] uppercase tracking-wider mb-3">Country</label>
+          <input type="text" value={filters.country || ''} onChange={(e) => onChange({ country: e.target.value || null })} placeholder="Enter country name" className="w-full bg-[#29202D] border border-[#34283F] rounded-lg p-3 text-[#F2E9E4] focus:outline-none focus:ring-1 focus:ring-[#D4B18A]" />
+        </div>
+
+        <div className="flex gap-2">
+          <button type="button" onClick={onReset} className="flex-1 py-3 rounded-full bg-transparent border border-[#34283F] text-[#B58A83] font-medium hover:bg-[#29202D] transition-colors">Reset</button>
+          <button type="button" onClick={onClose} className="flex-1 py-3 rounded-full bg-[#D4B18A] text-[#17121C] font-medium hover:bg-[#E4C9A0] transition-colors">Apply</button>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 export default function OrbitPage() {
   const router = useRouter();
@@ -278,7 +362,7 @@ export default function OrbitPage() {
     if (!initialLoad) {
       void fetchProfiles();
     }
-  }, [viewport, filters, initialLoad, fetchProfiles]);
+  }, [initialLoad, fetchProfiles]);
 
   const handleViewportChange = useCallback((evt: ViewStateChangeEvent) => {
     setViewport(evt.viewState);
@@ -399,10 +483,10 @@ export default function OrbitPage() {
             if (profile.snappedLat === null || profile.snappedLon === null) return null;
             return (
               <Marker key={profile.id} latitude={profile.snappedLat} longitude={profile.snappedLon} anchor="bottom">
-                <CustomMarker 
-                  user={profile} 
+                <CustomMarker
+                  user={profile}
                   isSelected={selectedProfile?.id === profile.id}
-                  onClick={() => handleMarkerClick(profile)} 
+                  onClick={() => handleMarkerClick(profile)}
                 />
               </Marker>
             );
@@ -417,7 +501,12 @@ export default function OrbitPage() {
               closeOnClick={false}
               offset={20}
             >
-              <CustomPopup user={selectedProfile} onClose={() => setSelectedProfile(null)} />
+              <CustomPopup
+                user={selectedProfile}
+                onClose={() => setSelectedProfile(null)}
+                formatDistance={formatDistance}
+                getCountryFlag={getCountryFlag}
+              />
             </Popup>
           )}
 
@@ -493,83 +582,12 @@ export default function OrbitPage() {
       </main>
 
       {filtersOpen && (
-        <div className="absolute inset-0 z-30 flex flex-col justify-end">
-          <div className="flex-1 bg-black/50 backdrop-blur-sm" onClick={() => setFiltersOpen(false)} />
-          
-          <div className="bg-[#1C1822] border-t border-[#34283F] rounded-t-xl p-6 max-h-[80vh] overflow-y-auto">
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-xl font-bold text-[#F2E9E4]">Filters</h2>
-              <button type="button" onClick={() => setFiltersOpen(false)} className="text-[#B58A83] text-2xl hover:text-[#D4B18A]">×</button>
-            </div>
-
-            <div className="mb-6">
-              <div className="flex justify-between items-center mb-3">
-                <label className="text-sm font-semibold text-[#D4B18A] uppercase tracking-wider">Distance</label>
-                <span className="text-sm text-[#B58A83]">{filters.radiusKm === 'global' ? 'Global' : `${filters.radiusKm}km`}</span>
-              </div>
-              <div className="flex gap-2 items-center">
-                <input
-                  type="range" min="1" max="500"
-                  value={filters.radiusKm === 'global' ? 500 : Number(filters.radiusKm)}
-                  onChange={(e) => handleFilterChange({ radiusKm: Number(e.target.value) })}
-                  className="flex-1 h-2 bg-[#29202D] rounded-lg appearance-none cursor-pointer accent-[#D4B18A]"
-                  disabled={filters.radiusKm === 'global'}
-                />
-                <button
-                  type="button"
-                  onClick={() => handleFilterChange({ radiusKm: filters.radiusKm === 'global' ? 50 : 'global' })}
-                  className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${filters.radiusKm === 'global' ? 'bg-[#D4B18A] text-[#17121C]' : 'bg-[#29202D] text-[#B58A83] border border-[#34283F]'}`}
-                >
-                  Global
-                </button>
-              </div>
-            </div>
-
-            <div className="mb-6">
-              <label className="block text-sm font-semibold text-[#D4B18A] uppercase tracking-wider mb-3">Age Range</label>
-              <div className="flex gap-2">
-                <div className="flex-1">
-                  <label className="block text-xs text-[#B58A83] mb-1">Min</label>
-                  <input type="number" value={filters.minAge} onChange={(e) => handleFilterChange({ minAge: Math.max(18, Math.min(99, Number(e.target.value))) })} min="18" max="99" className="w-full bg-[#29202D] border border-[#34283F] rounded-lg p-2 text-[#F2E9E4] focus:outline-none focus:ring-1 focus:ring-[#D4B18A]" />
-                </div>
-                <div className="flex-1">
-                  <label className="block text-xs text-[#B58A83] mb-1">Max</label>
-                  <input type="number" value={filters.maxAge} onChange={(e) => handleFilterChange({ maxAge: Math.max(18, Math.min(99, Number(e.target.value))) })} min="18" max="99" className="w-full bg-[#29202D] border border-[#34283F] rounded-lg p-2 text-[#F2E9E4] focus:outline-none focus:ring-1 focus:ring-[#D4B18A]" />
-                </div>
-              </div>
-            </div>
-
-            <div className="mb-6">
-              <label className="block text-sm font-semibold text-[#D4B18A] uppercase tracking-wider mb-3">Gender</label>
-              <div className="flex gap-2 flex-wrap">
-                {GENDER_OPTIONS.map((option) => (
-                  <button key={option.id || 'all'} type="button" onClick={() => handleFilterChange({ gender: option.id })} className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${filters.gender === option.id ? 'bg-[#D4B18A] text-[#17121C]' : 'bg-[#29202D] text-[#B58A83] border border-[#34283F]'}`}>
-                    {option.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="mb-6">
-              <div className="flex justify-between items-center">
-                <label className="text-sm font-semibold text-[#D4B18A] uppercase tracking-wider">Online Now</label>
-                <button type="button" onClick={() => handleFilterChange({ onlineOnly: !filters.onlineOnly })} className={`relative w-12 h-6 rounded-full transition-colors ${filters.onlineOnly ? 'bg-[#D4B18A]' : 'bg-[#29202D]'}`}>
-                  <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${filters.onlineOnly ? 'translate-x-6' : ''}`} />
-                </button>
-              </div>
-            </div>
-
-            <div className="mb-6">
-              <label className="block text-sm font-semibold text-[#D4B18A] uppercase tracking-wider mb-3">Country</label>
-              <input type="text" value={filters.country || ''} onChange={(e) => handleFilterChange({ country: e.target.value || null })} placeholder="Enter country name" className="w-full bg-[#29202D] border border-[#34283F] rounded-lg p-3 text-[#F2E9E4] focus:outline-none focus:ring-1 focus:ring-[#D4B18A]" />
-            </div>
-
-            <div className="flex gap-2">
-              <button type="button" onClick={resetFilters} className="flex-1 py-3 rounded-full bg-transparent border border-[#34283F] text-[#B58A83] font-medium hover:bg-[#29202D] transition-colors">Reset</button>
-              <button type="button" onClick={() => setFiltersOpen(false)} className="flex-1 py-3 rounded-full bg-[#D4B18A] text-[#17121C] font-medium hover:bg-[#E4C9A0] transition-colors">Apply</button>
-            </div>
-          </div>
-        </div>
+        <FilterPanel
+          filters={filters}
+          onChange={handleFilterChange}
+          onReset={resetFilters}
+          onClose={() => setFiltersOpen(false)}
+        />
       )}
 
       <div className="absolute bottom-0 left-0 right-0 z-20">

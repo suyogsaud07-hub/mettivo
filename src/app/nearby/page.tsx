@@ -43,7 +43,7 @@ export default function NearbyPage() {
     longitude: DEFAULT_VIEWPORT.longitude,
     zoom: DEFAULT_VIEWPORT.zoom,
   });
-  
+
   const [profiles, setProfiles] = useState<NearbyProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -155,7 +155,7 @@ export default function NearbyPage() {
           mapboxAccessToken={MAPBOX_TOKEN}
           onMove={handleViewportChange}
           ref={mapRef}
-          style={{ width: '100%', height: '100%' }} // <--- The fix is here
+          style={{ width: '100%', height: '100%' }}
           minZoom={2}
           maxZoom={18}
         >
@@ -206,14 +206,12 @@ export default function NearbyPage() {
             </Popup>
           )}
 
-          {/* Render location error if it exists */}
           {locationError && (
             <div className="absolute top-20 left-4 right-4 z-10 bg-[#3B1220] border border-[#7F1D2E] text-[#FCA5B5] rounded-xl p-3 text-center text-sm" role="alert">
               {locationError}
             </div>
           )}
 
-          {/* Render fetch error if it exists to fix the unused variable warning */}
           {error && (
             <div className="absolute top-36 left-4 right-4 z-10 bg-[#3B1220] border border-[#7F1D2E] text-[#FCA5B5] rounded-xl p-3 text-center text-sm" role="alert">
               {error}

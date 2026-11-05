@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLanguage } from '@/context/LanguageContext';
 import InstallButton from '@/app/components/InstallButton';
@@ -22,7 +23,6 @@ import IntroSplash from '@/components/hero/IntroSplash';
 
 // Auth is the primary action. Donation is never a gate between a visitor and
 // an account; it stays available as its own voluntary destination.
-const SIGNUP_HREF = '/auth';
 const DONATE_HREF = '/donate';
 
 /**
@@ -33,6 +33,7 @@ const DONATE_HREF = '/donate';
 const INTRO_SEEN_KEY = 'mettivo_intro_seen';
 
 export default function LandingPage() {
+  const router = useRouter();
   const { t } = useLanguage();
   const [drawerOpen, setDrawerOpen] = useState(false);
   // Defaults to `true` (no splash). The effect below flips it to `false` only
@@ -147,8 +148,9 @@ export default function LandingPage() {
             </div>
 
             <div className="group w-full">
-              <Link
-                href={SIGNUP_HREF}
+              <button
+                type="button"
+                onClick={() => router.push('/auth')}
                 className="group w-full inline-flex items-center justify-center gap-1 py-3.5 px-6 rounded-full bg-[#D4B18A] text-[#17121C] text-sm font-bold tracking-tight uppercase shadow-lg shadow-[#D4B18A]/35 transition-all hover:bg-[#E4C9A0] hover:shadow-[#D4B18A]/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D4B18A] focus-visible:ring-offset-2 focus-visible:ring-offset-[#17121C]"
                 data-testid="landing-primary-cta"
               >
@@ -156,7 +158,7 @@ export default function LandingPage() {
                 <span className="group-hover:translate-x-1 transition-transform inline-block ml-0.5">
                   &rarr;
                 </span>
-              </Link>
+              </button>
             </div>
 
             {/* Secondary CTA — voluntary support, separate from signup. */}

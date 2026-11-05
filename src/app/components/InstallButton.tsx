@@ -93,7 +93,7 @@ export default function InstallButton() {
         onClick={handleInstallClick}
         aria-expanded={showHelp}
         data-testid="install-app"
-        className="w-full inline-flex items-center justify-center gap-2 py-3.5 px-6 rounded-full bg-[#29202D] border border-[#D4B18A]/60 text-[#D4B18A] text-sm font-bold tracking-tight uppercase transition-all hover:bg-[#D4B18A]/10 hover:text-[#F2E9E4] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D4B18A]"
+        className="w-full inline-flex items-center justify-center gap-2 py-3.5 px-6 rounded-full bg-[#29202D] border border-[#D4B18A]/60 text-[#D4B18A] text-sm font-bold tracking-tight uppercase transition-all hover:bg-[#D4B18A]/10 hover:text-[#F2E9E4] focus:outline-none"
       >
         <Download size={16} />
         {t('get_app') || 'Get the app'}
