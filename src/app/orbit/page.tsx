@@ -436,7 +436,7 @@ export default function OrbitPage() {
         </div>
       )}
 
-      <main className="flex-1 relative">
+      <main className="absolute inset-0">
         <Map
           initialViewState={viewport}
           mapStyle={MAP_STYLE}
