@@ -1,0 +1,172 @@
+-- =============================================================================
+-- Enable PostgreSQL Extensions
+-- =============================================================================
+-- This migration enables useful PostgreSQL extensions for the Mettivo app.
+-- Run this in your Supabase SQL editor or via the dashboard.
+-- =============================================================================
+
+-- 1. pg_stat_statements - Track SQL query performance
+-- Useful for identifying slow queries and optimization opportunities
+CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+
+-- 2. pg_cron - Job scheduling within PostgreSQL
+-- Allows setting up recurring tasks like cleanup, analytics, etc.
+CREATE EXTENSION IF NOT EXISTS pg_cron;
+
+-- 3. pg_trgm - Fuzzy string matching
+-- Enables LIKE with % at start, similarity comparisons, etc.
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+-- 4. citext - Case-insensitive text type
+-- Useful for email addresses, usernames, etc.
+CREATE EXTENSION IF NOT EXISTS citext;
+
+-- 5. pg_net - Network functions for IP address handling
+CREATE EXTENSION IF NOT EXISTS pg_net;
+
+-- =============================================================================
+-- EXAMPLES FOR NEXT.JS APP
+-- =============================================================================
+
+-- Uncomment and run these examples in your Supabase SQL editor to see them in action
+
+-- -- ============================================
+-- -- pg_trgm: Fuzzy search for users by display name
+-- -- ============================================
+-- 
+-- CREATE OR REPLACE FUNCTION public.search_users_fuzzy(
+--   search_term text,
+--   limit_count integer DEFAULT 10
+-- )
+-- RETURNS TABLE (
+--   id UUID,
+--   display_name TEXT,
+--   username TEXT,
+--   similarity DOUBLE PRECISION
+-- )
+-- LANGUAGE plpgsql
+-- SECURITY DEFINER
+-- SET search_path = public
+-- AS $$
+-- BEGIN
+--   RETURN QUERY
+--   SELECT 
+--     p.id,
+--     p.display_name,
+--     p.username,
+--     -- Calculate similarity (0 = no match, 1 = perfect match)
+--     similarity(p.display_name, search_term)::DOUBLE PRECISION AS similarity
+--   FROM public.profiles p
+--   WHERE 
+--     p.onboarding_completed = true
+--     AND search_term % p.display_name  -- Fuzzy match using pg_trgm
+--   ORDER BY similarity DESC
+--   LIMIT limit_count;
+-- END;
+-- $$;
+--
+-- GRANT EXECUTE ON FUNCTION public.search_users_fuzzy(text, integer) TO authenticated;
+--
+-- -- Usage from Next.js:
+-- -- const { data } = await supabase.rpc('search_users_fuzzy', {
+-- --   search_term: 'John',
+-- --   limit_count: 10
+-- -- });
+--
+-- -- ============================================
+-- -- pg_cron: Clean up expired chat_media nightly
+-- -- ============================================
+--
+-- -- First, ensure chat_media table has an expires_at column
+-- -- ALTER TABLE public.chat_media ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+--
+-- -- Schedule cleanup job to run every night at 3 AM
+-- SELECT cron.schedule(
+--   'cleanup-expired-chat-media',  -- job name
+--   '0 3 * * *',                  -- cron schedule (daily at 3 AM)
+--   $$DELETE FROM public.chat_media WHERE expires_at IS NOT NULL AND expires_at < now()$$
+-- );
+--
+-- -- To manually run: SELECT cron.manual_run('cleanup-expired-chat-media');
+--
+-- -- To check scheduled jobs:
+-- -- SELECT * FROM cron.job;
+--
+-- -- To remove: SELECT cron.unschedule('cleanup-expired-chat-media');
+--
+-- -- ============================================
+-- -- citext: Case-insensitive email column
+-- -- ============================================
+--
+-- -- For auth.users table (if you have superuser access):
+-- -- ALTER TABLE auth.users ALTER COLUMN email TYPE citext;
+--
+-- -- For profiles table:
+-- ALTER TABLE public.profiles 
+-- ADD COLUMN IF NOT EXISTS email_citext citext;
+--
+-- -- Create a trigger to sync email to citext version
+-- CREATE OR REPLACE FUNCTION public.sync_email_citext()
+-- RETURNS TRIGGER
+-- LANGUAGE plpgsql
+-- AS $$
+-- BEGIN
+--   IF NEW.email IS NOT NULL THEN
+--     NEW.email_citext := NEW.email::citext;
+--   ELSE
+--     NEW.email_citext := NULL;
+--   END IF;
+--   RETURN NEW;
+-- END;
+-- $$;
+--
+-- DROP TRIGGER IF EXISTS profiles_email_citext_trigger ON public.profiles;
+-- CREATE TRIGGER profiles_email_citext_trigger
+--   BEFORE INSERT OR UPDATE ON public.profiles
+--   FOR EACH ROW EXECUTE FUNCTION public.sync_email_citext();
+--
+-- -- Now you can query case-insensitively:
+-- -- SELECT * FROM public.profiles WHERE email_citext = 'John@Example.com';
+-- -- This will match 'john@example.com', 'JOHN@EXAMPLE.COM', etc.
+--
+-- -- ============================================
+-- -- pg_stat_statements: Query performance monitoring
+-- -- ============================================
+--
+-- -- View top 10 slowest queries:
+-- SELECT query, total_time, calls, mean_time
+-- FROM pg_stat_statements
+-- ORDER BY mean_time DESC
+-- LIMIT 10;
+--
+-- -- View most frequently called queries:
+-- SELECT query, calls
+-- FROM pg_stat_statements
+-- ORDER BY calls DESC
+-- LIMIT 10;
+--
+-- -- Reset statistics:
+-- SELECT pg_stat_statements_reset();
+--
+-- -- ============================================
+-- -- pg_net: IP address functions
+-- -- ============================================
+--
+-- -- Store IP addresses in a table
+-- -- CREATE TABLE public.user_sessions (
+-- --   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+-- --   user_id UUID REFERENCES public.profiles(id),
+-- --   ip_address inet NOT NULL,
+-- --   created_at TIMESTAMPTZ DEFAULT now()
+-- -- );
+--
+-- -- Query sessions from a specific IP range:
+-- -- SELECT * FROM public.user_sessions 
+-- -- WHERE ip_address >> '192.168.1.0/24';
+--
+-- -- Check if IP is in a range:
+-- -- SELECT * FROM public.user_sessions 
+-- -- WHERE ip_address << '192.168.1.100'::inet;
+--
+-- -- Get network prefix:
+-- -- SELECT ip_address, network(ip_address, 24) FROM public.user_sessions;
