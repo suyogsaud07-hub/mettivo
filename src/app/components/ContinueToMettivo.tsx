@@ -20,7 +20,7 @@ export default function ContinueToMettivo() {
     } catch {
       // non-blocking: still route forward
     }
-    router.push('/chat');
+    router.push('/auth');
   };
 
   return (

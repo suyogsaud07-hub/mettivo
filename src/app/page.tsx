@@ -20,9 +20,9 @@ import IntroSplash from '@/components/hero/IntroSplash';
  * inside effects, so there are no hydration mismatches.
  */
 
-// Signup is the primary action. Donation is never a gate between a visitor and
+// Auth is the primary action. Donation is never a gate between a visitor and
 // an account; it stays available as its own voluntary destination.
-const SIGNUP_HREF = '/signup';
+const SIGNUP_HREF = '/auth';
 const DONATE_HREF = '/donate';
 
 /**

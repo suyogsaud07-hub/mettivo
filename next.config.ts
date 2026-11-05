@@ -39,7 +39,7 @@ const nextConfig: NextConfig = {  images: {
           // NEW: Force HTTPS for 2 years
           { key: 'Strict-Transport-Security', value: 'max-age=63072000; includeSubDomains; preload' },
           // NEW: Block unauthorized camera/mic/location access
-          { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=(), interest-cohort=()' },
+          { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
           // NEW: Global Content Security Policy (whitelists Supabase, Stripe, Groq, etc.)
           {
             key: 'Content-Security-Policy',

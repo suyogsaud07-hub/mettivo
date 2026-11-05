@@ -133,6 +133,7 @@ export default function MessageBubble({
   useEffect(() => {
     const unsub = subscribeToMessageReactions(
       message.match_id,
+      message.id,
       () => {
         fetchMessageReactions([message.id]).then((map) => {
           setReactions(map.get(message.id) ?? []);
