@@ -4,9 +4,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 /** WebRTC ICE server configuration. STUN is public; TURN must come from env. */
 function buildIceServers(): RTCIceServer[] {
-  const servers: RTCIceServer[] = [
+  const iceServers: RTCIceServer[] = [
     { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
   ];
 
   const turnUrl = process.env.NEXT_PUBLIC_TURN_URL;
@@ -14,10 +13,14 @@ function buildIceServers(): RTCIceServer[] {
   const turnCredential = process.env.NEXT_PUBLIC_TURN_CREDENTIAL;
 
   if (turnUrl && turnUsername && turnCredential) {
-    servers.push({ urls: turnUrl, username: turnUsername, credential: turnCredential });
+    iceServers.push({
+      urls: turnUrl,
+      username: turnUsername,
+      credential: turnCredential,
+    });
   }
 
-  return servers;
+  return iceServers;
 }
 
 /** Constraints for audio/video capture. */

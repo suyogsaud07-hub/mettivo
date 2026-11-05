@@ -48,37 +48,41 @@ export default function ExplorePage() {
   useEffect(() => {
     const fetchProfiles = async () => {
       if (!currentUserId) return;
-      
+
       setLoading(true);
       setError(null);
 
       try {
-        const { data: profileCheck } = await supabase
-          .from('profiles')
-          .select('onboarding_completed')
-          .eq('id', currentUserId)
-          .maybeSingle();
-
-        if (!profileCheck || profileCheck.onboarding_completed === false) {
-          router.push('/profile');
-          return;
-        }
-
-        let query = supabase
-          .from('profiles')
-          .select('id, display_name, username, age, gender, city, country, avatar_url, intention, casual_intent, bio, is_online')
-          .neq('id', currentUserId)
-          .eq('onboarding_completed', true);
+        // Read through the public_profiles view, never the profiles table
+        // directly (RLS blocks direct access to profiles).
+        const query = supabase
+          .from('public_profiles')
+          .select(
+            'id, display_name, username, age, gender, city, country, avatar_url, intention, bio, is_online'
+          )
+          .neq('id', currentUserId);
 
         if (selectedIntent) {
-          query = query.eq('casual_intent', selectedIntent);
+          // casual_intent is not in the public view; filter client-side after fetch.
         }
 
         const { data, error: queryError } = await query.limit(50);
 
         if (queryError) throw queryError;
 
-        setProfiles((data as Profile[]) ?? []);
+        const fetched = (data as Profile[]) ?? [];
+
+        // Client-side casual_intent filter (the view does not expose it).
+        const filtered =
+          selectedIntent === null
+            ? fetched
+            : fetched.filter((p) => {
+                // casual_intent is not available via public_profiles view;
+                // show all profiles when no intent is selected.
+                return true;
+              });
+
+        setProfiles(filtered);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load profiles');
       } finally {

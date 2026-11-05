@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState, use } from 'react';
-import type { RealtimePostgresChangesPayload } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -67,6 +66,11 @@ export default function ChatPage({
   const resolvedSearchParams = use(searchParams);
   const searchFromUrl = resolvedSearchParams.search === '1';
 
+  // Validate matchId is a UUID before any database queries.
+  const uuidRegex =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const validMatchId = uuidRegex.test(matchId);
+
   const router = useRouter();
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [otherUserId, setOtherUserId] = useState<string | null>(null);
@@ -122,12 +126,16 @@ export default function ChatPage({
   // Initialize call signaling when we know our identity
   useEffect(() => {
     if (currentUserId && otherUserId) {
-      callSignaling.subscribe(matchId, currentUserId, otherIdentity?.display_name ?? 'Member');
+      callSignalingRef.current?.subscribe(
+        matchId,
+        currentUserId,
+        otherIdentity?.display_name ?? 'Member'
+      );
     }
     return () => {
-      callSignaling.unsubscribe();
+      callSignalingRef.current?.unsubscribe();
     };
-  }, [currentUserId, otherUserId, matchId, otherIdentity?.display_name, callSignaling]);
+  }, [currentUserId, otherUserId, matchId, otherIdentity?.display_name]);
 
   // Handle incoming call from signaling
   useEffect(() => {
@@ -211,6 +219,20 @@ export default function ChatPage({
     typing.stopTyping();
   }, [typing]);
 
+  // Subscribe to typing indicators for this conversation.
+  useEffect(() => {
+    if (currentUserId && otherUserId && matchId) {
+      typing.subscribe(
+        matchId,
+        currentUserId,
+        otherIdentity?.display_name ?? 'Member'
+      );
+    }
+    return () => {
+      typing.unsubscribe();
+    };
+  }, [currentUserId, otherUserId, matchId, otherIdentity?.display_name, typing]);
+
   // --- Init: load session, identity, settings ---
   const refreshMedia = useCallback(async () => {
     const map = await fetchChatMedia(matchId);
@@ -293,54 +315,11 @@ export default function ChatPage({
 
     void init();
 
-    const channel = supabase
-      .channel(`chat:${matchId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'messages',
-          filter: `match_id=eq.${matchId}`,
-        },
-        (payload: RealtimePostgresChangesPayload<MessageRow>) => {
-          const inserted = payload.new as MessageRow;
-          if (inserted.content === '') void refreshMedia();
-
-          if (!otherUserIdRef.current && inserted.sender_id !== currentUserIdRef.current) {
-            applyOtherUserId(inserted.sender_id);
-          }
-
-          if (inserted.sender_id !== currentUserIdRef.current) {
-            void markMessagesDelivered(matchId);
-            markConversationRead(matchId).catch(() => undefined);
-            void fetchConversationSendState(matchId).then((state) => {
-              if (state) setSendState(state);
-            });
-          }
-        }
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'messages',
-          filter: `match_id=eq.${matchId}`,
-        },
-        (payload: RealtimePostgresChangesPayload<MessageRow>) => {
-          const updated = payload.new as MessageRow;
-          setChatMedia((prev) => prev); // trigger re-render if needed
-        }
-      )
-      .subscribe();
-
     const unsubscribeMedia = subscribeToChatMedia(matchId, refreshMedia);
 
     return () => {
       isMounted = false;
       unsubscribeMedia();
-      void supabase.removeChannel(channel);
     };
   }, [matchId, refreshMedia]);
 
@@ -528,6 +507,9 @@ export default function ChatPage({
     }
   };
 
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [messages, setMessages] = useState<MessageRow[]>([]);
+
   const handleClearChat = async () => {
     if (!window.confirm('Clear this conversation for you? The other participant will keep their messages.')) return;
     setTogglingDisappearing(true);
@@ -562,9 +544,6 @@ export default function ChatPage({
     }
   };
 
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [messages, setMessages] = useState<MessageRow[]>([]);
-
   const restrictionMessage = describeRestriction(restrictions);
   const requestPending = sendState?.relationshipState === 'MESSAGE_REQUEST_PENDING';
   const conversationClosed =
@@ -586,6 +565,29 @@ export default function ChatPage({
   const TEXT = '#F2E9E4';
   const MUTED = '#B58A83';
   const ACCENT = '#D4B18A';
+
+  // Invalid matchId: render an error state instead of querying the database.
+  if (!validMatchId) {
+    return (
+      <div className="flex flex-col h-screen max-w-md mx-auto p-0 bg-[#131017] text-[#F2E9E4]">
+        <div className="flex flex-col items-center justify-center h-full p-6 text-center">
+          <h2 className="text-sm font-semibold text-[#F2E9E4] mb-2">
+            Invalid conversation
+          </h2>
+          <p className="text-xs text-[#B58A83] mb-4">
+            This conversation does not exist.
+          </p>
+          <button
+            type="button"
+            onClick={() => window.history.back()}
+            className="rounded-xl bg-[#1C1822] border border-[#34283F] px-4 py-2 text-sm text-[#F2E9E4] hover:bg-[#29202D]"
+          >
+            Go back
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-screen max-w-md mx-auto p-0 bg-[#131017] text-[#F2E9E4]">

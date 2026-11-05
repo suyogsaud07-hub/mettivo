@@ -48,6 +48,7 @@ export interface DiscoveryCandidate extends MatchProfile {
   mbti: string | null;
   interests: string[];
   promptAnswers: Record<string, string>;
+  casualIntent: string | null;
   online: boolean;
   isVerified: boolean;
 }
@@ -127,6 +128,7 @@ export function parseDiscoveryCandidate(row: unknown): DiscoveryCandidate | null
     pets: strArray(row.pets),
     mbti: str(row.mbti),
     interests: strArray(row.interests),
+    casualIntent: str(row.casual_intent),
     promptAnswers: stringRecord(row.prompts),
     online: bool(row.is_online),
     isVerified: row.is_verified === true,

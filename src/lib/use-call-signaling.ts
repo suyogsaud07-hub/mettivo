@@ -67,6 +67,11 @@ export function useCallSignaling(
     isInitiator: false,
   });
 
+  // Ref that always holds the latest call state so subscribe() does not need
+  // to be recreated when state changes (which would cause duplicate channels).
+  const callRef = useRef(call);
+  callRef.current = call;
+
   const channelRef = useRef<RealtimeChannel | null>(null);
   const myUserIdRef = useRef<string | null>(null);
   const myUserNameRef = useRef<string | null>(null);
@@ -125,7 +130,7 @@ export function useCallSignaling(
           ((event: { payload?: CallSignal & { type: 'call-invite' } }) => {
             const payload = event.payload;
             if (!payload || payload.to !== myUserIdRef.current) return;
-            if (call.state !== 'idle') return; // Already in a call
+            if (callRef.current.state !== 'idle') return; // Already in a call
 
             setCall({
               state: 'ringing',
@@ -140,7 +145,7 @@ export function useCallSignaling(
 
             clearInviteTimer();
             inviteTimerRef.current = setTimeout(() => {
-              if (call.state === 'ringing') {
+              if (callRef.current.state === 'ringing') {
                 setCall((prev) => ({ ...prev, state: 'missed' }));
               }
             }, CALL_TTL_MS);
@@ -182,7 +187,7 @@ export function useCallSignaling(
           ((event: { payload?: CallSignal & { type: 'call-reject' } }) => {
             const payload = event.payload;
             if (!payload || payload.to !== myUserIdRef.current) return;
-            if (call.state === 'initiating') {
+            if (callRef.current.state === 'initiating') {
               resetCall({ state: 'rejected', error: 'Call was rejected.' });
             }
           }) as BroadcastEventHandler
@@ -193,7 +198,7 @@ export function useCallSignaling(
           ((event: { payload?: CallSignal & { type: 'call-cancel' } }) => {
             const payload = event.payload;
             if (!payload || payload.to !== myUserIdRef.current) return;
-            if (call.state === 'ringing') {
+            if (callRef.current.state === 'ringing') {
               resetCall({ state: 'cancelled', error: 'Call was cancelled.' });
             }
           }) as BroadcastEventHandler
@@ -213,7 +218,7 @@ export function useCallSignaling(
           }
         });
     },
-    [call.state, webrtc, resetCall, startDuration]
+    [webrtc, resetCall, startDuration]
   );
 
   const unsubscribe = useCallback(() => {

@@ -22,7 +22,6 @@ import { useFollow } from '@/context/FollowContext';
 export interface DiscoveryProfile extends DiscoveryCandidate {
   distanceMeters: number | null;
   distanceText: string | null;
-  casualIntent: string | null;
 }
 
 interface UseDiscoveryOptions {
@@ -144,7 +143,6 @@ export function useDiscovery(options: UseDiscoveryOptions = {}) {
       });
 
       const distances = new Map<string, number>();
-      const casualIntents = new Map<string, string | null>();
 
       if (userLat !== null && userLng !== null) {
         try {
@@ -162,8 +160,6 @@ export function useDiscovery(options: UseDiscoveryOptions = {}) {
               const id = String(row.id ?? '');
               const meters = typeof row.distance_meters === 'number' ? row.distance_meters : 0;
               if (id) distances.set(id, meters);
-              const ci = row.casual_intent ?? null;
-              if (id) casualIntents.set(id, typeof ci === 'string' ? ci : null);
             }
           } else {
             console.error('[discovery] get_nearby_profiles failed:', nearbyError?.message);
@@ -173,36 +169,12 @@ export function useDiscovery(options: UseDiscoveryOptions = {}) {
         }
       }
 
-      const idsWithoutCasual = candidates
-        .filter((c) => !casualIntents.has(c.id))
-        .map((c) => c.id);
-
-      if (idsWithoutCasual.length > 0) {
-        try {
-          const { data: ciRows, error: ciError } = await supabase
-            .from('profiles')
-            .select('id, casual_intent')
-            .in('id', idsWithoutCasual);
-
-          if (!ciError && Array.isArray(ciRows)) {
-            for (const row of ciRows) {
-              casualIntents.set(String(row.id), row.casual_intent ?? null);
-            }
-          } else {
-            console.error('[discovery] casual_intent fetch failed:', ciError?.message);
-          }
-        } catch (err) {
-          console.error('[discovery] casual_intent fetch threw:', err);
-        }
-      }
-
       return candidates.map((c) => {
         const meters = distances.get(c.id);
         return {
           ...c,
           distanceMeters: meters ?? null,
           distanceText: meters !== null && meters !== undefined ? formatDistance(meters) : null,
-          casualIntent: casualIntents.get(c.id) ?? null,
         };
       });
     },
