@@ -105,3 +105,18 @@ export function isSameDay(a: string | null | undefined, b: string | null | undef
     da.getDate() === db.getDate()
   );
 }
+
+/**
+ * Safely parse a timestamp string into a Date. Returns a valid Date even when
+ * the input is missing or malformed — the caller can check `isValid` on the
+ * result before rendering. Never returns `Invalid Date`.
+ */
+export function getValidMessageDate(value?: string | null): Date {
+  if (value) {
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed;
+    }
+  }
+  return new Date();
+}

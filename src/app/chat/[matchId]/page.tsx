@@ -448,51 +448,57 @@ export default function ChatPage({
   );
 
   // --- Send voice note ---
+  const voiceNoteSendingRef = useRef(false);
+
   const handleSendVoiceNote = useCallback(
     async (blob: Blob, durationSeconds: number) => {
       const me = currentUserIdRef.current;
-      if (!me) return;
+      if (!me || voiceNoteSendingRef.current) return;
 
+      voiceNoteSendingRef.current = true;
       setSendingMedia(true);
       setError(null);
+
+      let storagePath: string | null = null;
+
       try {
-        const now = new Date();
-        const { data, error: insertError } = await supabase
-          .from('messages')
-          .insert({
-            match_id: matchId,
-            sender_id: me,
-            content: '',
-            message_type: 'audio',
-          })
-          .select('id, match_id, sender_id, content, created_at, message_type, delivered_at, seen_at')
-          .single();
-
-        if (insertError) throw insertError;
-
-        const messageId = (data as { id: string })?.id;
-        if (messageId) {
-          // Upload audio as chat media
-          const path = `${matchId}/${me}/${crypto.randomUUID()}.webm`;
-          const { error: uploadError } = await supabase.storage
-            .from('chat-media')
-            .upload(path, blob, { contentType: 'audio/webm', upsert: false, cacheControl: '3600' });
-
-          if (uploadError) throw uploadError;
-
-          await supabase.rpc('send_chat_media', {
-            p_match_id: matchId,
-            p_storage_path: path,
-            p_media_type: 'audio',
-            p_view_limit: 2,
-            p_ttl_seconds: 86400,
+        // 1. Upload the audio blob to the private chat-media bucket first.
+        //    We upload before inserting so a failed upload never leaves an
+        //    orphaned message row behind.
+        storagePath = `${matchId}/${me}/${crypto.randomUUID()}.webm`;
+        const { error: uploadError } = await supabase.storage
+          .from('chat-media')
+          .upload(storagePath, blob, {
+            contentType: 'audio/webm',
+            upsert: false,
+            cacheControl: '3600',
           });
 
-          void fetchChatMedia(matchId).then((map) => setChatMedia(map));
-        }
+        if (uploadError) throw uploadError;
+
+        // 2. Call send_chat_media() which inserts the messages row and the
+        //    chat_media ledger row in a single transaction. The database
+        //    enforces sender ownership and match participation via RLS.
+        const { error: rpcError } = await supabase.rpc('send_chat_media', {
+          p_match_id: matchId,
+          p_storage_path: storagePath,
+          p_media_type: 'audio',
+          p_view_limit: 2,
+          p_ttl_seconds: 86400,
+        });
+
+        if (rpcError) throw rpcError;
+
+        // 3. Refresh the media ledger so the new voice note appears in the UI.
+        void fetchChatMedia(matchId).then((map) => setChatMedia(map));
       } catch (err) {
+        // 4. Clean up the orphaned storage object if the RPC failed.
+        if (storagePath) {
+          await supabase.storage.from('chat-media').remove([storagePath]);
+        }
         setError(err instanceof Error ? err.message : 'Voice note could not be sent.');
       } finally {
+        voiceNoteSendingRef.current = false;
         setSendingMedia(false);
       }
     },

@@ -36,6 +36,7 @@ export interface MessageRecord {
   senderId: string;
   content: string;
   createdAt: string;
+  messageType: string | null;
   /** M26 delivery receipt: when the OTHER member's device received the row. */
   deliveredAt: string | null;
   /** M26 read receipt: when the OTHER member read the row. */
@@ -71,6 +72,7 @@ function parseMessage(row: unknown): MessageRecord | null {
     senderId,
     content: str(row.content) ?? '',
     createdAt: createdAt ?? '',
+    messageType: str(row.message_type),
     deliveredAt: str(row.delivered_at),
     seenAt: str(row.seen_at),
   };
@@ -106,7 +108,7 @@ export async function fetchMessages(
 
   const { data, error } = await supabase
     .from('messages')
-    .select('id, match_id, sender_id, content, created_at, delivered_at, seen_at')
+    .select('id, match_id, sender_id, content, created_at, message_type, delivered_at, seen_at')
     .eq('match_id', matchId)
     .order('created_at', { ascending: false })
     .limit(Math.max(1, Math.min(limit, 500)));
@@ -157,7 +159,7 @@ export async function sendMessage(matchId: string, content: string): Promise<Mes
   const { data, error } = await supabase
     .from('messages')
     .insert({ match_id: matchId, sender_id: senderId, content: body })
-    .select('id, match_id, sender_id, content, created_at, delivered_at, seen_at')
+    .select('id, match_id, sender_id, content, created_at, message_type, delivered_at, seen_at')
     .single();
 
   if (error) {

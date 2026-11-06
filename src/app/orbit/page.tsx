@@ -11,7 +11,7 @@ import MobileNav from '@/app/components/layout/MobileNav';
 import { getCasualIntentEmoji } from '@/components/profile/CasualIntentChips';
 
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN || process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;
-const MAP_STYLE = 'mapbox://styles/mapbox/satellite-streets-v12';
+const MAP_STYLE = 'mapbox://styles/mapbox/navigation-night-v1';
 const GLOBAL_RADIUS_KM = 20000;
 const DEFAULT_ZOOM = 10;
 const LOCATE_ZOOM = 12;
@@ -498,12 +498,25 @@ const OrbitMap = ({
   onFlyTo,
   mapRef,
 }: OrbitMapProps) => {
+  const errorLoggedRef = useRef(false);
+
+  // Log map/tile errors once. Mapbox tile failures (including HTTP 429 rate
+  // limiting) are handled by Mapbox's own backoff; we deliberately do NOT
+  // reload the style or retry here, which would turn a rate-limit into a
+  // retry storm.
+  const handleMapError = useCallback((e: ErrorEvent) => {
+    if (errorLoggedRef.current) return;
+    errorLoggedRef.current = true;
+    console.error('[orbit] map error:', e?.message ?? e);
+  }, []);
+
   return (
     <Map
       initialViewState={viewport}
       mapStyle={MAP_STYLE}
       mapboxAccessToken={MAPBOX_TOKEN}
       onMove={(evt) => onMapMove(evt.viewState)}
+      onError={handleMapError}
       ref={mapRef}
       style={{ width: '100%', height: '100%' }}
       maxBounds={[

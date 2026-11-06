@@ -8,7 +8,7 @@ import {
   sendMessage,
   type MessageRecord,
 } from '@/lib/messages';
-import { isSameDay } from '@/lib/chat-tokens';
+import { getValidMessageDate, isSameDay } from '@/lib/chat-tokens';
 import type { ChatListItem, ChatMessage } from '@/lib/chat-types';
 
 /** Page size for message pagination. */
@@ -39,10 +39,10 @@ function toChatMessage(
     matchId: row.matchId,
     senderId: row.senderId,
     content: row.content,
-    messageType: (messageType === 'text' || messageType === 'video_call' || messageType === 'audio_call' || messageType === 'call')
+    messageType: (messageType === 'text' || messageType === 'image' || messageType === 'video' || messageType === 'audio' || messageType === 'video_call' || messageType === 'audio_call' || messageType === 'call')
       ? messageType
       : 'text',
-    createdAt: row.createdAt,
+    createdAt: getValidMessageDate(row.createdAt).toISOString(),
     deliveredAt: row.deliveredAt,
     seenAt: row.seenAt,
     senderAvatar,

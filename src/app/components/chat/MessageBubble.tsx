@@ -25,7 +25,7 @@ import {
   type MessageReaction,
 } from '@/lib/reactions';
 import { unsendMessage } from '@/lib/messages';
-import { pinMessage, unpinMessage } from '@/lib/pins';
+import { pinMessage, unpinMessage, fetchPinnedMessages } from '@/lib/pins';
 import ReactionBar from '@/app/components/chat/ReactionBar';
 import ReactionPill from '@/app/components/chat/ReactionPill';
 import MessageStatus from '@/app/components/chat/MessageStatus';
@@ -126,6 +126,7 @@ export default function MessageBubble({
     showing: 'original' | 'translated' | null;
     loading: boolean;
   } | null>(null);
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
 
   const menuRef = useRef<HTMLDivElement>(null);
   const reactionBarRef = useRef<HTMLDivElement>(null);
@@ -165,6 +166,29 @@ export default function MessageBubble({
     );
     return () => unsub();
   }, [message.match_id, message.id]);
+
+  // Resolve a signed URL for private-bucket audio so the <audio> element can
+  // play it. Regenerated when the media row changes.
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!(media?.media_type === 'audio' && media.storage_path)) {
+      return;
+    }
+
+    (async () => {
+      const { data, error } = await supabase.storage
+        .from('chat-media')
+        .createSignedUrl(media.storage_path, 300);
+      if (!cancelled && !error && data?.signedUrl) {
+        setAudioUrl(data.signedUrl);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [media]);
 
   const myEmojis = useMemo(
     () =>
@@ -450,14 +474,18 @@ export default function MessageBubble({
                 <>
                   {media.media_type === 'audio' ? (
                     <div className={bubbleClass}>
-                      <audio
-                        src={supabase.storage
-                          .from('chat-media')
-                          .getPublicUrl(media.storage_path).data.publicUrl}
-                        controls
-                        preload="none"
-                        className="w-full"
-                      />
+                      {audioUrl ? (
+                        <audio
+                          src={audioUrl}
+                          controls
+                          preload="none"
+                          className="w-full"
+                        />
+                      ) : (
+                        <div className="flex items-center gap-2 px-3 py-2 text-[#B58A83] text-xs">
+                          🔊 Loading audio…
+                        </div>
+                      )}
                     </div>
                   ) : media.media_type === 'video' ? (
                     <div className={bubbleClass}>
@@ -584,17 +612,94 @@ export default function MessageBubble({
               </div>
             )}
 
-            {!isGrouped && (
-              <span
+            {!isGrouped && messageType === 'text' && (
+              <div
                 style={{
-                  fontSize: '10px',
-                  color: isMe ? '#F2E9E4' : '#B58A83',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
                   marginTop: '2px',
                   alignSelf: isMe ? 'flex-end' : 'flex-start',
                 }}
               >
-                {formatRelative(message.created_at)}
-              </span>
+                <span
+                  style={{
+                    fontSize: '10px',
+                    color: isMe ? '#F2E9E4' : '#B58A83',
+                  }}
+                >
+                  {formatRelative(message.created_at)}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!message.content.trim()) return;
+                    setTranslationState({
+                      original: message.content,
+                      translated: null,
+                      showing: null,
+                      loading: true,
+                    });
+                    void (async () => {
+                      try {
+                        const res = await fetch('/api/translate', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            text: message.content,
+                            targetLanguage: 'en',
+                          }),
+                        });
+                        if (!res.ok) throw new Error('Translation failed');
+                        const json = await res.json();
+                        setTranslationState((prev) => ({
+                          ...(prev ?? {
+                            original: message.content,
+                            translated: null,
+                            showing: null,
+                            loading: true,
+                          }),
+                          translated: json.translatedText ?? json.translated ?? json.text ?? null,
+                          showing: 'translated',
+                          loading: false,
+                        }));
+                      } catch (err) {
+                        console.error('[translate] failed:', err);
+                        setTranslationState((prev) => ({
+                          ...(prev ?? {
+                            original: message.content,
+                            translated: null,
+                            showing: null,
+                            loading: true,
+                          }),
+                          showing: 'original',
+                          loading: false,
+                        }));
+                      }
+                    })();
+                  }}
+                  disabled={translationState?.loading}
+                  aria-label="Translate message"
+                  className="p-1 hover:bg-[#34283F] rounded transition-colors"
+                  title="Translate"
+                >
+                  {translationState?.loading ? (
+                    <span className="text-[8px] animate-spin">↻</span>
+                  ) : (
+                    <Languages
+                      size={12}
+                      strokeWidth={1.5}
+                      className={`text-xs ${
+                        translationState?.showing === 'translated'
+                          ? 'text-[#D4B18A]'
+                          : isMe
+                            ? 'text-[#F2E9E4]/60'
+                            : 'text-[#B58A83]'
+                      }`}
+                    />
+                  )}
+                </button>
+              </div>
             )}
           </div>
 

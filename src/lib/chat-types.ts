@@ -10,7 +10,7 @@ export interface ChatMessage {
   matchId: string;
   senderId: string;
   content: string;
-  messageType: 'text' | 'video_call' | 'audio_call' | 'call';
+  messageType: 'text' | 'image' | 'video' | 'audio' | 'video_call' | 'audio_call' | 'call';
   createdAt: string;
   deliveredAt: string | null;
   seenAt: string | null;
