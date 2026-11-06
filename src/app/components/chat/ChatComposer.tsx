@@ -7,12 +7,49 @@ import VoiceNoteRecorder from '@/app/components/chat/VoiceNoteRecorder';
 interface ChatComposerProps {
   disabled: boolean;
   onSend: (text: string, replyTo?: string) => void;
-  onAttach: () => void;
+  onAttach: (files: FileList) => void;
   onVoiceNote?: (blob: Blob, durationSeconds: number) => void;
   placeholder?: string;
   voiceEnabled?: boolean;
   replyTo: { id: string; content: string; senderId: string } | null;
   onClearReply: () => void;
+}
+
+/** Maximum image file size: 10 MB. */
+export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+
+/** Maximum video file size: 100 MB. */
+export const MAX_VIDEO_BYTES = 100 * 1024 * 1024;
+
+/** Maximum simultaneous attachments. */
+export const MAX_ATTACHMENTS = 10;
+
+function isImageMime(type: string): boolean {
+  return ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif'].includes(type.toLowerCase());
+}
+
+function isVideoMime(type: string): boolean {
+  return ['video/mp4', 'video/webm', 'video/quicktime', 'video/mov'].includes(type.toLowerCase());
+}
+
+export function validateAttachment(file: File): { ok: true } | { ok: false; reason: string } {
+  const type = file.type.toLowerCase();
+
+  if (isImageMime(type)) {
+    if (file.size > MAX_IMAGE_BYTES) {
+      return { ok: false, reason: 'Image is too large (max 10 MB).' };
+    }
+    return { ok: true };
+  }
+
+  if (isVideoMime(type)) {
+    if (file.size > MAX_VIDEO_BYTES) {
+      return { ok: false, reason: 'Video is too large (max 100 MB).' };
+    }
+    return { ok: true };
+  }
+
+  return { ok: false, reason: 'Unsupported file type. Use JPEG, PNG, WebP, GIF, MP4, or WebM.' };
 }
 
 export default function ChatComposer({
@@ -28,7 +65,11 @@ export default function ChatComposer({
   const [value, setValue] = useState('');
   const [voiceState, setVoiceState] = useState<'idle' | 'recording' | 'previewing' | 'sending'>('idle');
   const [voiceDuration, setVoiceDuration] = useState(0);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const clearUploadError = useCallback(() => setUploadError(null), []);
 
   const handleInput = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setValue(e.target.value);
@@ -78,6 +119,43 @@ export default function ChatComposer({
     [onVoiceNote]
   );
 
+  /** Synchronous file-picker trigger — runs inside the user's click handler. */
+  const handleAttachmentClick = useCallback(() => {
+    setUploadError(null);
+    fileInputRef.current?.click();
+  }, []);
+
+  const handleFileChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = e.target.files;
+      if (!files || files.length === 0) return;
+
+      if (files.length > MAX_ATTACHMENTS) {
+        setUploadError(`You can attach at most ${MAX_ATTACHMENTS} files at once.`);
+        e.target.value = '';
+        return;
+      }
+
+      const invalid: string[] = [];
+      for (let i = 0; i < files.length; i += 1) {
+        const result = validateAttachment(files[i]);
+        if (!result.ok) {
+          invalid.push(result.reason);
+        }
+      }
+
+      if (invalid.length > 0) {
+        setUploadError(invalid.join(' '));
+        e.target.value = '';
+        return;
+      }
+
+      onAttach(files);
+      e.target.value = '';
+    },
+    [onAttach]
+  );
+
   const hasContent = value.trim().length > 0 || voiceState !== 'idle';
 
   return (
@@ -89,24 +167,16 @@ export default function ChatComposer({
       className="flex gap-2 items-end px-4 pb-4 shrink-0 bg-[#131017]"
     >
       <input
+        ref={fileInputRef}
         type="file"
-        accept="image/*,video/*,audio/*"
-        className="hidden"
-        onChange={(e) => {
-          const file = e.target.files?.[0];
-          if (file) {
-            URL.revokeObjectURL(e.target.value);
-            onAttach();
-          }
-          e.target.value = '';
-        }}
+        accept="image/*,video/*"
+        multiple
+        hidden
+        onChange={handleFileChange}
       />
       <button
         type="button"
-        onClick={() => {
-          const input = document.querySelector('input[type="file"]') as HTMLInputElement | null;
-          input?.click();
-        }}
+        onClick={handleAttachmentClick}
         disabled={disabled}
         aria-label="Attach a photo or video"
         className="p-2.5 rounded-full bg-[#1C1822] border border-[#34283F] text-[#F2E9E4] disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[#29202D] shrink-0"
@@ -164,6 +234,10 @@ export default function ChatComposer({
       >
         <Send size={16} />
       </button>
+
+      {uploadError && (
+        <p className="text-xs text-[#EF4444] ml-2 shrink-0 whitespace-nowrap">{uploadError}</p>
+      )}
     </form>
   );
 }

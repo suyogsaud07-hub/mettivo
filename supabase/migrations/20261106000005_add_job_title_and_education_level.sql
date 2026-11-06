@@ -18,9 +18,9 @@ alter table public.profiles add column if not exists job_title text;
 alter table public.profiles add column if not exists education_level text;
 
 comment on column public.profiles.job_title is
-  'The member''s job title, shown on the profile and used for completeness.';
+  'The member\'s job title, shown on the profile and used for completeness.';
 comment on column public.profiles.education_level is
-  'The member''s education level, shown on the profile and used for completeness.';
+  'The member\'s education level, shown on the profile and used for completeness.';
 
 -- Report the resulting posture.
 select count(*) as job_education_columns_present

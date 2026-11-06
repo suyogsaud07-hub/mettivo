@@ -238,7 +238,12 @@ export function validateProfileDraft(draft: ProfileDraft, now = new Date()): Val
     photos: photos.slice(0, MAX_PHOTOS),
     gender: trimmed(draft.gender),
     pronouns: trimmed(draft.pronouns),
-    birth_date: draft.birthDate,
+    /* birth_date is deliberately NOT in the write payload.
+       profiles.birth_date carries a column-level UPDATE revoke from
+       `authenticated` (migration 20261106000011_fix_profiles_update_grant.sql).
+       Any INSERT or UPDATE naming birth_date fails with 42501. The derived
+       `age` is writable and is what the dashboard and discovery render.
+       Reading birth_date back uses public.my_birth_date() (SECURITY DEFINER). */
     age,
     country: trimmed(draft.country),
     city: trimmed(draft.city),
@@ -330,6 +335,16 @@ export async function saveProfile(draft: ProfileDraft): Promise<void> {
 
   if (updateError) {
     console.error('[profile] save failed:', updateError.code, updateError.message);
+    if (updateError.code === '42501' && process.env.NODE_ENV === 'development') {
+      console.error('[profile] 42501 PERMISSION DIAGNOSTIC', {
+        code: updateError.code,
+        message: updateError.message,
+        details: updateError.details,
+        hint: updateError.hint,
+        attemptedColumns: Object.keys(fields),
+        /* Redact sensitive values — only column names, never user data */
+      });
+    }
     throw new ProfileError(saveFailureMessage(updateError.code), updateError.code);
   }
   if (updated) return;
@@ -353,10 +368,28 @@ export async function saveProfile(draft: ProfileDraft): Promise<void> {
     if (!retryError && retried) return;
 
     console.error('[profile] save retry failed:', retryError?.code, retryError?.message);
+    if (retryError?.code === '42501' && process.env.NODE_ENV === 'development') {
+      console.error('[profile] 42501 PERMISSION DIAGNOSTIC (retry)', {
+        code: retryError.code,
+        message: retryError.message,
+        details: retryError.details,
+        hint: retryError.hint,
+        attemptedColumns: Object.keys(fields),
+      });
+    }
     throw new ProfileError(saveFailureMessage(retryError?.code), retryError?.code);
   }
 
   console.error('[profile] save failed:', insertError?.code, insertError?.message);
+  if (insertError?.code === '42501' && process.env.NODE_ENV === 'development') {
+    console.error('[profile] 42501 PERMISSION DIAGNOSTIC (insert)', {
+      code: insertError.code,
+      message: insertError.message,
+      details: insertError.details,
+      hint: insertError.hint,
+      attemptedColumns: Object.keys(fields),
+    });
+  }
   throw new ProfileError(saveFailureMessage(insertError?.code), insertError?.code);
 }
 

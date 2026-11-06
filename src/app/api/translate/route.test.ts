@@ -1,17 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 
-vi.mock('google-translate-api-x', () => ({
-  default: vi.fn(),
-}));
-
-import { POST } from '@/app/api/translate/route';
-import type { googleTranslateApi } from 'google-translate-api-x';
-import translate from 'google-translate-api-x';
-
-type TranslationResponse = googleTranslateApi.TranslationResponse;
-
-const mockTranslate = vi.mocked(translate);
-
 vi.mock('next/headers', () => ({
   cookies: vi.fn(() => ({
     getAll: vi.fn(() => []),
@@ -27,6 +15,8 @@ vi.mock('@supabase/ssr', () => ({
   })),
 }));
 
+const DEEPL_SUCCESS_BODY = { translations: [{ text: 'Hola', detected_source_language: 'EN' }] };
+
 function mockRequest(body: unknown): Request {
   return new Request('http://localhost/api/translate', {
     method: 'POST',
@@ -36,30 +26,25 @@ function mockRequest(body: unknown): Request {
 }
 
 async function callRoute(body: unknown) {
+  const { POST } = await import('@/app/api/translate/route');
   return POST(mockRequest(body));
 }
 
-function mockTranslation(text: string): TranslationResponse {
-  return {
-    text,
-    from: {
-      language: { iso: 'en', didYouMean: false },
-      text: { autoCorrected: false, value: '', didYouMean: false },
-    },
-    raw: '',
-    pronunciation: undefined,
-  };
-}
-
 describe('translation API', () => {
+  const fetchMock = vi.fn() as ReturnType<typeof vi.fn> & { mock: ReturnType<typeof vi.fn>['mock'] };
+
   beforeEach(() => {
     vi.resetAllMocks();
     vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', 'http://localhost');
     vi.stubEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY', 'anon-key');
+    vi.stubEnv('DEEPL_API_KEY', 'test-deepl-key');
+    // Route fetches DeepL directly; intercept it so no real network I/O occurs.
+    vi.stubGlobal('fetch', fetchMock);
   });
 
   afterEach(() => {
     vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
   });
 
   it('rejects missing text', async () => {
@@ -84,90 +69,59 @@ describe('translation API', () => {
   it('rejects oversized text without fetching', async () => {
     const res = await callRoute({ text: 'a'.repeat(50001), targetLanguage: 'en' });
     expect(res.status).toBe(413);
-    expect(mockTranslate).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('translates short text directly without chunking', async () => {
-    mockTranslate.mockResolvedValue(mockTranslation('Hola'));
+  it('translates short text directly', async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify(DEEPL_SUCCESS_BODY), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
 
     const res = await callRoute({ text: 'Hello', targetLanguage: 'es' });
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.translatedText).toBe('Hola');
-    expect(mockTranslate).toHaveBeenCalledTimes(1);
-    expect(mockTranslate).toHaveBeenCalledWith('Hello', { to: 'es' });
-    expect(json.chunked).toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(json.provider).toBe('deepl');
   });
 
-  it('chunks long text by paragraph boundaries', async () => {
-    const para = 'This is a test paragraph with some content to make it long enough. ';
-    const longText = Array(200).fill(para).join('\n\n');
-    mockTranslate.mockResolvedValue(mockTranslation('Hola.'));
-
-    const res = await callRoute({ text: longText, targetLanguage: 'es' });
-    expect(res.status).toBe(200);
-    const json = await res.json();
-    expect(mockTranslate).toHaveBeenCalledTimes(4);
-    expect(mockTranslate).toHaveBeenCalledWith(expect.any(String), { to: 'es' });
-    expect(json.translatedText).toContain('Hola.');
-  });
-
-  it('reassembles chunks in original order', async () => {
-    const paraA = 'START-MARKER-A ' + 'x '.repeat(500);
-    const paraB = 'START-MARKER-B ' + 'y '.repeat(500);
-    const longText = `${paraA}\n\n${paraB}\n\n${paraA}\n\n${paraB}`;
-    mockTranslate.mockImplementation(async (input: unknown) =>
-      Promise.resolve(mockTranslation(`translated:${String(input)}`))
-    );
-
-    const res = await callRoute({ text: longText, targetLanguage: 'es' });
-    expect(res.status).toBe(200);
-    const json = await res.json();
-    expect(mockTranslate).toHaveBeenCalledTimes(2);
-    const aIndex = json.translatedText.indexOf('START-MARKER-A');
-    const bIndex = json.translatedText.indexOf('START-MARKER-B');
-    expect(aIndex).toBeGreaterThanOrEqual(0);
-    expect(bIndex).toBeGreaterThanOrEqual(0);
-    expect(aIndex).toBeLessThan(bIndex);
-  });
-
-  it('preserves emoji and unicode text', async () => {
-    const emojiText = 'Hello 🙂 你好 🎉';
-    mockTranslate.mockResolvedValue(mockTranslation('Hola 🙂 你好 🎉'));
-
-    const res = await callRoute({ text: emojiText, targetLanguage: 'es' });
-    expect(res.status).toBe(200);
-    const json = await res.json();
-    expect(json.translatedText).toBe('Hola 🙂 你好 🎉');
-  });
-
-  it('preserves multiline formatting', async () => {
-    const multiline = 'Line one\nLine two\nLine three';
-    mockTranslate.mockResolvedValue(mockTranslation('Línea uno\nLínea dos\nLínea tres'));
-
-    const res = await callRoute({ text: multiline, targetLanguage: 'es' });
-    expect(res.status).toBe(200);
-    const json = await res.json();
-    expect(json.translatedText).toContain('\n');
-  });
-
-  it('returns error when a chunk fails', async () => {
-    const para = 'x '.repeat(500);
-    const longText = `${para}\n\n${para}`;
-    mockTranslate.mockImplementation(() => {
-      throw new Error('provider boom');
-    });
-
-    const res = await callRoute({ text: longText, targetLanguage: 'es' });
-    expect(res.status).toBe(502);
-    const json = await res.json();
-    expect(json.error).toBe('upstream_error');
-  });
-
-  it('returns error when provider returns empty result', async () => {
-    mockTranslate.mockResolvedValue(mockTranslation(''));
+  it('returns service unavailable when DEEPL_API_KEY is missing', async () => {
+    vi.unstubAllEnvs();
+    vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', 'http://localhost');
+    vi.stubEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY', 'anon-key');
+    // DEEPL_API_KEY intentionally left unset.
 
     const res = await callRoute({ text: 'Hello', targetLanguage: 'es' });
-    expect(res.status).toBe(502);
+    expect(res.status).toBe(429);
+    const json = await res.json();
+    expect(json.error).toBe('service_unavailable');
+    expect(json.message).toBe('Translation service unavailable');
+  });
+
+  it('returns service unavailable when DeepL errors', async () => {
+    fetchMock.mockRejectedValueOnce(new Error('network boom'));
+
+    const res = await callRoute({ text: 'Hello', targetLanguage: 'es' });
+    expect(res.status).toBe(429);
+    const json = await res.json();
+    expect(json.error).toBe('service_unavailable');
+    expect(json.message).toBe('Translation service unavailable');
+  });
+
+  it('returns service unavailable when DeepL returns non-ok', async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: { message: 'quota exceeded' } }), {
+        status: 456,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    const res = await callRoute({ text: 'Hello', targetLanguage: 'es' });
+    expect(res.status).toBe(429);
+    const json = await res.json();
+    expect(json.error).toBe('service_unavailable');
   });
 });

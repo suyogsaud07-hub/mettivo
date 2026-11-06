@@ -18,7 +18,7 @@ import {
   unsendMessage,
   deleteMessageForMe,
 } from '@/lib/messages';
-import { blockMember, BlockingError } from '@/lib/blocking';
+import { blockMember, unblockMember, BlockingError } from '@/lib/blocking';
 import { pinMessage, unpinMessage, fetchPinnedMessages } from '@/lib/pins';
 import {
   ConversationError,
@@ -58,6 +58,14 @@ import type { MessageRow } from '@/lib/types';
 
 /** The 24-hour window offered by the disappearing-chat toggle. */
 const DISAPPEARING_SECONDS = 86_400;
+
+/** Derives a storage file extension from an audio MIME type. */
+function extensionForAudioMime(mime: string): string {
+  const base = mime.split(';')[0].trim().toLowerCase();
+  if (base === 'audio/ogg') return 'ogg';
+  if (base === 'audio/mp4' || base === 'audio/aac' || base === 'audio/m4a') return 'm4a';
+  return 'webm';
+}
 
 export default function ChatPage({
   params,
@@ -491,9 +499,15 @@ export default function ChatPage({
   const voiceNoteSendingRef = useRef(false);
 
   const handleSendVoiceNote = useCallback(
-    async (blob: Blob, durationSeconds: number) => {
+    async (blob: Blob) => {
       const me = currentUserIdRef.current;
       if (!me || voiceNoteSendingRef.current) return;
+
+      // Reject empty recordings before touching storage or the database.
+      if (!blob || blob.size === 0) {
+        setError('The voice note is empty and cannot be sent.');
+        return;
+      }
 
       voiceNoteSendingRef.current = true;
       setSendingMedia(true);
@@ -504,12 +518,14 @@ export default function ChatPage({
       try {
         // 1. Upload the audio blob to the private chat-media bucket first.
         //    We upload before inserting so a failed upload never leaves an
-        //    orphaned message row behind.
-        storagePath = `${matchId}/${me}/${crypto.randomUUID()}.webm`;
+        //    orphaned message row behind. The extension and content type are
+        //    derived from the actual recorded MIME type, not hard-coded.
+        const mime = blob.type || 'audio/webm';
+        storagePath = `${matchId}/${me}/${crypto.randomUUID()}.${extensionForAudioMime(mime)}`;
         const { error: uploadError } = await supabase.storage
           .from('chat-media')
           .upload(storagePath, blob, {
-            contentType: 'audio/webm',
+            contentType: mime,
             upsert: false,
             cacheControl: '3600',
           });
@@ -534,7 +550,7 @@ export default function ChatPage({
       } catch (err) {
         // 4. Clean up the orphaned storage object if the RPC failed.
         if (storagePath) {
-          await supabase.storage.from('chat-media').remove([storagePath]);
+          await supabase.storage.from('chat-media').remove([storagePath]).catch(() => undefined);
         }
         setError(err instanceof Error ? err.message : 'Voice note could not be sent.');
       } finally {
@@ -545,25 +561,35 @@ export default function ChatPage({
     [matchId, currentUserIdRef.current]
   );
 
-  // --- Send media ---
-  const handleMediaPicked = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = event.target.files ? Array.from(event.target.files) : [];
-    event.target.value = '';
-    const picked = files[0];
+  // --- Send media (triggered by ChatComposer attachment picker) ---
+  const handleAttachFiles = async (files: FileList) => {
     const me = currentUserIdRef.current;
-    if (!picked || !me) return;
+    if (!files.length || !me) return;
 
     setSendingMedia(true);
     setError(null);
+
     try {
-      const sent = await sendChatMedia(matchId, me, picked);
-      void fetchChatMedia(matchId).then((map) => setChatMedia(map));
-      const nextState = await fetchConversationSendState(matchId);
-      if (nextState) setSendState(nextState);
-    } catch (err) {
-      const message =
-        err instanceof ChatMediaError ? err.message : 'The media could not be sent.';
-      setError(message);
+      const errors: string[] = [];
+
+      for (let i = 0; i < files.length; i += 1) {
+        const file = files[i];
+        try {
+          await sendChatMedia(matchId, me, file);
+        } catch (err) {
+          const message =
+            err instanceof ChatMediaError ? err.message : 'The media could not be sent.';
+          errors.push(`${file.name}: ${message}`);
+        }
+      }
+
+      if (errors.length > 0) {
+        setError(errors.join(' '));
+      } else {
+        void fetchChatMedia(matchId).then((map) => setChatMedia(map));
+        const nextState = await fetchConversationSendState(matchId);
+        if (nextState) setSendState(nextState);
+      }
     } finally {
       setSendingMedia(false);
     }
@@ -590,6 +616,28 @@ export default function ChatPage({
         setError(err.message);
       } else {
         console.error('Unexpected error blocking user:', err);
+        setError('An unexpected error occurred. Please try again.');
+      }
+    } finally {
+      setBlocking(false);
+    }
+  };
+
+  const handleUnblock = async () => {
+    const target = otherUserIdRef.current;
+    if (!target) return;
+
+    setBlocking(true);
+    setError(null);
+
+    try {
+      await unblockMember(target);
+      setBlocked(false);
+    } catch (err) {
+      if (err instanceof BlockingError) {
+        setError(err.message);
+      } else {
+        console.error('Unexpected error unblocking user:', err);
         setError('An unexpected error occurred. Please try again.');
       }
     } finally {
@@ -792,7 +840,7 @@ export default function ChatPage({
               Report Conversation
             </button>
             <button
-              onClick={blocked ? handleBlock : handleBlock}
+              onClick={blocked ? handleUnblock : handleBlock}
               className="w-full text-left px-3 py-2 rounded-lg text-sm hover:bg-[#29202D] mt-1 text-[#F2E9E4]"
               disabled={blocking || !otherUserId}
             >
@@ -1038,10 +1086,7 @@ export default function ChatPage({
       <ChatComposer
         disabled={!canSend || sendingMedia}
         onSend={handleSendText}
-        onAttach={() => {
-          const input = document.querySelector('input[type="file"]') as HTMLInputElement | null;
-          input?.click();
-        }}
+        onAttach={handleAttachFiles}
         onVoiceNote={handleSendVoiceNote}
         replyTo={replyTo}
         onClearReply={() => setReplyTo(null)}
@@ -1055,13 +1100,6 @@ export default function ChatPage({
                 : 'Messaging is paused'
         }
         voiceEnabled
-      />
-
-      <input
-        type="file"
-        accept="image/*,video/*,audio/*"
-        className="hidden"
-        onChange={handleMediaPicked}
       />
 
       {/* Call modals */}

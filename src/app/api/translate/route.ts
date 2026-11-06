@@ -116,7 +116,8 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   const apiKey = process.env.DEEPL_API_KEY;
   if (!apiKey) {
-    return failure('unconfigured', 'Translation is not configured on this server.', 500);
+    console.error('[translate] missing DEEPL_API_KEY; translation service is unavailable');
+    return failure('service_unavailable', 'Translation service unavailable', 429);
   }
 
   try {
@@ -137,11 +138,10 @@ export async function POST(request: Request): Promise<NextResponse> {
     });
 
     if (!response.ok) {
-      return failure(
-        'upstream_error',
-        `DeepL request failed with status ${response.status}.`,
-        502
+      console.error(
+        `[translate] DeepL request failed with status ${response.status}`
       );
+      return failure('service_unavailable', 'Translation service unavailable', 429);
     }
 
     const parsed = (await response.json()) as unknown;
@@ -159,6 +159,6 @@ export async function POST(request: Request): Promise<NextResponse> {
     });
   } catch (error) {
     console.error('[translate] error:', error);
-    return failure('upstream_error', 'Translation failed', 502);
+    return failure('service_unavailable', 'Translation service unavailable', 429);
   }
 }

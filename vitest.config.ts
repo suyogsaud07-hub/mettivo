@@ -10,7 +10,7 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
-    include: ['src/**/*.test.ts', 'tests/**/*.test.ts'],
+    include: ['src/**/*.test.{ts,tsx}', 'tests/**/*.test.ts'],
     setupFiles: ['./tests/setup.ts'],
     // The database suite boots a WASM PostgreSQL and applies every migration,
     // which is slower than a pure unit test.
