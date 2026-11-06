@@ -67,10 +67,20 @@ export async function addMessageReaction(
 ): Promise<void> {
   if (!messageId || !emoji) throw new Error('Message and emoji are required.');
 
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser();
+  if (authError) {
+    console.error('[reactions] authentication failed:', authError.message);
+    throw new Error('We could not verify your account.');
+  }
+  if (!user) throw new Error('You must be signed in.');
+
   const { error } = await supabase
     .from('message_reactions')
     .upsert(
-      { message_id: messageId, user_id: (await supabase.auth.getUser()).data?.user?.id, emoji },
+      { message_id: messageId, user_id: user.id, emoji },
       { onConflict: 'message_id,user_id,emoji' }
     );
 

@@ -37,10 +37,21 @@ function parsePin(row: unknown): PinnedMessage | null {
 export async function fetchPinnedMessages(matchId: string): Promise<string[]> {
   if (!matchId) return [];
 
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser();
+  if (authError) {
+    console.error('[pins] authentication failed:', authError.message);
+    return [];
+  }
+  if (!user) return [];
+
   const { data, error } = await supabase
     .from('pinned_messages')
     .select('message_id')
-    .eq('match_id', matchId);
+    .eq('match_id', matchId)
+    .eq('user_id', user.id);
 
   if (error) {
     console.error('[pins] fetch failed:', error.message);
@@ -56,17 +67,10 @@ export async function fetchPinnedMessages(matchId: string): Promise<string[]> {
 export async function pinMessage(matchId: string, messageId: string): Promise<void> {
   if (!matchId || !messageId) throw new Error('Match and message are required.');
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) throw new Error('You must be signed in.');
-
-  const { error } = await supabase
-    .from('pinned_messages')
-    .upsert(
-      { match_id: matchId, message_id: messageId, user_id: user.id },
-      { onConflict: 'match_id,message_id,user_id' }
-    );
+  const { error } = await supabase.rpc('pin_message', {
+    p_match_id: matchId,
+    p_message_id: messageId,
+  });
 
   if (error) {
     console.error('[pins] pin failed:', error.message);
@@ -78,17 +82,10 @@ export async function pinMessage(matchId: string, messageId: string): Promise<vo
 export async function unpinMessage(matchId: string, messageId: string): Promise<void> {
   if (!matchId || !messageId) throw new Error('Match and message are required.');
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) throw new Error('You must be signed in.');
-
-  const { error } = await supabase
-    .from('pinned_messages')
-    .delete()
-    .eq('match_id', matchId)
-    .eq('message_id', messageId)
-    .eq('user_id', user.id);
+  const { error } = await supabase.rpc('unpin_message', {
+    p_match_id: matchId,
+    p_message_id: messageId,
+  });
 
   if (error) {
     console.error('[pins] unpin failed:', error.message);

@@ -21549,3 +21549,1846 @@ comment on function public.apply_self_ban(integer, text) is
   'Compatibility no-op. Subbu may not restrict a member; only a moderator-confirmed violation can.';
 
 
+-- ############################################################################
+-- # 20261105000000_profile_viewers.sql
+-- ############################################################################
+
+create table if not exists public.profile_views (
+  id uuid primary key default gen_random_uuid(),
+  viewer_id uuid not null references auth.users(id) on delete cascade,
+  profile_id uuid not null references auth.users(id) on delete cascade,
+  created_at timestamptz not null default now()
+);
+
+alter table public.profile_views enable row level security;
+
+drop policy if exists "profile_views_insert_own" on public.profile_views;
+create policy "profile_views_insert_own"
+  on public.profile_views
+  for insert
+  with check (viewer_id = auth.uid());
+
+drop policy if exists "profile_views_select_own_profile" on public.profile_views;
+create policy "profile_views_select_own_profile"
+  on public.profile_views
+  for select
+  using (profile_id = auth.uid());
+
+create or replace function public.record_profile_view(p_profile_id uuid)
+returns void
+language plpgsql
+security definer
+as $$
+begin
+  if auth.uid() is null or auth.uid() = p_profile_id then
+    return;
+  end if;
+  insert into public.profile_views (viewer_id, profile_id)
+  values (auth.uid(), p_profile_id);
+end;
+$$;
+
+
+-- ############################################################################
+-- # 20261105010000_casual_intent_categories.sql
+-- ############################################################################
+
+-- =============================================================================
+-- M43 — Casual Intent Categories
+-- =============================================================================
+-- WHY
+--   Adds support for casual dating intents: Free Tonight, Short Term Fun,
+--   and Friends with Benefits. These are distinct from the existing
+--   intention field (friendship, dating, both) and allow users to express
+--   more specific casual preferences.
+--
+-- SAFE TO RE-RUN: idempotent
+-- =============================================================================
+
+-- Add casual_intent column to profiles
+ALTER TABLE public.profiles 
+ADD COLUMN IF NOT EXISTS casual_intent TEXT 
+  CHECK (casual_intent IS NULL OR casual_intent IN ('free_tonight', 'short_term_fun', 'friends_with_benefits'));
+
+-- Add index for filtering on casual intent
+CREATE INDEX IF NOT EXISTS profiles_casual_intent_idx 
+  ON public.profiles (casual_intent) 
+  WHERE casual_intent IS NOT NULL;
+
+-- Add to explore_categories table if it exists
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'explore_categories') THEN
+    -- Insert new casual categories
+    INSERT INTO public.explore_categories (id, name, description, icon, is_active, category_type)
+    VALUES 
+      ('free_tonight', 'Free Tonight', 'Looking for connections tonight', '🌙', true, 'casual'),
+      ('short_term_fun', 'Short Term Fun', 'Seeking short-term fun and excitement', '🎉', true, 'casual'),
+      ('friends_with_benefits', 'Friends with Benefits', 'Looking for casual relationships with benefits', '🔥', true, 'casual')
+    ON CONFLICT (id) DO NOTHING;
+  END IF;
+END $$;
+
+-- Add casual_intent to the profiles update policy if it exists
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_policies 
+    WHERE schemaname = 'public' AND tablename = 'profiles' AND polname = 'profiles_update_own'
+  ) THEN
+    -- The column will be automatically accessible through existing policies
+    RAISE NOTICE 'Casual intent column added; existing RLS policies apply';
+  END IF;
+END $$;
+
+-- Grant update on casual_intent column to authenticated users (for profile editing)
+GRANT UPDATE (casual_intent) ON public.profiles TO authenticated;
+
+-- Posture report
+DO $$
+BEGIN
+  RAISE NOTICE 'M43: Casual intent categories migration complete';
+END $$;
+
+
+-- ############################################################################
+-- # 20261105020000_postgis_location.sql
+-- ############################################################################
+
+-- =============================================================================
+-- M44 — PostGIS Location Support for Nearby Map
+-- =============================================================================
+-- WHY
+--   Adds geography support for location-based discovery. Uses PostGIS to enable
+--   spatial queries for finding nearby users. Implements location snapping to
+--   a grid for privacy protection (users appear on a grid, not exact locations).
+--
+-- PREREQUISITES
+--   PostGIS extension must be enabled on the database.
+--   Run: CREATE EXTENSION IF NOT EXISTS postgis;
+--
+-- SAFE TO RE-RUN: idempotent
+-- =============================================================================
+
+-- Enable PostGIS extension (only if not already enabled)
+CREATE EXTENSION IF NOT EXISTS postgis;
+
+-- Add geography column for precise location (SRID 4326 = WGS84)
+ALTER TABLE public.profiles 
+ADD COLUMN IF NOT EXISTS location GEOGRAPHY(POINT, 4326);
+
+-- Add snapped_location column for privacy-protected grid locations
+-- Grid size: 0.008983 degrees ≈ 1km at equator
+ALTER TABLE public.profiles 
+ADD COLUMN IF NOT EXISTS snapped_location GEOGRAPHY(POINT, 4326);
+
+-- Add last_location_update timestamp
+ALTER TABLE public.profiles 
+ADD COLUMN IF NOT EXISTS last_location_update TIMESTAMPTZ;
+
+-- Create index for fast spatial queries on snapped_location
+CREATE INDEX IF NOT EXISTS profiles_snapped_location_idx 
+  ON public.profiles USING GIST(snapped_location);
+
+-- Create index for filtering by last_location_update
+CREATE INDEX IF NOT EXISTS profiles_last_location_update_idx 
+  ON public.profiles (last_location_update) 
+  WHERE last_location_update IS NOT NULL;
+
+-- Function to snap a geography point to a grid for privacy
+-- Grid cell size: approximately 1km (0.008983 degrees)
+-- Uses ST_SnapToGrid which requires geometry and returns geometry
+CREATE OR REPLACE FUNCTION public.snap_location_to_grid(
+  p_location GEOGRAPHY(POINT, 4326),
+  p_grid_size_meters numeric DEFAULT 1000
+)
+RETURNS GEOGRAPHY(POINT, 4326)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  -- Convert meters to degrees (approximately 111km per degree)
+  grid_size_degrees numeric := p_grid_size_meters / 111111.0;
+  snapped_geom GEOMETRY(POINT, 4326);
+BEGIN
+  -- ST_SnapToGrid takes: geometry, x_size, y_size, x_offset, y_offset
+  -- We snap to a grid with origin at (0, 0)
+  snapped_geom := ST_SnapToGrid(
+    p_location::GEOMETRY,
+    grid_size_degrees,
+    grid_size_degrees,
+    0,
+    0
+  );
+  
+  -- Convert back to geography
+  RETURN snapped_geom::GEOGRAPHY(POINT, 4326);
+END;
+$$;
+
+-- Function to update a user's location with automatic snapping
+CREATE OR REPLACE FUNCTION public.update_location_snapped(
+  p_user_id UUID,
+  p_latitude numeric,
+  p_longitude numeric
+)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  grid_size numeric := 0.008983; -- Approximately 1km
+BEGIN
+  -- Update raw latitude/longitude and location geography
+  UPDATE public.profiles
+  SET 
+    latitude = p_latitude,
+    longitude = p_longitude,
+    location = ST_SetSRID(ST_MakePoint(p_longitude, p_latitude), 4326)::GEOGRAPHY(POINT, 4326),
+    snapped_location = public.snap_location_to_grid(
+      ST_SetSRID(ST_MakePoint(p_longitude, p_latitude), 4326)::GEOGRAPHY(POINT, 4326),
+      1000
+    ),
+    last_location_update = now()
+  WHERE id = p_user_id;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.update_location_snapped(UUID, numeric, numeric) FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.update_location_snapped(UUID, numeric, numeric) TO authenticated;
+
+-- Main RPC function to find nearby profiles
+-- Takes user's lat/lng and radius in km
+-- Returns profiles with snapped locations for privacy
+CREATE OR REPLACE FUNCTION public.get_nearby_profiles(
+  user_lat float,
+  user_lng float,
+  radius_km float DEFAULT 10
+)
+RETURNS TABLE (
+  id UUID,
+  display_name TEXT,
+  username TEXT,
+  avatar_url TEXT,
+  age INTEGER,
+  gender TEXT,
+  city TEXT,
+  country TEXT,
+  intention TEXT,
+  casual_intent TEXT,
+  bio TEXT,
+  is_online BOOLEAN,
+  -- Return snapped coordinates for privacy
+  snapped_lat float,
+  snapped_lng float,
+  distance_meters float
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  user_point GEOGRAPHY(POINT, 4326);
+BEGIN
+  -- Create geography point from user's coordinates
+  user_point := ST_SetSRID(ST_MakePoint(user_lng, user_lat), 4326)::GEOGRAPHY(POINT, 4326);
+
+  RETURN QUERY
+  SELECT 
+    p.id,
+    p.display_name,
+    p.username,
+    p.avatar_url,
+    p.age,
+    p.gender,
+    p.city,
+    p.country,
+    p.intention,
+    p.casual_intent,
+    p.bio,
+    p.is_online,
+    -- Extract snapped coordinates for display (privacy-protected)
+    ST_Y(p.snapped_location::GEOMETRY)::float AS snapped_lat,
+    ST_X(p.snapped_location::GEOMETRY)::float AS snapped_lng,
+    -- Calculate distance from user to this profile's RAW location
+    -- This gives accurate distance while still protecting location privacy
+    ST_Distance(user_point, COALESCE(p.location, p.snapped_location, user_point))::float AS distance_meters
+  FROM public.profiles p
+  WHERE 
+    -- User must have a snapped location
+    p.snapped_location IS NOT NULL
+    -- User must have completed onboarding
+    AND p.onboarding_completed = true
+    -- User must not be suspended or banned
+    AND (p.is_suspended IS NULL OR p.is_suspended = false)
+    AND (p.banned_until IS NULL OR p.banned_until > now())
+    -- Within radius (use index on snapped_location for proximity, but filter by distance from raw location)
+    AND ST_DWithin(user_point, COALESCE(p.location, user_point), radius_km * 1000)
+    -- Exclude blocked users (both directions)
+    AND NOT EXISTS (
+      SELECT 1 FROM public.blocks 
+      WHERE blocker_id = auth.uid() AND blocked_id = p.id
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM public.blocks 
+      WHERE blocker_id = p.id AND blocked_id = auth.uid()
+    )
+    -- Exclude self
+    AND p.id != auth.uid()
+  ORDER BY 
+    ST_Distance(user_point, COALESCE(p.location, user_point))
+  LIMIT 100;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.get_nearby_profiles(float, float, float) FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.get_nearby_profiles(float, float, float) TO authenticated;
+
+-- RLS Policy: Allow users to update their own location
+DROP POLICY IF EXISTS profiles_update_own_location ON public.profiles;
+CREATE POLICY profiles_update_own_location
+  ON public.profiles FOR UPDATE
+  TO authenticated
+  USING (auth.uid() = id)
+  WITH CHECK (auth.uid() = id);
+
+-- Grant select on new columns
+GRANT SELECT (location, snapped_location, last_location_update) ON public.profiles TO authenticated;
+
+-- Posture report
+DO $$
+BEGIN
+  RAISE NOTICE 'M44: PostGIS location migration complete';
+END $$;
+
+
+-- ############################################################################
+-- # 20261105030000_enable_extensions.sql
+-- ############################################################################
+
+-- =============================================================================
+-- Enable PostgreSQL Extensions
+-- =============================================================================
+-- This migration enables useful PostgreSQL extensions for the Mettivo app.
+-- Run this in your Supabase SQL editor or via the dashboard.
+-- =============================================================================
+
+-- 1. pg_stat_statements - Track SQL query performance
+-- Useful for identifying slow queries and optimization opportunities
+CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+
+-- 2. pg_cron - Job scheduling within PostgreSQL
+-- Allows setting up recurring tasks like cleanup, analytics, etc.
+CREATE EXTENSION IF NOT EXISTS pg_cron;
+
+-- 3. pg_trgm - Fuzzy string matching
+-- Enables LIKE with % at start, similarity comparisons, etc.
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+-- 4. citext - Case-insensitive text type
+-- Useful for email addresses, usernames, etc.
+CREATE EXTENSION IF NOT EXISTS citext;
+
+-- 5. pg_net - Network functions for IP address handling
+CREATE EXTENSION IF NOT EXISTS pg_net;
+
+-- =============================================================================
+-- EXAMPLES FOR NEXT.JS APP
+-- =============================================================================
+
+-- Uncomment and run these examples in your Supabase SQL editor to see them in action
+
+-- -- ============================================
+-- -- pg_trgm: Fuzzy search for users by display name
+-- -- ============================================
+-- 
+-- CREATE OR REPLACE FUNCTION public.search_users_fuzzy(
+--   search_term text,
+--   limit_count integer DEFAULT 10
+-- )
+-- RETURNS TABLE (
+--   id UUID,
+--   display_name TEXT,
+--   username TEXT,
+--   similarity DOUBLE PRECISION
+-- )
+-- LANGUAGE plpgsql
+-- SECURITY DEFINER
+-- SET search_path = public
+-- AS $$
+-- BEGIN
+--   RETURN QUERY
+--   SELECT 
+--     p.id,
+--     p.display_name,
+--     p.username,
+--     -- Calculate similarity (0 = no match, 1 = perfect match)
+--     similarity(p.display_name, search_term)::DOUBLE PRECISION AS similarity
+--   FROM public.profiles p
+--   WHERE 
+--     p.onboarding_completed = true
+--     AND search_term % p.display_name  -- Fuzzy match using pg_trgm
+--   ORDER BY similarity DESC
+--   LIMIT limit_count;
+-- END;
+-- $$;
+--
+-- GRANT EXECUTE ON FUNCTION public.search_users_fuzzy(text, integer) TO authenticated;
+--
+-- -- Usage from Next.js:
+-- -- const { data } = await supabase.rpc('search_users_fuzzy', {
+-- --   search_term: 'John',
+-- --   limit_count: 10
+-- -- });
+--
+-- -- ============================================
+-- -- pg_cron: Clean up expired chat_media nightly
+-- -- ============================================
+--
+-- -- First, ensure chat_media table has an expires_at column
+-- -- ALTER TABLE public.chat_media ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+--
+-- -- Schedule cleanup job to run every night at 3 AM
+-- SELECT cron.schedule(
+--   'cleanup-expired-chat-media',  -- job name
+--   '0 3 * * *',                  -- cron schedule (daily at 3 AM)
+--   $$DELETE FROM public.chat_media WHERE expires_at IS NOT NULL AND expires_at < now()$$
+-- );
+--
+-- -- To manually run: SELECT cron.manual_run('cleanup-expired-chat-media');
+--
+-- -- To check scheduled jobs:
+-- -- SELECT * FROM cron.job;
+--
+-- -- To remove: SELECT cron.unschedule('cleanup-expired-chat-media');
+--
+-- -- ============================================
+-- -- citext: Case-insensitive email column
+-- -- ============================================
+--
+-- -- For auth.users table (if you have superuser access):
+-- -- ALTER TABLE auth.users ALTER COLUMN email TYPE citext;
+--
+-- -- For profiles table:
+-- ALTER TABLE public.profiles 
+-- ADD COLUMN IF NOT EXISTS email_citext citext;
+--
+-- -- Create a trigger to sync email to citext version
+-- CREATE OR REPLACE FUNCTION public.sync_email_citext()
+-- RETURNS TRIGGER
+-- LANGUAGE plpgsql
+-- AS $$
+-- BEGIN
+--   IF NEW.email IS NOT NULL THEN
+--     NEW.email_citext := NEW.email::citext;
+--   ELSE
+--     NEW.email_citext := NULL;
+--   END IF;
+--   RETURN NEW;
+-- END;
+-- $$;
+--
+-- DROP TRIGGER IF EXISTS profiles_email_citext_trigger ON public.profiles;
+-- CREATE TRIGGER profiles_email_citext_trigger
+--   BEFORE INSERT OR UPDATE ON public.profiles
+--   FOR EACH ROW EXECUTE FUNCTION public.sync_email_citext();
+--
+-- -- Now you can query case-insensitively:
+-- -- SELECT * FROM public.profiles WHERE email_citext = 'John@Example.com';
+-- -- This will match 'john@example.com', 'JOHN@EXAMPLE.COM', etc.
+--
+-- -- ============================================
+-- -- pg_stat_statements: Query performance monitoring
+-- -- ============================================
+--
+-- -- View top 10 slowest queries:
+-- SELECT query, total_time, calls, mean_time
+-- FROM pg_stat_statements
+-- ORDER BY mean_time DESC
+-- LIMIT 10;
+--
+-- -- View most frequently called queries:
+-- SELECT query, calls
+-- FROM pg_stat_statements
+-- ORDER BY calls DESC
+-- LIMIT 10;
+--
+-- -- Reset statistics:
+-- SELECT pg_stat_statements_reset();
+--
+-- -- ============================================
+-- -- pg_net: IP address functions
+-- -- ============================================
+--
+-- -- Store IP addresses in a table
+-- -- CREATE TABLE public.user_sessions (
+-- --   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+-- --   user_id UUID REFERENCES public.profiles(id),
+-- --   ip_address inet NOT NULL,
+-- --   created_at TIMESTAMPTZ DEFAULT now()
+-- -- );
+--
+-- -- Query sessions from a specific IP range:
+-- -- SELECT * FROM public.user_sessions 
+-- -- WHERE ip_address >> '192.168.1.0/24';
+--
+-- -- Check if IP is in a range:
+-- -- SELECT * FROM public.user_sessions 
+-- -- WHERE ip_address << '192.168.1.100'::inet;
+--
+-- -- Get network prefix:
+-- -- SELECT ip_address, network(ip_address, 24) FROM public.user_sessions;
+
+
+-- ############################################################################
+-- # 20261105040000_add_casual_intent_to_discover_profiles.sql
+-- ############################################################################
+
+-- =============================================================================
+-- Add casual_intent to discover_profiles() RPC return type
+-- =============================================================================
+-- WHY
+--   The People Discovery page reads `casual_intent` from the discovery feed.
+--   The current `discover_profiles()` return type omits it, forcing the
+--   frontend to fall back to a direct `supabase.from('profiles')` query that is
+--   blocked by column-level RLS (403 "permission denied for table profiles").
+--   Adding `casual_intent` to the RPC return table lets the frontend consume it
+--   through the authorized, SECURITY DEFINER path without any direct table access.
+--
+--   Because `CREATE OR REPLACE FUNCTION` cannot change a function's return type,
+--   the existing function is dropped and recreated with the extended column set.
+--   No dependent database objects reference this function by return type, so this
+--   is safe.
+--
+-- SECURITY
+--   The function remains SECURITY DEFINER with a fixed search_path. EXECUTE is
+--   granted to `authenticated` only; `anon` and `public` are revoked. RLS on the
+--   underlying `profiles` table is untouched.
+--
+-- SAFE TO RE-RUN: idempotent (drop + recreate function).
+-- =============================================================================
+
+drop function if exists public.discover_profiles(integer, integer, text[], integer, boolean, uuid[]);
+
+create function public.discover_profiles(
+  p_min_age     integer default 18,
+  p_max_age     integer default 99,
+  p_genders     text[]  default null,
+  p_limit       integer default 50,
+  p_online_only boolean default false,
+  p_exclude_ids uuid[]  default '{}'
+)
+returns table (
+  id           uuid,
+  first_name   text,
+  last_name    text,
+  username     text,
+  display_name text,
+  age          integer,
+  gender       text,
+  city         text,
+  country      text,
+  avatar_url   text,
+  photos       text[],
+  bio          text,
+  intention    text,
+  looking_for  text[],
+  hobbies      text[],
+  pets         text[],
+  mbti         text,
+  interests    text[],
+  prompts      jsonb,
+  casual_intent text,
+  is_online    boolean,
+  is_verified  boolean
+)
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+  select
+    p.id, p.first_name, p.last_name, p.username, p.display_name,
+    p.age, p.gender, p.city, p.country, p.avatar_url, p.photos, p.bio,
+    p.intention, p.looking_for, p.hobbies, p.pets, p.mbti, p.interests,
+    p.prompts,
+    p.casual_intent,
+    case
+      when coalesce(pref.show_online_status, true) = false then false
+      when exists (
+        select 1 from public.presence_sessions ps
+        where ps.user_id = p.id
+          and ps.is_active = true
+          and ps.expires_at > now()
+      ) then true
+      when p.last_seen_at is not null
+        then p.last_seen_at >= now() - interval '2 minutes'
+      else coalesce(p.is_online, false)
+    end as is_online,
+    p.is_verified
+  from public.profiles p
+  left join public.user_preferences pref on pref.user_id = p.id
+  where auth.uid() is not null
+    and p.id <> auth.uid()
+    and p.onboarding_completed
+    and coalesce(p.is_suspended, false) = false
+    and coalesce(pref.profile_visibility, 'public') = 'public'
+    and p.age between coalesce(p_min_age, 18) and coalesce(p_max_age, 99)
+    and (p_genders is null or p.gender = any (p_genders))
+    and (
+      coalesce(p_online_only, false) = false
+      or (case
+            when coalesce(pref.show_online_status, true) = false then false
+            when exists (
+              select 1 from public.presence_sessions ps
+              where ps.user_id = p.id
+                and ps.is_active = true
+                and ps.expires_at > now()
+            ) then true
+            when p.last_seen_at is not null
+              then p.last_seen_at >= now() - interval '2 minutes'
+            else coalesce(p.is_online, false)
+          end)
+    )
+    and not public.is_blocked_pair(auth.uid(), p.id)
+    and not (p.id = any (coalesce(p_exclude_ids, '{}'::uuid[])))
+    and not exists (
+      select 1 from public.likes l
+      where l.liker_id = auth.uid() and l.liked_id = p.id
+    )
+    and not exists (
+      select 1 from public.matches m
+      where (m.user_a = auth.uid() and m.user_b = p.id)
+         or (m.user_a = p.id and m.user_b = auth.uid())
+    )
+  order by
+    case
+      when coalesce(pref.show_online_status, true) = false then false
+      when exists (
+        select 1 from public.presence_sessions ps
+        where ps.user_id = p.id
+          and ps.is_active = true
+          and ps.expires_at > now()
+      ) then true
+      when p.last_seen_at is not null
+        then p.last_seen_at >= now() - interval '2 minutes'
+      else coalesce(p.is_online, false)
+    end desc,
+    p.updated_at desc nulls last,
+    p.id
+  limit greatest(1, least(coalesce(p_limit, 50), 100));
+$$;
+
+revoke all on function public.discover_profiles(integer, integer, text[], integer, boolean, uuid[]) from public, anon;
+grant execute on function public.discover_profiles(integer, integer, text[], integer, boolean, uuid[]) to authenticated;
+
+comment on function public.discover_profiles(integer, integer, text[], integer, boolean, uuid[]) is
+  'Allow-listed discovery feed. Excludes already-decided/blocked/matched/non-public members, supports load-more exclusions, ranks expiring online presence first, returns casual_intent.';
+
+
+-- ############################################################################
+-- # 20261106000000_orbit_profiles_rpc.sql
+-- ############################################################################
+
+-- =============================================================================
+-- M47 — Live Orbit Profiles RPC with Advanced Filtering
+-- =============================================================================
+-- WHY
+--   Replaces the basic get_nearby_profiles with get_orbit_profiles that supports
+--   comprehensive filtering: age range, gender, online status, country, and global search.
+--
+-- PREREQUISITES
+--   PostGIS extension must be enabled
+--   run: CREATE EXTENSION IF NOT EXISTS postgis;
+--
+-- SAFE TO RE-RUN: Drops old function and creates new one
+-- =============================================================================
+
+-- Drop the old function if it exists
+DROP FUNCTION IF EXISTS public.get_nearby_profiles(float, float, float);
+
+-- Create the new advanced filtering function for Live Orbit
+CREATE OR REPLACE FUNCTION public.get_orbit_profiles(
+  p_lat float,
+  p_lng float,
+  p_radius_km float DEFAULT 10,
+  p_min_age integer DEFAULT 18,
+  p_max_age integer DEFAULT 99,
+  p_gender text DEFAULT NULL,
+  p_online_only boolean DEFAULT false,
+  p_country text DEFAULT NULL
+)
+RETURNS TABLE (
+  id UUID,
+  display_name TEXT,
+  username TEXT,
+  avatar_url TEXT,
+  age INTEGER,
+  gender TEXT,
+  city TEXT,
+  country TEXT,
+  intention TEXT,
+  casual_intent TEXT,
+  bio TEXT,
+  is_online BOOLEAN,
+  snapped_lat float,
+  snapped_lng float,
+  distance_meters float
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  user_point GEOGRAPHY(POINT, 4326);
+BEGIN
+  -- Create geography point from user's coordinates
+  user_point := ST_SetSRID(ST_MakePoint(p_lng, p_lat), 4326)::GEOGRAPHY(POINT, 4326);
+
+  RETURN QUERY
+  SELECT 
+    p.id,
+    p.display_name,
+    p.username,
+    p.avatar_url,
+    p.age,
+    p.gender,
+    p.city,
+    p.country,
+    p.intention,
+    p.casual_intent,
+    p.bio,
+    p.is_online,
+    -- Extract snapped coordinates for privacy (already snapped in snapped_location)
+    ST_Y(p.snapped_location::GEOMETRY)::float AS snapped_lat,
+    ST_X(p.snapped_location::GEOMETRY)::float AS snapped_lng,
+    -- Calculate distance from user to this profile's RAW location
+    ST_Distance(user_point, COALESCE(p.location, p.snapped_location, user_point))::float AS distance_meters
+  FROM public.profiles p
+  WHERE 
+    -- User must have a snapped location
+    p.snapped_location IS NOT NULL
+    -- User must have completed onboarding
+    AND p.onboarding_completed = true
+    -- User must not be suspended or banned
+    AND (p.is_suspended IS NULL OR p.is_suspended = false)
+    AND (p.banned_until IS NULL OR p.banned_until > now())
+    -- Age range filter
+    AND (p.age IS NULL OR (p.age BETWEEN p_min_age AND p_max_age))
+    -- Gender filter (if specified)
+    AND (p_gender IS NULL OR p_gender = p_gender)
+    -- Online status filter
+    AND (p_online_only = false OR p.is_online = true)
+    -- Country filter (if specified)
+    AND (p_country IS NULL OR p.country = p_country)
+    -- Within radius (use index on snapped_location for proximity)
+    -- For global search (20000km), we skip the distance filter since it's essentially unlimited
+    AND (
+      p_radius_km >= 20000 
+      OR ST_DWithin(user_point, COALESCE(p.location, p.snapped_location, user_point), p_radius_km * 1000)
+    )
+    -- Exclude blocked users (both directions)
+    AND NOT EXISTS (
+      SELECT 1 FROM public.blocks 
+      WHERE blocker_id = auth.uid() AND blocked_id = p.id
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM public.blocks 
+      WHERE blocker_id = p.id AND blocked_id = auth.uid()
+    )
+    -- Exclude self
+    AND p.id != auth.uid()
+  ORDER BY 
+    -- Online users first
+    CASE WHEN p.is_online THEN 0 ELSE 1 END,
+    -- Then by distance
+    ST_Distance(user_point, COALESCE(p.location, p.snapped_location, user_point))
+  LIMIT 100;
+END;
+$$;
+
+-- Grant execute permission to authenticated users only
+REVOKE ALL ON FUNCTION public.get_orbit_profiles(float, float, float, integer, integer, text, boolean, text) FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.get_orbit_profiles(float, float, float, integer, integer, text, boolean, text) TO authenticated;
+
+-- Posture report
+DO $$
+BEGIN
+  RAISE NOTICE 'M47: Live Orbit profiles RPC migration complete';
+END $$;
+
+
+-- ############################################################################
+-- # 20261106000001_add_message_type_to_messages.sql
+-- ############################################################################
+
+-- Adds `message_type` to `public.messages` so call logs (video / audio) can be
+-- stored and rendered alongside ordinary text messages. Idempotent: safe to run
+-- on deployments where the column already exists.
+alter table if exists public.messages
+  add column if not exists message_type text;
+
+-- Constrain to the supported kinds once the column is present.
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.messages'::regclass
+      and conname = 'messages_message_type_check'
+  ) then
+    alter table public.messages
+      add constraint messages_message_type_check
+      check (message_type in ('text', 'audio', 'video_call', 'audio_call'));
+  end if;
+end $$;
+
+-- Backfill any existing rows as ordinary text messages.
+update public.messages set message_type = 'text' where message_type is null;
+
+-- Index for rendering call logs within a thread.
+create index if not exists idx_messages_match_type_created
+  on public.messages(match_id, message_type, created_at);
+
+
+-- ############################################################################
+-- # 20261106000002_add_push_subscriptions.sql
+-- ############################################################################
+
+-- Stores Web Push subscriptions so the server can notify members of new
+-- messages, likes, matches, etc. One row per (user, device/browser).
+create table if not exists public.push_subscriptions (
+  id         uuid        primary key default gen_random_uuid(),
+  user_id    uuid        not null references public.profiles(id) on delete cascade,
+  endpoint   text        not null unique,
+  p256dh     text        not null,
+  auth       text        not null,
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now())
+);
+
+-- Index for fast lookup of a user's subscriptions when sending a push.
+create index if not exists idx_push_subscriptions_user_id
+  on public.push_subscriptions(user_id);
+
+-- RLS: a member can only manage their own push subscriptions.
+alter table public.push_subscriptions enable row level security;
+
+DROP POLICY IF EXISTS "push_subscriptions_select_own" ON public.push_subscriptions;
+CREATE POLICY "push_subscriptions_select_own"
+  ON public.push_subscriptions FOR SELECT
+  TO authenticated
+  USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "push_subscriptions_insert_own" ON public.push_subscriptions;
+CREATE POLICY "push_subscriptions_insert_own"
+  ON public.push_subscriptions FOR INSERT
+  TO authenticated
+  WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "push_subscriptions_delete_own" ON public.push_subscriptions;
+CREATE POLICY "push_subscriptions_delete_own"
+  ON public.push_subscriptions FOR DELETE
+  TO authenticated
+  USING (auth.uid() = user_id);
+
+-- ############################################################################
+-- # 20261106000002_fix_message_type_constraint.sql
+-- ############################################################################
+
+-- =============================================================================
+-- Expand messages_message_type_check to support all message kinds
+-- =============================================================================
+-- WHY
+--   The existing constraint only permits text, audio, video_call, audio_call.
+--   Voice notes, images, video messages, call logs and system messages all need
+--   distinct message_type values. Adding image, video, call, and system lets the
+--   frontend persist every supported message kind without constraint violations.
+--
+-- SAFE TO RE-RUN: uses ALTER CONSTRAINT via DROP + ADD, guarded by
+-- DROP CONSTRAINT IF EXISTS.
+--
+-- SECURITY
+--   No RLS changes. The constraint is a data-integrity boundary only; it does not
+--   affect who can read or write rows.
+-- =============================================================================
+
+do $$
+begin
+  -- Remove the old constraint if present (idempotent).
+  alter table public.messages
+    drop constraint if exists messages_message_type_check;
+
+  -- Re-add with the complete set of permitted values.
+  alter table public.messages
+    add constraint messages_message_type_check
+    check (
+      message_type in (
+        'text',
+        'image',
+        'video',
+        'audio',
+        'call',
+        'system'
+      )
+    );
+end $$;
+
+
+-- ############################################################################
+-- # 20261106000003_orbit_location_repair.sql
+-- ############################################################################
+
+-- =============================================================================
+-- M48 — Repair Live Orbit location saving and nearby-discovery RPCs
+-- =============================================================================
+
+-- Ensure the geography columns exist (defensive; they are added by M44).
+-- PostGIS types live in the public schema (CREATE EXTENSION postgis), not an
+-- `extensions` schema, so use unqualified GEOGRAPHY/GEOMETRY types.
+alter table public.profiles
+  add column if not exists location GEOGRAPHY(POINT, 4326);
+
+alter table public.profiles
+  add column if not exists snapped_location GEOGRAPHY(POINT, 4326);
+
+alter table public.profiles
+  add column if not exists last_location_update timestamptz;
+
+-- Spatial index for the proximity search in get_orbit_profiles().
+create index if not exists profiles_snapped_location_idx
+  on public.profiles using GIST(snapped_location);
+
+create index if not exists profiles_last_location_update_idx
+  on public.profiles (last_location_update)
+  where last_location_update is not null;
+
+-- ---------------------------------------------------------------------------
+-- 0. Ensure snap_location_to_grid exists (M48 calls this but didn't define it)
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.snap_location_to_grid(
+  p_location GEOGRAPHY,
+  p_grid_size_meters numeric DEFAULT 1000
+)
+RETURNS GEOGRAPHY
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  grid_size_degrees numeric := p_grid_size_meters / 111111.0;
+  snapped_geom GEOMETRY;
+BEGIN
+  snapped_geom := ST_SnapToGrid(
+    p_location::GEOMETRY,
+    grid_size_degrees,
+    grid_size_degrees,
+    0,
+    0
+  );
+  RETURN snapped_geom::GEOGRAPHY;
+END;
+$$;
+
+
+-- ---------------------------------------------------------------------------
+-- 1. update_location_snapped() — owner-scoped, validated, no missing columns
+-- ---------------------------------------------------------------------------
+create or replace function public.update_location_snapped(
+  p_user_id uuid,
+  p_latitude numeric,
+  p_longitude numeric
+)
+returns void
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  me uuid := auth.uid();
+begin
+  if me is null then
+    raise exception 'Authentication required' using errcode = '28000';
+  end if;
+
+  if p_user_id is null then
+    raise exception 'p_user_id is required' using errcode = '22023';
+  end if;
+
+  -- A member may save only their own location; never another member's.
+  if p_user_id <> me then
+    raise exception 'You can only update your own location' using errcode = '42501';
+  end if;
+
+  if p_latitude is null or p_longitude is null then
+    raise exception 'Latitude and longitude are required' using errcode = '22023';
+  end if;
+
+  if p_latitude < -90 or p_latitude > 90 then
+    raise exception 'Latitude must be between -90 and 90' using errcode = '22023';
+  end if;
+
+  if p_longitude < -180 or p_longitude > 180 then
+    raise exception 'Longitude must be between -180 and 180' using errcode = '22023';
+  end if;
+
+  update public.profiles
+  set
+    location = ST_SetSRID(ST_MakePoint(p_longitude, p_latitude), 4326)::GEOGRAPHY(POINT, 4326),
+    snapped_location = public.snap_location_to_grid(
+      ST_SetSRID(ST_MakePoint(p_longitude, p_latitude), 4326)::GEOGRAPHY(POINT, 4326),
+      1000
+    ),
+    last_location_update = now()
+  where id = p_user_id;
+end;
+$$;
+
+revoke all on function public.update_location_snapped(uuid, numeric, numeric) from public, anon;
+grant execute on function public.update_location_snapped(uuid, numeric, numeric) to authenticated;
+
+
+-- ---------------------------------------------------------------------------
+-- 2. get_orbit_profiles() — actually returns eligible nearby profiles
+-- ---------------------------------------------------------------------------
+create or replace function public.get_orbit_profiles(
+  p_lat float,
+  p_lng float,
+  p_radius_km float default 10,
+  p_min_age integer default 18,
+  p_max_age integer default 99,
+  p_gender text default null,
+  p_online_only boolean default false,
+  p_country text default null
+)
+returns table (
+  id uuid,
+  display_name text,
+  username text,
+  avatar_url text,
+  age integer,
+  gender text,
+  city text,
+  country text,
+  intention text,
+  casual_intent text,
+  bio text,
+  is_online boolean,
+  snapped_lat float,
+  snapped_lng float,
+  distance_meters float
+)
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  user_point GEOGRAPHY(POINT, 4326);
+begin
+  if p_lat is null or p_lng is null then
+    return;
+  end if;
+
+  if p_lat < -90 or p_lat > 90 or p_lng < -180 or p_lng > 180 then
+    return;
+  end if;
+
+  user_point := ST_SetSRID(ST_MakePoint(p_lng, p_lat), 4326)::GEOGRAPHY(POINT, 4326);
+
+  return query
+  with scored as (
+    select
+      p.id,
+      p.display_name,
+      p.username,
+      p.avatar_url,
+      p.age,
+      p.gender,
+      p.city,
+      p.country,
+      p.intention,
+      p.casual_intent,
+      p.bio,
+      -- Derived online state: active session or recent heartbeat, honouring
+      -- show_online_status. The raw `is_online` boolean is deliberately not used
+      -- because it is a stale manually-maintained flag.
+      case
+        when coalesce(pref.show_online_status, true) = false then false
+        when exists (
+          select 1
+          from public.presence_sessions ps
+          where ps.user_id = p.id
+            and ps.is_active = true
+            and ps.expires_at > now()
+        ) then true
+        when p.last_seen_at is not null
+          then p.last_seen_at >= now() - interval '2 minutes'
+        else coalesce(p.is_online, false)
+      end as derived_online,
+      ST_Y(p.snapped_location::GEOMETRY)::float as snapped_lat,
+      ST_X(p.snapped_location::GEOMETRY)::float as snapped_lng,
+      ST_Distance(user_point, p.snapped_location)::float as distance_meters
+    from public.profiles p
+    left join public.user_preferences pref on pref.user_id = p.id
+    where
+      -- The member must have shared a snapped location (location-sharing gate).
+      p.snapped_location is not null
+      -- Account must be active and onboarded.
+      and p.onboarding_completed = true
+      and (p.is_suspended is null or p.is_suspended = false)
+      and (p.banned_until is null or p.banned_until > now())
+      -- Visibility gate: hidden members never appear in discovery.
+      and coalesce(pref.profile_visibility, 'public') = 'public'
+      -- Optional profile filters (NULL-tolerant: incomplete optional fields never
+      -- exclude a member who has a valid snapped location).
+      and (p.age is null or (p.age between p_min_age and p_max_age))
+      and (p_gender is null or p.gender = p_gender)
+      and (p_country is null or p.country = p_country)
+      -- Global discovery (>= 20000 km covers the whole earth); otherwise radius.
+      and (
+        p_radius_km >= 20000
+        or ST_DWithin(user_point, p.snapped_location, p_radius_km * 1000)
+      )
+      -- Symmetric blocking in both directions.
+      and not public.is_blocked_pair(auth.uid(), p.id)
+      -- Never return the caller.
+      and p.id <> auth.uid()
+  )
+  select
+    scored.id as id,
+    scored.display_name as display_name,
+    scored.username as username,
+    scored.avatar_url as avatar_url,
+    scored.age as age,
+    scored.gender as gender,
+    scored.city as city,
+    scored.country as country,
+    scored.intention as intention,
+    scored.casual_intent as casual_intent,
+    scored.bio as bio,
+    scored.derived_online as is_online,
+    scored.snapped_lat as snapped_lat,
+    scored.snapped_lng as snapped_lng,
+    scored.distance_meters as distance_meters
+  from scored
+  where (p_online_only = false or derived_online = true)
+  order by
+    derived_online desc,
+    distance_meters
+  limit 100;
+end;
+$$;
+
+revoke all on function public.get_orbit_profiles(float, float, float, integer, integer, text, boolean, text) from public, anon;
+grant execute on function public.get_orbit_profiles(float, float, float, integer, integer, text, boolean, text) to authenticated;
+
+-- Posture report
+do $$
+begin
+  raise notice 'M48: Live Orbit location and discovery RPCs repaired';
+end $$;
+
+-- ############################################################################
+-- # 20261106000004_moment_views_rls_policies.sql
+-- ############################################################################
+
+-- =============================================================================
+-- M49 — Grant moment_views read/write access to authenticated users
+-- =============================================================================
+-- The `moment_views` table has RLS enabled but no policies and all table
+-- privileges revoked from `authenticated`. The Moments feed reads aggregated
+-- view counts through `record_moment_view()` (SECURITY DEFINER), but direct
+-- SELECT/INSERT on `moment_views` from the client returns 403 because there is
+-- no table privilege and no RLS policy.
+--
+-- This migration grants SELECT and INSERT to `authenticated` and adds row-level
+-- security policies so a member can only read or insert their own view records
+-- (viewer_id = auth.uid()), preventing scraping of other members' view history.
+-- =============================================================================
+
+-- Restore table-level privileges for authenticated users.
+grant select on public.moment_views to authenticated;
+grant insert on public.moment_views to authenticated;
+
+-- SELECT: a member may read only their own view records.
+drop policy if exists "members_read_own_moment_views" on public.moment_views;
+create policy "members_read_own_moment_views"
+  on public.moment_views
+  for select
+  to authenticated
+  using (viewer_id = auth.uid());
+
+-- INSERT: a member may record only their own views.
+drop policy if exists "members_insert_own_moment_views" on public.moment_views;
+create policy "members_insert_own_moment_views"
+  on public.moment_views
+  for insert
+  to authenticated
+  with check (viewer_id = auth.uid());
+
+-- Posture report.
+do $$
+begin
+  raise notice 'M49: moment_views RLS policies granted to authenticated';
+end $$;
+
+
+-- ############################################################################
+-- # 20261106000005_add_job_title_and_education_level.sql
+-- ############################################################################
+
+-- =============================================================================
+-- Job and Education profile columns
+-- =============================================================================
+-- WHY: the MORE ABOUT ME card on the profile dashboard displays Job and
+-- Education. The `profiles` table already carries `education` and `profession`
+-- from the onboarding wizard, but this migration adds the canonical
+-- `job_title` and `education_level` columns so the dashboard and completeness
+-- calculation have a single consistent source of truth.
+--
+-- PRIVACY: these are personal fields. They are NOT added to `public_profiles`,
+-- so they stay owner-readable only under existing RLS.
+--
+-- SAFE TO RE-RUN: every statement is idempotent (`add column if not exists`).
+-- Existing profile records are preserved; no columns are dropped or renamed.
+-- =============================================================================
+
+alter table public.profiles add column if not exists job_title text;
+alter table public.profiles add column if not exists education_level text;
+
+comment on column public.profiles.job_title is
+  'The member''s job title, shown on the profile and used for completeness.';
+comment on column public.profiles.education_level is
+  'The member''s education level, shown on the profile and used for completeness.';
+
+-- Report the resulting posture.
+select count(*) as job_education_columns_present
+from information_schema.columns
+where table_schema = 'public'
+  and table_name   = 'profiles'
+  and column_name in ('job_title', 'education_level');
+
+
+-- ############################################################################
+-- # 20261106000006_orbit_location_rpc_repair.sql
+-- ############################################################################
+
+-- =============================================================================
+-- M49 — Finalize Live Orbit location saving + nearby-discovery RPCs
+-- =============================================================================
+-- WHY
+--   M48 (20261106000003_orbit_location_repair.sql) referenced PostGIS types
+--   through a non-existent `extensions` schema (no migration ever creates that
+--   schema or installs PostGIS into it; PostGIS lives in `public`). As a result
+--   M48 cannot apply, so `update_location_snapped` stays on the older M44
+--   definition that writes to non-existent `latitude`/`longitude` columns and
+--   `get_orbit_profiles` stays on the M47 definition.
+--   This migration idempotently installs the corrected RPCs using unqualified
+--   PostGIS types (public schema) so Live Orbit location saving and discovery
+--   work on staging.
+--
+-- SAFE TO RE-RUN: `create extension if not exists`, `add column if not exists`,
+-- `create or replace function`, `create index if not exists`,
+-- `drop policy if exists` before `create policy`.
+-- =============================================================================
+
+-- PostGIS is required for the geography columns and spatial functions. On a
+-- real Supabase project this is available; on a PGlite/local harness it is not,
+-- so guard the extension creation rather than hard-failing the whole migration.
+do $$
+begin
+  create extension if not exists postgis;
+exception when others then
+  raise notice 'postgis extension unavailable in this environment - skipped';
+end $$;
+
+-- Geography columns for precise and privacy-snapped location (SRID 4326).
+alter table public.profiles
+  add column if not exists location GEOGRAPHY(POINT, 4326);
+
+alter table public.profiles
+  add column if not exists snapped_location GEOGRAPHY(POINT, 4326);
+
+alter table public.profiles
+  add column if not exists last_location_update timestamptz;
+
+-- Spatial index for the proximity search in get_orbit_profiles().
+create index if not exists profiles_snapped_location_idx
+  on public.profiles using GIST(snapped_location);
+
+create index if not exists profiles_last_location_update_idx
+  on public.profiles (last_location_update)
+  where last_location_update is not null;
+
+-- Snap a geography point to a ~1km grid for privacy (ST_SnapToGrid needs
+-- geometry input; we convert back to geography for storage/querying).
+create or replace function public.snap_location_to_grid(
+  p_location GEOGRAPHY,
+  p_grid_size_meters numeric default 1000
+)
+returns GEOGRAPHY
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  grid_size_degrees numeric := p_grid_size_meters / 111111.0;
+  snapped_geom GEOMETRY;
+begin
+  snapped_geom := ST_SnapToGrid(
+    p_location::GEOMETRY,
+    grid_size_degrees,
+    grid_size_degrees,
+    0,
+    0
+  );
+  return snapped_geom::GEOGRAPHY;
+end;
+$$;
+
+-- Save the authenticated member's own snapped location. auth.uid() is the only
+-- source of identity; a member can never write another member's location.
+create or replace function public.update_location_snapped(
+  p_user_id uuid,
+  p_latitude numeric,
+  p_longitude numeric
+)
+returns void
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  me uuid := auth.uid();
+begin
+  if me is null then
+    raise exception 'Authentication required' using errcode = '28000';
+  end if;
+
+  if p_user_id is null then
+    raise exception 'p_user_id is required' using errcode = '22023';
+  end if;
+
+  -- A member may save only their own location; never another member's.
+  if p_user_id <> me then
+    raise exception 'You can only update your own location' using errcode = '42501';
+  end if;
+
+  if p_latitude is null or p_longitude is null then
+    raise exception 'Latitude and longitude are required' using errcode = '22023';
+  end if;
+
+  if p_latitude < -90 or p_latitude > 90 then
+    raise exception 'Latitude must be between -90 and 90' using errcode = '22023';
+  end if;
+
+  if p_longitude < -180 or p_longitude > 180 then
+    raise exception 'Longitude must be between -180 and 180' using errcode = '22023';
+  end if;
+
+  update public.profiles
+  set
+    location = ST_SetSRID(ST_MakePoint(p_longitude, p_latitude), 4326)::GEOGRAPHY(POINT, 4326),
+    snapped_location = public.snap_location_to_grid(
+      ST_SetSRID(ST_MakePoint(p_longitude, p_latitude), 4326)::GEOGRAPHY(POINT, 4326),
+      1000
+    ),
+    last_location_update = now()
+  where id = p_user_id;
+end;
+$$;
+
+revoke all on function public.update_location_snapped(uuid, numeric, numeric) from public, anon;
+grant execute on function public.update_location_snapped(uuid, numeric, numeric) to authenticated;
+
+-- Discovery RPC. Returns privacy-preserving snapped coordinates (never exact
+-- GPS), honours visibility/blocking/account status, supports global search
+-- (radius >= 20000 km skips the distance filter) and radius search in km.
+create or replace function public.get_orbit_profiles(
+  p_lat float,
+  p_lng float,
+  p_radius_km float default 10,
+  p_min_age integer default 18,
+  p_max_age integer default 99,
+  p_gender text default null,
+  p_online_only boolean default false,
+  p_country text default null
+)
+returns table (
+  id uuid,
+  display_name text,
+  username text,
+  avatar_url text,
+  age integer,
+  gender text,
+  city text,
+  country text,
+  intention text,
+  casual_intent text,
+  bio text,
+  is_online boolean,
+  snapped_lat float,
+  snapped_lng float,
+  distance_meters float
+)
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  user_point GEOGRAPHY(POINT, 4326);
+begin
+  if p_lat is null or p_lng is null then
+    return;
+  end if;
+
+  if p_lat < -90 or p_lat > 90 or p_lng < -180 or p_lng > 180 then
+    return;
+  end if;
+
+  user_point := ST_SetSRID(ST_MakePoint(p_lng, p_lat), 4326)::GEOGRAPHY(POINT, 4326);
+
+  return query
+  with scored as (
+    select
+      p.id,
+      p.display_name,
+      p.username,
+      p.avatar_url,
+      p.age,
+      p.gender,
+      p.city,
+      p.country,
+      p.intention,
+      p.casual_intent,
+      p.bio,
+      case
+        when coalesce(pref.show_online_status, true) = false then false
+        when exists (
+          select 1
+          from public.presence_sessions ps
+          where ps.user_id = p.id
+            and ps.is_active = true
+            and ps.expires_at > now()
+        ) then true
+        when p.last_seen_at is not null
+          then p.last_seen_at >= now() - interval '2 minutes'
+        else coalesce(p.is_online, false)
+      end as derived_online,
+      ST_Y(p.snapped_location::GEOMETRY)::float as snapped_lat,
+      ST_X(p.snapped_location::GEOMETRY)::float as snapped_lng,
+      ST_Distance(user_point, p.snapped_location)::float as distance_meters
+    from public.profiles p
+    left join public.user_preferences pref on pref.user_id = p.id
+    where
+      p.snapped_location is not null
+      and p.onboarding_completed = true
+      and (p.is_suspended is null or p.is_suspended = false)
+      and (p.banned_until is null or p.banned_until > now())
+      and coalesce(pref.profile_visibility, 'public') = 'public'
+      and (p.age is null or (p.age between p_min_age and p_max_age))
+      and (p_gender is null or p.gender = p_gender)
+      and (p_country is null or p.country = p_country)
+      and (
+        p_radius_km >= 20000
+        or ST_DWithin(user_point, p.snapped_location, p_radius_km * 1000)
+      )
+      and not public.is_blocked_pair(auth.uid(), p.id)
+      and p.id <> auth.uid()
+  )
+  select
+    scored.id as id,
+    scored.display_name as display_name,
+    scored.username as username,
+    scored.avatar_url as avatar_url,
+    scored.age as age,
+    scored.gender as gender,
+    scored.city as city,
+    scored.country as country,
+    scored.intention as intention,
+    scored.casual_intent as casual_intent,
+    scored.bio as bio,
+    scored.derived_online as is_online,
+    scored.snapped_lat as snapped_lat,
+    scored.snapped_lng as snapped_lng,
+    scored.distance_meters as distance_meters
+  from scored
+  where (p_online_only = false or derived_online = true)
+  order by
+    derived_online desc,
+    distance_meters
+  limit 100;
+end;
+$$;
+
+revoke all on function public.get_orbit_profiles(float, float, float, integer, integer, text, boolean, text) from public, anon;
+grant execute on function public.get_orbit_profiles(float, float, float, integer, integer, text, boolean, text) to authenticated;
+
+do $$
+begin
+  raise notice 'M49: Live Orbit location saving and discovery RPCs finalized';
+end $$;
+
+
+-- ############################################################################
+-- # 20261106000007_send_chat_media_audio.sql
+-- ############################################################################
+
+-- =============================================================================
+-- M49 · Allow audio in send_chat_media + chat_media ledger
+-- =============================================================================
+-- WHY
+--   The `send_chat_media()` RPC rejects any `p_media_type` outside
+--   `('image', 'video')`, so voice notes (media_type = 'audio') fail with a
+--   400 / 22023 error. The `chat_media` table carries the same narrow CHECK
+--   constraint, so even if the RPC were relaxed the insert would still fail.
+--   This migration adds 'audio' to both the RPC validation and the table
+--   constraint so voice notes can be stored and retrieved like any other media.
+--
+-- SAFE TO RE-RUN: every statement is idempotent.
+-- =============================================================================
+
+-- 1. Allow 'audio' in the chat_media ledger CHECK constraint.
+do $$
+begin
+  if to_regclass('public.chat_media') is not null then
+    alter table public.chat_media
+      drop constraint if exists chat_media_media_type_check;
+
+    alter table public.chat_media
+      add constraint chat_media_media_type_check
+      check (media_type in ('image', 'video', 'audio'));
+  end if;
+end $$;
+
+-- 2. Relax send_chat_media() so it accepts 'audio' alongside 'image'/'video'.
+create or replace function public.send_chat_media(
+  p_match_id     uuid,
+  p_storage_path text,
+  p_media_type   text    default 'image',
+  p_view_limit   integer default 2,
+  p_ttl_seconds  integer default 86400
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  me         uuid := auth.uid();
+  msg_id     uuid;
+  media_id   uuid;
+  ttl        integer;
+  vlimit     integer;
+  expires    timestamptz;
+begin
+  if me is null then
+    raise exception 'Authentication required' using errcode = '28000';
+  end if;
+  if not public.chat_media_participant(p_match_id, me) then
+    raise exception 'You are not part of this conversation' using errcode = '42501';
+  end if;
+  if public.is_chat_restricted(me) then
+    raise exception 'Your account is paused and you cannot send media right now.' using errcode = '42501';
+  end if;
+  if p_media_type not in ('image','video','audio') then
+    raise exception 'Invalid media type: %', p_media_type using errcode = '22023';
+  end if;
+  if coalesce(btrim(p_storage_path), '') = '' then
+    raise exception 'Missing media path' using errcode = '22023';
+  end if;
+
+  -- Clamp the lifetime: at least a minute, at most a week.
+  ttl := greatest(60, least(coalesce(p_ttl_seconds, 86400), 604800));
+  -- Every item is a strict 2-view by default; the range keeps a hostile client
+  -- from asking for "unlimited" (0) or a thousand views.
+  vlimit  := greatest(1, least(coalesce(p_view_limit, 2), 5));
+  expires := now() + make_interval(secs => ttl);
+
+  insert into public.messages (match_id, sender_id, content)
+  values (p_match_id, me, '')
+  returning id into msg_id;
+
+  insert into public.chat_media
+    (message_id, match_id, sender_id, storage_path, media_type, view_limit, expires_at)
+  values
+    (msg_id, p_match_id, me, p_storage_path, p_media_type, vlimit, expires)
+  returning id into media_id;
+
+  return jsonb_build_object(
+    'media_id', media_id,
+    'message_id', msg_id,
+    'view_limit', vlimit,
+    'expires_at', expires
+  );
+end;
+$$;
+
+revoke all on function public.send_chat_media(uuid, text, text, integer, integer) from public, anon;
+grant execute on function public.send_chat_media(uuid, text, text, integer, integer) to authenticated;
+
+comment on function public.send_chat_media(uuid, text, text, integer, integer) is
+  'Writes a media message row and a chat_media ledger row in one transaction. Accepts image, video, or audio. Enforces sender/match participation and rate limits server-side.';
+
+
+-- ############################################################################
+-- # 20261106000008_pinned_messages_participant_insert.sql
+-- ############################################################################
+
+-- =============================================================================
+-- M50 · pinned_messages: require match participation for inserts
+-- =============================================================================
+-- WHY
+--   The existing insert policy "pinned_messages_insert_own" only checks
+--   `auth.uid() = user_id`, so any authenticated member can pin a message from
+--   any conversation they do not participate in. The select and delete policies
+--   already scope to participants, but insert was missing that guard. This
+--   migration adds a match-participation `WITH CHECK` so a member may only pin
+--   messages in a match they belong to.
+--
+-- SAFE TO RE-RUN: `drop policy if exists` before `create policy`.
+-- =============================================================================
+
+-- Re-create the insert policy with a match-participation guard.
+drop policy if exists "pinned_messages_insert_own" on public.pinned_messages;
+create policy "pinned_messages_insert_own"
+  on public.pinned_messages for insert
+  to authenticated
+  with check (
+    auth.uid() = user_id
+    and exists (
+      select 1
+      from public.matches m
+      where m.id = pinned_messages.match_id
+        and (m.user_a = auth.uid() or m.user_b = auth.uid())
+    )
+  );
+
+-- Ensure grants remain correct.
+grant select, insert, delete on public.pinned_messages to authenticated;
+revoke all on public.pinned_messages from anon;
+
+comment on policy "pinned_messages_insert_own" on public.pinned_messages is
+  'A member may only pin messages in a match they participate in, and only their own pin.';
+
+
+-- ############################################################################
+-- # 20261106000009_profiles_column_select_grant.sql
+-- ############################################################################
+
+-- =============================================================================
+-- M51 · Re-grant column-level SELECT on public.profiles to authenticated
+-- =============================================================================
+-- WHY
+--   M15 (`20261015260000_m15_revoke_birth_date.sql`) revoked the table-wide
+--   SELECT grant on `public.profiles` from `authenticated` and re-granted
+--   column-level SELECT only for columns that existed at that time. Every column
+--   added by a later migration is unreadable to `authenticated` until someone
+--   grants it explicitly, so the dashboard's `.select('id, first_name, ...')`
+--   on the member's own row fails with
+--
+--       HTTP 403  code 42501  "permission denied for table profiles"
+--
+--   even though the member owns the row and RLS (`profiles_select_authenticated`,
+--   `auth.uid() is not null`) already permits the read. RLS is the
+--   authorisation boundary for *which rows*; column-level SELECT privilege is
+--   the gate for *which columns*. This migration restores the column gate.
+--
+-- WHAT THIS DOES
+--   1. Revokes any table-wide SELECT on `public.profiles` from `anon` and
+--      `authenticated` (a table-wide grant would make column-level REVOKEs
+--      cosmetic, so it must be dropped first).
+--   2. Grants column-level SELECT on every current column of `public.profiles`
+--      EXCEPT the private deny-list (`birth_date`, `banned_until`, `ban_reason`)
+--      to `authenticated`.
+--   3. Revokes all SELECT from `anon` (anonymous reads are denied structurally).
+--
+-- RLS IS UNTOUCHED: `profiles_select_authenticated` remains the row-level
+-- authorisation policy. This migration only restores column privileges.
+--
+-- SAFE TO RE-RUN: idempotent (revoke + re-grant).
+-- =============================================================================
+
+do $$
+declare
+  private_columns constant text[] := array['birth_date', 'banned_until', 'ban_reason'];
+  readable_columns text;
+begin
+  -- Enumerate every current column except the private deny-list, ordered by
+  -- ordinal position so the grant list is stable across re-runs.
+  select string_agg(quote_ident(column_name), ', ' order by ordinal_position)
+    into readable_columns
+  from information_schema.columns
+  where table_schema = 'public'
+    and table_name   = 'profiles'
+    and column_name <> all (private_columns);
+
+  if readable_columns is null then
+    raise exception 're-grant: could not enumerate columns of public.profiles';
+  end if;
+
+  -- Drop table-wide grant first; without it the column grants are cosmetic
+  -- and the private deny-list would not actually hide anything.
+  execute 'revoke select on public.profiles from anon, authenticated';
+
+  -- Authenticated members keep read access to every readable column.
+  execute format('grant select (%s) on public.profiles to authenticated', readable_columns);
+
+  -- `anon` gets nothing back: structural denial, not policy-dependent.
+  execute 'revoke select on public.profiles from anon';
+
+  raise notice 're-grant: % readable profile columns granted to authenticated',
+    array_length(string_to_array(readable_columns, ','), 1);
+end $$;
+
+-- Posture report: the private columns must have no SELECT for either role.
+select grantee, privilege_type, column_name
+from information_schema.column_privileges
+where table_schema = 'public'
+  and table_name   = 'profiles'
+  and column_name in ('birth_date', 'banned_until', 'ban_reason')
+  and privilege_type = 'SELECT'
+order by grantee, column_name;
+
+-- Posture report: every readable column must have SELECT for authenticated.
+select column_name
+from information_schema.columns
+where table_schema = 'public'
+  and table_name   = 'profiles'
+  and column_name <> all (array['birth_date', 'banned_until', 'ban_reason'])
+  and column_name not in (
+    select column_name
+    from information_schema.column_privileges
+    where table_schema = 'public'
+      and table_name   = 'profiles'
+      and grantee = 'authenticated'
+      and privilege_type = 'SELECT'
+  )
+order by column_name;
+
+
+-- ############################################################################
+-- # 20261106000010_message_interactions.sql
+-- ############################################################################
+
+-- M47 · Chat message interactions
+-- Adds edit state and authenticated RPCs for per-member deletion and pinning.
+-- Safe to re-run.
+
+alter table public.messages
+  add column if not exists is_edited boolean not null default false;
+
+comment on column public.messages.is_edited is
+  'True after the sender edits a text message.';
+
+create or replace function public.delete_message_for_me(p_message_id uuid)
+returns boolean
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  me uuid := auth.uid();
+begin
+  if me is null then
+    raise exception 'Authentication required' using errcode = '28000';
+  end if;
+  if public.is_restricted(me) then
+    raise exception 'Your account is read-only and cannot delete messages.'
+      using errcode = '42501';
+  end if;
+
+  if not exists (
+    select 1
+    from public.messages msg
+    join public.matches m on m.id::text = msg.match_id::text
+    where msg.id = p_message_id
+      and (m.user_a = me or m.user_b = me)
+  ) then
+    raise exception 'Message not found or not a conversation participant' using errcode = '42501';
+  end if;
+
+  insert into public.message_deletions (message_id, user_id)
+  values (p_message_id, me)
+  on conflict (message_id, user_id) do nothing;
+
+  return true;
+end
+$$;
+
+revoke all on function public.delete_message_for_me(uuid) from public, anon;
+grant execute on function public.delete_message_for_me(uuid) to authenticated;
+
+create or replace function public.pin_message(p_match_id uuid, p_message_id uuid)
+returns boolean
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  me uuid := auth.uid();
+begin
+  if me is null then
+    raise exception 'Authentication required' using errcode = '28000';
+  end if;
+
+  if not exists (
+    select 1
+    from public.messages msg
+    join public.matches m on m.id::text = msg.match_id::text
+    where msg.id = p_message_id
+      and msg.match_id::text = p_match_id::text
+      and (m.user_a = me or m.user_b = me)
+  ) then
+    raise exception 'Message not found or not a conversation participant' using errcode = '42501';
+  end if;
+
+  insert into public.pinned_messages (match_id, message_id, user_id)
+  values (p_match_id, p_message_id, me)
+  on conflict (match_id, message_id, user_id) do nothing;
+
+  return true;
+end
+$$;
+
+revoke all on function public.pin_message(uuid, uuid) from public, anon;
+grant execute on function public.pin_message(uuid, uuid) to authenticated;
+
+create or replace function public.unpin_message(p_match_id uuid, p_message_id uuid)
+returns boolean
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  me uuid := auth.uid();
+begin
+  if me is null then
+    raise exception 'Authentication required' using errcode = '28000';
+  end if;
+
+  if not exists (
+    select 1
+    from public.messages msg
+    join public.matches m on m.id::text = msg.match_id::text
+    where msg.id = p_message_id
+      and msg.match_id::text = p_match_id::text
+      and (m.user_a = me or m.user_b = me)
+  ) then
+    raise exception 'Message not found or not a conversation participant' using errcode = '42501';
+  end if;
+
+  delete from public.pinned_messages
+  where match_id = p_match_id
+    and message_id = p_message_id
+    and user_id = me;
+
+  return true;
+end
+$$;
+
+revoke all on function public.unpin_message(uuid, uuid) from public, anon;
+grant execute on function public.unpin_message(uuid, uuid) to authenticated;
+
+

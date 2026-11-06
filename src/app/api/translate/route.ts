@@ -1,14 +1,13 @@
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
-import translate from 'google-translate-api-x';
 import {
   normaliseLanguageCode,
 } from '@/lib/translation';
 
 export const dynamic = 'force-dynamic';
 
-const MAX_CHUNK_CHARS = 4000;
+const DEEPL_ENDPOINT = 'https://api-free.deepl.com/v2/translate';
 
 function failure(error: string, message: string, status: number): NextResponse {
   return NextResponse.json({ error, message }, { status });
@@ -43,66 +42,30 @@ async function createSupabaseServerClient() {
   );
 }
 
-/**
- * Splits text into chunks at paragraph boundaries, keeping each chunk under
- * `maxChars`. Never splits a word or a Unicode grapheme cluster. Preserves
- * the original ordering of chunks so they can be reassembled after translation.
- */
-function splitIntoChunks(text: string, maxChars: number): string[] {
-  const chunks: string[] = [];
-  const paragraphs = text.split(/\n\n+/);
+interface DeeplTranslation {
+  text: string;
+  detected_source_language?: string;
+}
 
-  let current = '';
-  for (const para of paragraphs) {
-    // If this paragraph alone exceeds the limit, split it by sentences.
-    if (para.length > maxChars) {
-      // Flush any pending current chunk first.
-      if (current) {
-        chunks.push(current);
-        current = '';
-      }
-      const sentences = para.split(/(?<=[.!?])\s+/);
-      let sentenceBuf = '';
-      for (const sentence of sentences) {
-        const joined = sentenceBuf
-          ? `${sentenceBuf} ${sentence}`
-          : sentence;
-        if (joined.length > maxChars) {
-          if (sentenceBuf) {
-            chunks.push(sentenceBuf);
-            sentenceBuf = sentence;
-          } else {
-            // Single sentence too long — split by whitespace, never mid-word.
-            const words = sentence.split(/\s+/);
-            let wordBuf = '';
-            for (const word of words) {
-              const joinedWord = wordBuf ? `${wordBuf} ${word}` : word;
-              if (joinedWord.length > maxChars) {
-                if (wordBuf) chunks.push(wordBuf);
-                wordBuf = word;
-              } else {
-                wordBuf = joinedWord;
-              }
-            }
-            if (wordBuf) chunks.push(wordBuf);
-          }
-        } else {
-          sentenceBuf = joined;
-        }
-      }
-      if (sentenceBuf) chunks.push(sentenceBuf);
-    } else {
-      const joined = current ? `${current}\n\n${para}` : para;
-      if (joined.length > maxChars) {
-        chunks.push(current);
-        current = para;
-      } else {
-        current = joined;
-      }
-    }
-  }
-  if (current) chunks.push(current);
-  return chunks;
+function parseDeeplPayload(payload: unknown): DeeplTranslation | null {
+  if (!isRecord(payload)) return null;
+
+  const translations = payload.translations;
+  if (!Array.isArray(translations) || translations.length === 0) return null;
+
+  const first = translations[0];
+  if (!isRecord(first)) return null;
+
+  const text = first.text;
+  if (typeof text !== 'string') return null;
+
+  return {
+    text,
+    detected_source_language:
+      typeof first.detected_source_language === 'string'
+        ? first.detected_source_language
+        : undefined,
+  };
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
@@ -151,52 +114,48 @@ export async function POST(request: Request): Promise<NextResponse> {
     return failure('unauthenticated', 'Sign in to translate messages.', 401);
   }
 
-  try {
-  // Short messages: translate directly without chunking.
-  if (textValue.length <= MAX_CHUNK_CHARS) {
-    const result = await translate(textValue, { to: targetLanguage });
-    if (!result.text || result.text.trim().length === 0) {
-      return failure('empty_result', 'Translation returned empty output.', 502);
-    }
-    return NextResponse.json({
-      translatedText: result.text,
-      provider: 'google',
-      detectedSourceLanguage: result.from?.language?.iso,
-    });
+  const apiKey = process.env.DEEPL_API_KEY;
+  if (!apiKey) {
+    return failure('unconfigured', 'Translation is not configured on this server.', 500);
   }
 
-    // Long messages: chunk by paragraph boundaries, translate each chunk,
-    // and reassemble in order.
-    const chunks = splitIntoChunks(textValue, MAX_CHUNK_CHARS);
-    const translatedChunks: string[] = [];
+  try {
+    // Send the entire message as a single string so line breaks, bullet points,
+    // and numbering survive; preserve_formatting keeps them intact upstream.
+    const form = new URLSearchParams();
+    form.set('text', textValue);
+    form.set('target_lang', targetLanguage.toUpperCase());
+    form.set('preserve_formatting', '1');
 
-    for (let i = 0; i < chunks.length; i++) {
-      const chunk = chunks[i];
-      try {
-        const result = await translate(chunk, { to: targetLanguage });
-        if (!result.text || result.text.trim().length === 0) {
-          return failure(
-            'empty_result',
-            `Translation returned empty output for chunk ${i + 1}.`,
-            502
-          );
-        }
-        translatedChunks.push(result.text);
-      } catch (err) {
-        console.error(`[translate] chunk ${i + 1} failed:`, err);
-        return failure(
-          'upstream_error',
-          `Translation failed on chunk ${i + 1} of ${chunks.length}.`,
-          502
-        );
-      }
+    const response = await fetch(DEEPL_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        Authorization: `DeepL-Auth-Key ${apiKey}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: form.toString(),
+    });
+
+    if (!response.ok) {
+      return failure(
+        'upstream_error',
+        `DeepL request failed with status ${response.status}.`,
+        502
+      );
+    }
+
+    const parsed = (await response.json()) as unknown;
+    const translation = parseDeeplPayload(parsed);
+    if (!translation || translation.text.trim().length === 0) {
+      return failure('empty_result', 'Translation returned empty output.', 502);
     }
 
     return NextResponse.json({
-      translatedText: translatedChunks.join('\n\n'),
-      provider: 'google',
-      chunked: true,
-      chunkCount: chunks.length,
+      translatedText: translation.text.trim(),
+      provider: 'deepl',
+      ...(translation.detected_source_language
+        ? { detectedSourceLanguage: translation.detected_source_language }
+        : {}),
     });
   } catch (error) {
     console.error('[translate] error:', error);

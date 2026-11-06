@@ -6,14 +6,18 @@ import {
   useMemo,
   useRef,
   useState,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
 } from 'react';
 import {
   ArrowLeftRight,
   Copy,
   EyeOff,
-  MessageCircle as ReplyIcon,
+  Forward,
+  Languages,
+  Pencil,
   Pin,
-  Share2 as ForwardIcon,
+  Reply,
   Trash2,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
@@ -24,12 +28,8 @@ import {
   subscribeToMessageReactions,
   type MessageReaction,
 } from '@/lib/reactions';
-import { unsendMessage } from '@/lib/messages';
-import { pinMessage, unpinMessage, fetchPinnedMessages } from '@/lib/pins';
-import ReactionBar from '@/app/components/chat/ReactionBar';
-import ReactionPill from '@/app/components/chat/ReactionPill';
 import MessageStatus from '@/app/components/chat/MessageStatus';
-import { formatMessageTime } from '@/lib/chat-tokens';
+import ReactionPill from '@/app/components/chat/ReactionPill';
 import { type ChatMediaRow, type MessageRow } from '@/lib/types';
 
 interface MessageBubbleProps {
@@ -39,28 +39,22 @@ interface MessageBubbleProps {
   currentUserId: string | null;
   isPinned: boolean;
   searchQuery?: string;
-  onPinToggle?: () => void;
+  onPinToggle?: () => void | Promise<void>;
   onReply?: (message: MessageRow) => void;
   onForward?: (message: MessageRow) => void;
-  /** Show sender avatar on received messages. */
+  onEdit?: (message: MessageRow) => void;
+  onUnsend?: (message: MessageRow) => Promise<void>;
+  onDeleteForMe?: (message: MessageRow) => Promise<void>;
   showAvatar?: boolean;
-  /** Whether this is the first message from this sender in a group. */
   isGroupStart?: boolean;
-  /** Whether the previous message is from the same sender. */
-  isGrouped?: boolean;
-  /** Sender's avatar URL (for received messages). */
   senderAvatar?: string | null;
-  /** Sender's display name (shown on group start). */
   senderName?: string | null;
 }
 
-const ROSE = '#C24A6E';
-const ROSE_HOVER = '#B33E5E';
-const SURFACE = '#1C1822';
-const BORDER = '#34283F';
-const TEXT = '#F2E9E4';
-const MUTED = '#B58A83';
-const ACCENT = '#D4B18A';
+const QUICK_REACTIONS = ['❤️', '😂', '😭', '👍', '😡', '🤔'] as const;
+const LONG_PRESS_MS = 500;
+const MENU_WIDTH = 260;
+const MENU_HEIGHT = 350;
 
 function formatRelative(value: string | null | undefined): string {
   if (!value) return '';
@@ -76,10 +70,7 @@ function formatRelative(value: string | null | undefined): string {
   startOfToday.setHours(0, 0, 0, 0);
   const startOfYesterday = new Date(startOfToday);
   startOfYesterday.setDate(startOfYesterday.getDate() - 1);
-  if (
-    date.getTime() >= startOfYesterday.getTime() &&
-    date.getTime() < startOfToday.getTime()
-  ) {
+  if (date.getTime() >= startOfYesterday.getTime() && date.getTime() < startOfToday.getTime()) {
     return 'Yesterday';
   }
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
@@ -88,15 +79,31 @@ function formatRelative(value: string | null | undefined): string {
 function canUnsend(message: MessageRow, currentUserId: string | null): boolean {
   if (!currentUserId || message.sender_id !== currentUserId) return false;
   const sent = new Date(message.created_at).getTime();
-  if (Number.isNaN(sent)) return false;
-  return Date.now() - sent < 10 * 60 * 1000;
+  return !Number.isNaN(sent) && Date.now() - sent < 10 * 60 * 1000;
 }
 
-function highlightMatches(text: string, query?: string): string {
+function renderHighlightedText(text: string, query?: string): ReactNode {
   if (!query?.trim()) return text;
-  const q = query.trim();
-  const regex = new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
-  return text.replace(regex, '<mark class="bg-[#D4B18A]/30 px-0.5 rounded">$1</mark>');
+  const regex = new RegExp(
+    `(${query.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`,
+    'gi',
+  );
+  const parts: ReactNode[] = [];
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > cursor) parts.push(text.slice(cursor, match.index));
+    parts.push(
+      <mark key={`${match.index}-${match[0]}`} className="rounded bg-[#D4B18A]/30 px-0.5">
+        {match[0]}
+      </mark>,
+    );
+    cursor = match.index + match[0].length;
+  }
+
+  if (cursor < text.length) parts.push(text.slice(cursor));
+  return parts;
 }
 
 export default function MessageBubble({
@@ -109,36 +116,42 @@ export default function MessageBubble({
   onPinToggle,
   onReply,
   onForward,
+  onEdit,
+  onUnsend,
+  onDeleteForMe,
   showAvatar = true,
   isGroupStart = true,
-  isGrouped = false,
   senderAvatar = null,
   senderName = null,
 }: MessageBubbleProps) {
   const [menuOpen, setMenuOpen] = useState(false);
-  const [menuPos, setMenuPos] = useState({ x: 0, y: 0 });
-  const [reactionBarOpen, setReactionBarOpen] = useState(false);
-  const [reactionBarPos, setReactionBarPos] = useState({ x: 0, y: 0 });
+  const [menuPos, setMenuPos] = useState({ x: 8, y: 80 });
   const [reactions, setReactions] = useState<MessageReaction[]>([]);
   const [isTranslated, setIsTranslated] = useState(false);
   const [translatedText, setTranslatedText] = useState<string | null>(null);
   const [translationLoading, setTranslationLoading] = useState(false);
-  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [audioUrlState, setAudioUrlState] = useState<{ storagePath: string; url: string } | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
-  const reactionBarRef = useRef<HTMLDivElement>(null);
   const messageRef = useRef<HTMLDivElement>(null);
-  const [menuMounted, setMenuMounted] = useState(false);
-  const [reactionBarMounted, setReactionBarMounted] = useState(false);
   const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const showMenuRef = useRef(false);
+  const pressPoint = useRef<{ x: number; y: number } | null>(null);
 
   const messageType = message.message_type ?? 'text';
   const isCallLog = messageType === 'video_call' || messageType === 'audio_call';
+  const audioUrl =
+    media?.media_type === 'audio' && media.storage_path === audioUrlState?.storagePath
+      ? audioUrlState.url
+      : null;
+
+  const refreshReactions = useCallback(async () => {
+    const map = await fetchMessageReactions([message.id]);
+    setReactions(map.get(message.id) ?? []);
+  }, [message.id]);
 
   useEffect(() => {
     let cancelled = false;
-    fetchMessageReactions([message.id]).then((map) => {
+    void fetchMessageReactions([message.id]).then((map) => {
       if (!cancelled) setReactions(map.get(message.id) ?? []);
     });
     return () => {
@@ -147,405 +160,256 @@ export default function MessageBubble({
   }, [message.id]);
 
   useEffect(() => {
-    setMenuMounted(!!menuRef.current);
-    setReactionBarMounted(!!reactionBarRef.current);
-  }, [menuRef, reactionBarRef]);
+    return subscribeToMessageReactions(message.match_id, message.id, () => {
+      void refreshReactions();
+    });
+  }, [message.match_id, message.id, refreshReactions]);
 
-  useEffect(() => {
-    const unsub = subscribeToMessageReactions(
-      message.match_id,
-      message.id,
-      () => {
-        fetchMessageReactions([message.id]).then((map) => {
-          setReactions(map.get(message.id) ?? []);
-        });
-      }
-    );
-    return () => unsub();
-  }, [message.match_id, message.id]);
-
-  // Resolve a signed URL for private-bucket audio so the <audio> element can
-  // play it. Regenerated when the media row changes.
   useEffect(() => {
     let cancelled = false;
+    if (media?.media_type !== 'audio' || !media.storage_path) return;
 
-    if (!(media?.media_type === 'audio' && media.storage_path)) {
-      return;
-    }
-
-    (async () => {
-      const { data, error } = await supabase.storage
-        .from('chat-media')
-        .createSignedUrl(media.storage_path, 300);
-      if (!cancelled && !error && data?.signedUrl) {
-        setAudioUrl(data.signedUrl);
-      }
-    })();
+    void supabase.storage
+      .from('chat-media')
+      .createSignedUrl(media.storage_path, 300)
+      .then(({ data, error }) => {
+        if (error) {
+          console.error('[chat audio] signed URL failed:', error.message);
+          return;
+        }
+        if (!cancelled) {
+          setAudioUrlState({ storagePath: media.storage_path, url: data.signedUrl });
+        }
+      });
 
     return () => {
       cancelled = true;
     };
   }, [media]);
 
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(null), 1800);
+    return () => clearTimeout(timer);
+  }, [toast]);
+
   const myEmojis = useMemo(
-    () =>
-      reactions
-        .filter((r) => r.userId === currentUserId)
-        .map((r) => r.emoji),
-    [reactions, currentUserId]
+    () => reactions.filter((reaction) => reaction.userId === currentUserId).map((reaction) => reaction.emoji),
+    [reactions, currentUserId],
   );
 
   const reactionCounts = useMemo(() => {
     const counts = new Map<string, { count: number; mine: boolean }>();
-    for (const r of reactions) {
-      const cur = counts.get(r.emoji) ?? { count: 0, mine: false };
-      counts.set(r.emoji, {
-        count: cur.count + 1,
-        mine: cur.mine || r.userId === currentUserId,
+    for (const reaction of reactions) {
+      const current = counts.get(reaction.emoji) ?? { count: 0, mine: false };
+      counts.set(reaction.emoji, {
+        count: current.count + 1,
+        mine: current.mine || reaction.userId === currentUserId,
       });
     }
     return counts;
   }, [reactions, currentUserId]);
 
-  const openMenu = useCallback(
-    (e: React.MouseEvent | TouchEvent, kind: 'menu' | 'reaction') => {
-      e.preventDefault();
-      e.stopPropagation();
-      const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
-      const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
-      const pos = { x: clientX, y: clientY };
-      if (kind === 'menu') {
-        setMenuPos(pos);
-        setMenuOpen(true);
-      } else {
-        setReactionBarPos({ x: clientX, y: clientY - 8 });
-        setReactionBarOpen(true);
-      }
-    },
-    []
-  );
+  const closeMenu = useCallback(() => setMenuOpen(false), []);
 
-  const closeMenu = useCallback(() => {
-    setMenuOpen(false);
-    setReactionBarOpen(false);
+  const openMenuAt = useCallback((clientX: number, clientY: number) => {
+    const x = Math.max(8, Math.min(clientX - MENU_WIDTH / 2, window.innerWidth - MENU_WIDTH - 8));
+    const y = Math.max(58, Math.min(clientY - 70, window.innerHeight - MENU_HEIGHT - 8));
+    setMenuPos({ x, y });
+    setMenuOpen(true);
   }, []);
 
-  const handleCopy = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(message.content);
-      setToast({ message: 'Copied!', type: 'success' });
-    } catch (err) {
-      setToast({ message: 'Failed to copy.', type: 'error' });
-    } finally {
-      closeMenu();
-    }
-  }, [message.content, closeMenu]);
+  const clearPressTimer = useCallback(() => {
+    if (pressTimer.current) clearTimeout(pressTimer.current);
+    pressTimer.current = null;
+    pressPoint.current = null;
+  }, []);
 
-  const handleForward = useCallback(() => {
-    closeMenu();
-    if (onForward) onForward(message);
-  }, [message, closeMenu, onForward]);
+  const onPointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (event.pointerType !== 'touch') return;
+      if (menuRef.current?.contains(event.target as Node)) return;
+      pressPoint.current = { x: event.clientX, y: event.clientY };
+      pressTimer.current = setTimeout(() => {
+        if (pressPoint.current) openMenuAt(pressPoint.current.x, pressPoint.current.y);
+        pressTimer.current = null;
+      }, LONG_PRESS_MS);
+    },
+    [openMenuAt],
+  );
 
-  const handleDeleteForMe = useCallback(async () => {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) {
-      closeMenu();
-      return;
-    }
-    try {
-      await supabase
-        .from('message_deletions')
-        .insert({ message_id: message.id, user_id: user.id });
-    } catch (err) {
-      console.error('[delete for me] failed:', err);
-    } finally {
-      closeMenu();
-    }
-  }, [message.id, closeMenu]);
-
-  const handleUnsend = useCallback(async () => {
-    try {
-      await unsendMessage(message.id);
-    } catch (err) {
-      console.error('[unsend] failed:', err);
-    } finally {
-      closeMenu();
-    }
-  }, [message.id, closeMenu]);
-
-  const handlePinToggle = useCallback(async () => {
-    if (!currentUserId) return;
-    try {
-      if (isPinned) {
-        await unpinMessage(message.match_id, message.id);
-      } else {
-        await pinMessage(message.match_id, message.id);
+  const onPointerMove = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (!pressPoint.current) return;
+      if (Math.hypot(event.clientX - pressPoint.current.x, event.clientY - pressPoint.current.y) > 12) {
+        clearPressTimer();
       }
-      onPinToggle?.();
-    } catch (err) {
-      console.error('[pin] toggle failed:', err);
-    } finally {
-      closeMenu();
-    }
-  }, [message.match_id, message.id, isPinned, currentUserId, onPinToggle, closeMenu]);
+    },
+    [clearPressTimer],
+  );
 
-  const handleReply = useCallback(() => {
-    closeMenu();
-    if (onReply) onReply(message);
-  }, [message, closeMenu, onReply]);
-
-  const handleTranslate = useCallback(async () => {
-    // Revert instantly without an API call when already translated.
+  const toggleTranslation = useCallback(async () => {
     if (isTranslated) {
       setIsTranslated(false);
       return;
     }
     if (translationLoading) return;
+
     setTranslationLoading(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      const targetLang =
-        (user?.user_metadata?.preferred_language ??
-          user?.user_metadata?.locale ??
-          'en').toLowerCase();
-      const res = await fetch('/api/translate', {
+      const {
+        data: { user },
+        error: authError,
+      } = await supabase.auth.getUser();
+      if (authError) throw authError;
+      const targetLanguage = String(
+        user?.user_metadata?.preferred_language ?? user?.user_metadata?.locale ?? 'en',
+      ).toLowerCase();
+      const response = await fetch('/api/translate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          text: message.content,
-          targetLanguage: targetLang,
-        }),
+        body: JSON.stringify({ text: message.content, targetLanguage }),
       });
-      if (!res.ok) throw new Error('Translation failed');
-      const json = await res.json();
-      setTranslatedText(
-        json.translatedText ?? json.translated ?? json.text ?? null,
-      );
+      if (!response.ok) throw new Error('Translation failed.');
+      const result: unknown = await response.json();
+      if (typeof result !== 'object' || result === null) throw new Error('Translation response was invalid.');
+      const translated =
+        'translatedText' in result && typeof result.translatedText === 'string'
+          ? result.translatedText
+          : 'translated' in result && typeof result.translated === 'string'
+            ? result.translated
+            : 'text' in result && typeof result.text === 'string'
+              ? result.text
+              : null;
+      if (!translated) throw new Error('No translated text was returned.');
+      setTranslatedText(translated);
       setIsTranslated(true);
-    } catch (err) {
-      console.error('[translate] failed:', err);
+    } catch (error) {
+      const messageText = error instanceof Error ? error.message : 'Could not translate this message.';
+      console.error('[translate] failed:', error);
+      setToast({ message: messageText, type: 'error' });
     } finally {
       setTranslationLoading(false);
     }
-  }, [message.content, isTranslated, translationLoading]);
+  }, [isTranslated, message.content, translationLoading]);
 
-  const onPointerDown = useCallback(
-    (e: React.PointerEvent) => {
-      showMenuRef.current = true;
-      pressTimer.current = setTimeout(() => {
-        if (showMenuRef.current) {
-          openMenu(e as unknown as React.MouseEvent, 'reaction');
+  const handleReaction = useCallback(
+    async (emoji: string) => {
+      try {
+        if (myEmojis.includes(emoji)) {
+          await removeMessageReaction(message.id, emoji);
+        } else {
+          await addMessageReaction(message.id, emoji);
         }
-      }, 500);
-    },
-    [openMenu]
-  );
-
-  const onPointerUp = useCallback(() => {
-    showMenuRef.current = false;
-    if (pressTimer.current) clearTimeout(pressTimer.current);
-  }, []);
-
-  const onPointerLeave = useCallback(() => {
-    showMenuRef.current = false;
-    if (pressTimer.current) clearTimeout(pressTimer.current);
-  }, []);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') closeMenu();
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [closeMenu]);
-
-  // Auto-dismiss the copy toast after a short delay.
-  useEffect(() => {
-    if (!toast) return;
-    const timer = setTimeout(() => setToast(null), 1500);
-    return () => clearTimeout(timer);
-  }, [toast]);
-
-  useEffect(() => {
-    const onClick = (e: MouseEvent) => {
-      const target = e.target as Node;
-      const inMenu = menuRef.current && menuRef.current.contains(target);
-      const inReactionBar =
-        reactionBarRef.current && reactionBarRef.current.contains(target);
-      const inMessage = messageRef.current && messageRef.current.contains(target);
-      if (!inMenu && !inReactionBar && !inMessage) {
+        await refreshReactions();
+        setToast({ message: 'Reaction saved.', type: 'success' });
+      } catch (error) {
+        const messageText = error instanceof Error ? error.message : 'Could not save your reaction.';
+        setToast({ message: messageText, type: 'error' });
+      } finally {
         closeMenu();
       }
+    },
+    [closeMenu, message.id, myEmojis, refreshReactions],
+  );
+
+  const runAction = useCallback(
+    async (successMessage: string, action: () => void | Promise<void>) => {
+      closeMenu();
+      try {
+        await action();
+        setToast({ message: successMessage, type: 'success' });
+      } catch (error) {
+        const messageText = error instanceof Error ? error.message : 'That action could not be completed.';
+        setToast({ message: messageText, type: 'error' });
+      }
+    },
+    [closeMenu],
+  );
+
+  useEffect(() => {
+    const onOutsidePointerDown = (event: PointerEvent) => {
+      if (menuOpen && !menuRef.current?.contains(event.target as Node)) closeMenu();
     };
-    document.addEventListener('mousedown', onClick);
-    return () => document.removeEventListener('mousedown', onClick);
-  }, [closeMenu]);
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeMenu();
+    };
+    document.addEventListener('pointerdown', onOutsidePointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onOutsidePointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [closeMenu, menuOpen]);
 
-  const showUnsend = canUnsend(message, currentUserId);
-
-  const displayContent = useMemo(() => {
-    const textToShow = isTranslated
-      ? (translatedText ?? message.content)
-      : message.content;
-    const highlighted = highlightMatches(textToShow, searchQuery);
-    return <div
-      className="prose-sm prose-invert max-w-full min-w-0 text-[14px] leading-relaxed break-words whitespace-pre-wrap overflow-wrap-anywhere"
-      dangerouslySetInnerHTML={{ __html: highlighted }}
-    />;
-  }, [message.content, isTranslated, translatedText, searchQuery]);
-
-  const callLabel = (): string => {
-    if (messageType === 'video_call') return 'Missed video call';
-    if (messageType === 'audio_call') return message.content || 'Audio call';
-    return '';
-  };
-
+  const displayedText = isTranslated ? translatedText ?? message.content : message.content;
+  const messageText = renderHighlightedText(displayedText, searchQuery);
   const bubbleClass = isMe
-    ? `bg-[#C24A6E] text-white rounded-2xl rounded-tr-sm p-3`
-    : `bg-[#1C1822] text-[#F2E9E4] border border-[#34283F] rounded-2xl rounded-tl-sm p-3`;
-
-  const containerClass = `flex items-end gap-2 ${isMe ? 'justify-end' : 'justify-start'}`;
+    ? 'rounded-2xl rounded-tr-sm bg-[#C24A6E] p-3 text-white'
+    : 'rounded-2xl rounded-tl-sm border border-[#34283F] bg-[#1C1822] p-3 text-[#F2E9E4]';
+  const canEdit = isMe && messageType === 'text' && Boolean(onEdit);
+  const showUnsend = isMe && Boolean(onUnsend);
 
   return (
     <div
       ref={messageRef}
-      className={`mb-2 ${containerClass} w-full`}
+      className={`mb-2 flex w-full items-end gap-2 ${isMe ? 'justify-end' : 'justify-start'}`}
       onPointerDown={onPointerDown}
-      onPointerUp={onPointerUp}
-      onPointerLeave={onPointerLeave}
-      onContextMenu={(e) => openMenu(e, 'menu')}
-      onDoubleClick={() => setReactionBarOpen((o) => !o)}
+      onPointerMove={onPointerMove}
+      onPointerUp={clearPressTimer}
+      onPointerCancel={clearPressTimer}
+      onPointerLeave={clearPressTimer}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        openMenuAt(event.clientX, event.clientY);
+      }}
     >
-      {/* Call log — centered system message */}
       {isCallLog && !isMe ? (
-        <div className="flex flex-col items-center justify-center my-4 w-full">
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#1C1822] border border-[#34283F] shadow-sm">
-            {messageType === 'video_call' ? (
-              <div className="w-5 h-5 rounded-full bg-[#EF4444]/15 text-[#EF4444] flex items-center justify-center text-xs">
-                📹
-              </div>
-            ) : (
-              <div className="w-5 h-5 rounded-full bg-[#10B981]/15 text-[#10B981] flex items-center justify-center text-xs">
-                📞
-              </div>
-            )}
-            <span className="text-xs font-medium text-[#F2E9E4]">{callLabel()}</span>
-            <span className="text-[10px] text-[#6B5B79] ml-1">{formatRelative(message.created_at)}</span>
+        <div className="my-4 flex w-full flex-col items-center justify-center">
+          <div className="flex items-center gap-2 rounded-full border border-[#34283F] bg-[#1C1822] px-3 py-1.5 shadow-sm">
+            <span className="text-xs">{messageType === 'video_call' ? '📹' : '📞'}</span>
+            <span className="text-xs font-medium text-[#F2E9E4]">
+              {messageType === 'video_call' ? 'Missed video call' : message.content || 'Audio call'}
+            </span>
+            <span className="ml-1 text-[10px] text-[#6B5B79]">{formatRelative(message.created_at)}</span>
           </div>
         </div>
-      ) : null}
-
-      {!isCallLog && (
+      ) : (
         <>
-          {/* Received message: avatar on the left */}
-          {!isMe && showAvatar && senderAvatar && isGroupStart ? (
+          {!isMe && showAvatar && senderAvatar && isGroupStart && (
             <img
               src={senderAvatar}
               alt=""
-              className="w-6 h-6 rounded-full border border-[#34283F] object-cover shrink-0 flex-shrink-0"
-              style={{ width: 24, height: 24 }}
+              className="h-6 w-6 shrink-0 rounded-full border border-[#34283F] object-cover"
               aria-hidden
             />
-          ) : null}
+          )}
 
-          <div className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
-            {reactionBarOpen && reactionBarMounted ? (
-              <div
-                ref={reactionBarRef}
-                style={{
-                  position: 'fixed',
-                  left: reactionBarPos.x,
-                  top: reactionBarPos.y,
-                  zIndex: 50,
-                }}
-              >
-                <ReactionBar
-                  messageId={message.id}
-                  myReactions={myEmojis}
-                  onClose={() => setReactionBarOpen(false)}
-                  x={reactionBarPos.x}
-                  y={reactionBarPos.y}
-                />
-              </div>
-            ) : null}
-
-            <div className="relative group">
-              {media ? (
-                <>
-                  {media.media_type === 'audio' ? (
-                    <div className={bubbleClass}>
-                      {audioUrl ? (
-                        <audio
-                          src={audioUrl}
-                          controls
-                          preload="none"
-                          className="w-full"
-                        />
-                      ) : (
-                        <div className="flex items-center gap-2 px-3 py-2 text-[#B58A83] text-xs">
-                          🔊 Loading audio…
-                        </div>
-                      )}
-                    </div>
-                  ) : media.media_type === 'video' ? (
-                    <div className={bubbleClass}>
-                      🎬
-                      <span className="ml-1 text-xs">{isMe ? 'Your media' : 'Photo or video'}</span>
-                    </div>
+          <div className={`flex min-w-0 flex-col ${isMe ? 'items-end' : 'items-start'}`}>
+            <div className="relative max-w-full">
+              {media?.media_type === 'audio' ? (
+                <div className={bubbleClass}>
+                  {audioUrl ? (
+                    <audio src={audioUrl} controls preload="none" className="w-full" />
                   ) : (
-                    <div className={bubbleClass}>
-                      🖼️
-                      <span className="ml-1 text-xs">{isMe ? 'Your media' : 'Photo or video'}</span>
-                    </div>
+                    <span className="text-xs text-[#B58A83]">Loading audio…</span>
                   )}
-                </>
+                </div>
+              ) : media ? (
+                <div className={bubbleClass}>
+                  {media.media_type === 'video' ? '🎬' : '🖼️'}
+                  <span className="ml-1 text-xs">{isMe ? 'Your media' : 'Photo or video'}</span>
+                </div>
               ) : (
-                <div className="relative group">
-                  <div className={bubbleClass}>
-                    {isGroupStart && senderName && !isMe ? (
-                      <span className="text-[10px] text-[#D4B18A]/70 font-medium mb-1 block">
-                        {senderName}
-                      </span>
-                    ) : null}
-                    {displayContent}
-                  </div>
-                  <div
-                    className={`absolute top-0 ${isMe ? '-left-24' : '-right-24'} hidden group-hover:flex flex-col gap-1 bg-[#1C1822] rounded p-1 text-xs border border-[#34283F]`}
-                  >
-                    <button onClick={() => handleReply()} className="px-2 py-1 hover:bg-[#34283F] rounded text-left whitespace-nowrap text-[#F2E9E4]">
-                      Reply
-                    </button>
-                    <button onClick={handleForward} className="px-2 py-1 hover:bg-[#34283F] rounded text-left whitespace-nowrap text-[#F2E9E4]">
-                      Forward
-                    </button>
-                    <button onClick={handleCopy} className="px-2 py-1 hover:bg-[#34283F] rounded text-left whitespace-nowrap text-[#F2E9E4]">
-                      Copy
-                    </button>
-                    {!isMe && (
-                      <button onClick={handleDeleteForMe} className="px-2 py-1 hover:bg-[#34283F] rounded text-left whitespace-nowrap text-[#F2E9E4]">
-                        Delete for Me
-                      </button>
-                    )}
-                    {isMe && (
-                      <button
-                        onClick={handleUnsend}
-                        disabled={!showUnsend}
-                        className={`px-2 py-1 hover:bg-[#34283F] rounded text-left whitespace-nowrap text-[#F2E9E4] ${!showUnsend ? 'opacity-50 cursor-not-allowed' : ''}`}
-                      >
-                        Unsend
-                      </button>
-                    )}
-                    <button
-                      onClick={handlePinToggle}
-                      className={`px-2 py-1 hover:bg-[#34283F] rounded text-left whitespace-nowrap text-[#F2E9E4] ${isPinned ? 'text-[#D4B18A]' : ''}`}
-                    >
-                      {isPinned ? 'Unpin' : 'Pin'}
-                    </button>
-                    <button onClick={handleTranslate} className="px-2 py-1 hover:bg-[#34283F] rounded text-left whitespace-nowrap text-[#F2E9E4] flex items-center gap-1">
-                      <ArrowLeftRight size={14} strokeWidth={2} /> Translate
-                    </button>
+                <div className={bubbleClass}>
+                  {isGroupStart && senderName && !isMe && (
+                    <span className="mb-1 block text-[10px] font-medium text-[#D4B18A]/70">
+                      {senderName}
+                    </span>
+                  )}
+                  <div className="prose-sm prose-invert max-w-full min-w-0 break-words whitespace-pre-wrap text-[14px] leading-relaxed [overflow-wrap:anywhere]">
+                    {messageText}
                   </div>
                 </div>
               )}
@@ -558,15 +422,8 @@ export default function MessageBubble({
               )}
             </div>
 
-            {reactionCounts.size > 0 && !isGrouped && (
-              <div
-                style={{
-                  display: 'flex',
-                  gap: '4px',
-                  marginTop: '2px',
-                  marginLeft: isMe ? 'auto' : 0,
-                }}
-              >
+            {reactionCounts.size > 0 && (
+              <div className={`mt-0.5 flex flex-wrap gap-1 ${isMe ? 'justify-end' : 'justify-start'}`}>
                 {[...reactionCounts.entries()].map(([emoji, info]) => (
                   <ReactionPill
                     key={emoji}
@@ -574,41 +431,31 @@ export default function MessageBubble({
                     emoji={emoji}
                     count={info.count}
                     mine={info.mine}
-                    onToggle={() => {
-                      fetchMessageReactions([message.id]).then((map) => {
-                        setReactions(map.get(message.id) ?? []);
-                      });
-                    }}
+                    onToggle={() => void refreshReactions()}
                   />
                 ))}
               </div>
             )}
 
-            {!isGrouped && messageType === 'text' && (
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '2px',
-                  marginTop: '2px',
-                  alignSelf: isMe ? 'flex-end' : 'flex-start',
-                }}
-              >
-                <span
-                  style={{
-                    fontSize: '10px',
-                    color: isMe ? '#F2E9E4' : '#B58A83',
-                  }}
-                >
+            {messageType === 'text' && (
+              <div className={`mt-0.5 flex items-center gap-1 ${isMe ? 'justify-end' : 'justify-start'}`}>
+                <span className={`text-[10px] ${isMe ? 'text-[#F2E9E4]' : 'text-[#B58A83]'}`}>
                   {formatRelative(message.created_at)}
                 </span>
+                {message.is_edited && (
+                  <span className={`text-[10px] ${isMe ? 'text-[#F2E9E4]/70' : 'text-[#B58A83]'}`}>
+                    (edited)
+                  </span>
+                )}
                 <button
                   type="button"
-                  onClick={handleTranslate}
+                  onClick={() => void toggleTranslation()}
                   disabled={translationLoading}
                   aria-label={isTranslated ? 'Show original' : 'Translate message'}
-                  title={isTranslated ? 'Show original' : 'Translate'}
-                  className={`p-1 rounded flex items-center justify-center transition-colors ${isTranslated ? 'bg-[#D4B18A] text-black' : 'bg-blue-600 text-white'}`}
+                  title={isTranslated ? 'Show original' : 'Google Translate'}
+                  className={`flex items-center justify-center rounded p-1 transition-colors disabled:opacity-50 ${
+                    isTranslated ? 'bg-[#D4B18A] text-black' : 'bg-blue-600 text-white'
+                  }`}
                 >
                   <ArrowLeftRight size={12} strokeWidth={1.5} />
                 </button>
@@ -616,81 +463,136 @@ export default function MessageBubble({
             )}
           </div>
 
-          {/* Sent message: avatar on the right */}
-          {isMe && showAvatar && senderAvatar && isGroupStart ? (
+          {isMe && showAvatar && senderAvatar && isGroupStart && (
             <img
               src={senderAvatar}
               alt=""
-              className="w-6 h-6 rounded-full border border-[#34283F] object-cover shrink-0 flex-shrink-0"
-              style={{ width: 24, height: 24 }}
+              className="h-6 w-6 shrink-0 rounded-full border border-[#34283F] object-cover"
               aria-hidden
             />
-          ) : null}
+          )}
         </>
       )}
 
-      {menuOpen && menuMounted && (
+      {menuOpen && (
         <div
           ref={menuRef}
-          style={{
-            position: 'fixed',
-            left: menuPos.x,
-            top: menuPos.y,
-            zIndex: 60,
-          }}
+          className="fixed z-[60] w-[260px]"
+          style={{ left: menuPos.x, top: menuPos.y }}
+          onPointerDown={(event) => event.stopPropagation()}
+          onContextMenu={(event) => event.preventDefault()}
         >
-          <div className="bg-[#1C1822] rounded-lg shadow-xl border border-[#34283F]" style={{ minWidth: '170px' }}>
-            {onReply && (
+          <div className="mb-2 flex items-center justify-between gap-1 rounded-full border border-[#34283F] bg-[#1C1822] px-2 py-1.5 shadow-xl">
+            {QUICK_REACTIONS.map((emoji) => (
               <button
-                onClick={handleReply}
-                className="w-full text-left px-3 py-2 text-sm hover:bg-[#34283F] text-[#F2E9E4] flex items-center gap-2"
-              >
-                <ReplyIcon size={14} strokeWidth={2} /> Reply
-              </button>
-            )}
-            {onForward && (
-              <button
-                onClick={handleForward}
-                className="w-full text-left px-3 py-2 text-sm hover:bg-[#34283F] text-[#F2E9E4] flex items-center gap-2"
-              >
-                <ForwardIcon size={14} strokeWidth={2} /> Forward
-              </button>
-            )}
-            <button
-              onClick={handleCopy}
-              className="w-full text-left px-3 py-2 text-sm hover:bg-[#34283F] text-[#F2E9E4] flex items-center gap-2"
-            >
-              <Copy size={14} strokeWidth={2} /> Copy
-            </button>
-            {!isMe && (
-              <button
-                onClick={handleDeleteForMe}
-                className="w-full text-left px-3 py-2 text-sm hover:bg-[#34283F] text-[#F2E9E4] flex items-center gap-2"
-              >
-                <EyeOff size={14} strokeWidth={2} /> Delete for Me
-              </button>
-            )}
-            {isMe && (
-              <button
-                onClick={handleUnsend}
-                disabled={!showUnsend}
-                className={`w-full text-left px-3 py-2 text-sm hover:bg-[#34283F] flex items-center gap-2 ${
-                  !showUnsend
-                    ? 'opacity-50 cursor-not-allowed text-[#6B5B79]'
-                    : 'text-[#C24A6E]'
+                key={emoji}
+                type="button"
+                aria-label={`React ${emoji}`}
+                title={emoji}
+                onClick={() => void handleReaction(emoji)}
+                className={`rounded-full px-1.5 py-1 text-xl transition-transform hover:scale-125 ${
+                  myEmojis.includes(emoji) ? 'bg-[#D4B18A]/20' : ''
                 }`}
               >
-                <Trash2 size={14} strokeWidth={2} /> Unsend
+                {emoji}
               </button>
+            ))}
+          </div>
+
+          <div className="max-h-[min(70vh,340px)] overflow-y-auto rounded-xl border border-[#34283F] bg-[#1C1822] py-1 shadow-2xl">
+            <button
+              type="button"
+              onClick={() => {
+                closeMenu();
+                onReply?.(message);
+              }}
+              className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm text-[#F2E9E4] hover:bg-[#34283F]"
+            >
+              <Reply size={15} /> Reply
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                closeMenu();
+                onForward?.(message);
+              }}
+              className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm text-[#F2E9E4] hover:bg-[#34283F]"
+            >
+              <Forward size={15} /> Forward
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                void runAction('Copied!', async () => {
+                  await navigator.clipboard.writeText(message.content);
+                })
+              }
+              className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm text-[#F2E9E4] hover:bg-[#34283F]"
+            >
+              <Copy size={15} /> Copy
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                closeMenu();
+                void toggleTranslation();
+              }}
+              disabled={translationLoading}
+              className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm text-[#F2E9E4] hover:bg-[#34283F] disabled:opacity-50"
+            >
+              <Languages size={15} /> {isTranslated ? 'Show Original' : 'Translate'}
+            </button>
+            <button
+              type="button"
+              onClick={() => void runAction(isPinned ? 'Message unpinned.' : 'Message pinned.', async () => onPinToggle?.())}
+              className={`flex w-full items-center gap-3 px-3 py-2 text-left text-sm hover:bg-[#34283F] ${
+                isPinned ? 'text-[#D4B18A]' : 'text-[#F2E9E4]'
+              }`}
+            >
+              <Pin size={15} /> {isPinned ? 'Unpin' : 'Pin'}
+            </button>
+            {isMe && (
+              <>
+                {canEdit && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      closeMenu();
+                      onEdit?.(message);
+                    }}
+                    className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm text-[#F2E9E4] hover:bg-[#34283F]"
+                  >
+                    <Pencil size={15} /> Edit
+                  </button>
+                )}
+                {showUnsend && (
+                  <button
+                    type="button"
+                    disabled={!canUnsend(message, currentUserId)}
+                    onClick={() =>
+                      void runAction('Message unsent.', async () => {
+                        if (!onUnsend) throw new Error('Unsend is unavailable.');
+                        await onUnsend(message);
+                      })
+                    }
+                    className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm text-[#F2E9E4] hover:bg-[#34283F] disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <Trash2 size={15} /> Unsend
+                  </button>
+                )}
+              </>
             )}
             <button
-              onClick={handlePinToggle}
-              className={`w-full text-left px-3 py-2 text-sm hover:bg-[#34283F] text-[#F2E9E4] flex items-center gap-2 ${isPinned ? 'text-[#D4B18A]' : ''}`}
+              type="button"
+              onClick={() =>
+                void runAction('Message deleted for you.', async () => {
+                  if (!onDeleteForMe) throw new Error('Delete for me is unavailable.');
+                  await onDeleteForMe(message);
+                })
+              }
+              className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm text-[#F2E9E4] hover:bg-[#34283F]"
             >
-              <Pin size={14} strokeWidth={2} /> {isPinned ? 'Unpin' : 'Pin'}
-            </button>
-            <button onClick={handleTranslate} className="w-full text-left px-3 py-2 text-sm hover:bg-[#34283F] text-[#F2E9E4] flex items-center gap-2">
-              <ArrowLeftRight size={14} strokeWidth={2} /> Translate
+              <EyeOff size={15} /> Delete for Me
             </button>
           </div>
         </div>
@@ -698,23 +600,14 @@ export default function MessageBubble({
 
       {toast && (
         <div
-          className="fixed bottom-[220px] left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 pointer-events-none"
+          role={toast.type === 'error' ? 'alert' : 'status'}
+          className={`fixed bottom-8 left-1/2 z-[70] -translate-x-1/2 rounded-full border px-4 py-2 text-sm shadow-xl ${
+            toast.type === 'success'
+              ? 'border-emerald-500/40 bg-[#211A28] text-[#F2E9E4]'
+              : 'border-red-500/40 bg-[#211A28] text-[#F2E9E4]'
+          }`}
         >
-          <div
-            className={`px-6 py-3 rounded-full bg-[#211A28] border shadow-2xl flex items-center gap-2.5 text-[#F2E9E4] font-semibold text-sm animate-in fade-in slide-in-from-bottom-4 duration-300 ${
-              toast.type === 'success'
-                ? 'border-[#10B981]/40'
-                : 'border-[#EF4444]/40'
-            }`}
-            style={{
-              borderColor: toast.type === 'success' ? '#10B981' : '#EF4444',
-            }}
-          >
-            <span className="text-xl">
-              {toast.type === 'success' ? '✓' : '✕'}
-            </span>
-            <span>{toast.message}</span>
-          </div>
+          {toast.message}
         </div>
       )}
     </div>

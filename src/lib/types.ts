@@ -12,6 +12,7 @@ export interface MessageRow {
   sender_id: string;
   content: string;
   created_at: string;
+  is_edited?: boolean;
   /** 'text' | 'video_call' | 'audio_call'; defaults to 'text' on legacy rows. */
   message_type?: string | null;
   /** M26: when the OTHER participant's device received the message. */
@@ -360,7 +361,6 @@ export interface RecordProfileViewResult {
   total_visits?: number;
   viewer_visits?: number;
 }
-
 
 
 

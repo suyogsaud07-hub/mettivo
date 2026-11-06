@@ -36,6 +36,7 @@ export interface MessageRecord {
   senderId: string;
   content: string;
   createdAt: string;
+  isEdited: boolean;
   messageType: string | null;
   /** M26 delivery receipt: when the OTHER member's device received the row. */
   deliveredAt: string | null;
@@ -58,7 +59,7 @@ function str(value: unknown): string | null {
 }
 
 /** Narrows one `messages` row; `null` rather than a cast. */
-function parseMessage(row: unknown): MessageRecord | null {
+export function parseMessageRow(row: unknown): MessageRecord | null {
   if (!isRecord(row)) return null;
   const id = str(row.id);
   const matchId = str(row.match_id);
@@ -72,6 +73,7 @@ function parseMessage(row: unknown): MessageRecord | null {
     senderId,
     content: str(row.content) ?? '',
     createdAt: createdAt ?? '',
+    isEdited: row.is_edited === true,
     messageType: str(row.message_type),
     deliveredAt: str(row.delivered_at),
     seenAt: str(row.seen_at),
@@ -108,7 +110,7 @@ export async function fetchMessages(
 
   const { data, error } = await supabase
     .from('messages')
-    .select('id, match_id, sender_id, content, created_at, message_type, delivered_at, seen_at')
+    .select('id, match_id, sender_id, content, created_at, is_edited, message_type, delivered_at, seen_at')
     .eq('match_id', matchId)
     .order('created_at', { ascending: false })
     .limit(Math.max(1, Math.min(limit, 500)));
@@ -130,7 +132,7 @@ export async function fetchMessages(
   }
 
   return (data ?? [])
-    .map(parseMessage)
+    .map(parseMessageRow)
     .filter((row): row is MessageRecord => row !== null)
     .filter((m) => !deletedIds.includes(m.id))
     .reverse();
@@ -159,7 +161,7 @@ export async function sendMessage(matchId: string, content: string): Promise<Mes
   const { data, error } = await supabase
     .from('messages')
     .insert({ match_id: matchId, sender_id: senderId, content: body })
-    .select('id, match_id, sender_id, content, created_at, message_type, delivered_at, seen_at')
+    .select('id, match_id, sender_id, content, created_at, is_edited, message_type, delivered_at, seen_at')
     .single();
 
   if (error) {
@@ -173,7 +175,7 @@ export async function sendMessage(matchId: string, content: string): Promise<Mes
     throw new MessageError(message, error.code);
   }
 
-  const parsed = parseMessage(data);
+  const parsed = parseMessageRow(data);
   if (!parsed) {
     throw new MessageError('Your message was sent, but its response was unreadable.');
   }
@@ -200,7 +202,7 @@ export function subscribeToMessages(
       'postgres_changes',
       { event: 'INSERT', schema: 'public', table: 'messages', filter: `match_id=eq.${matchId}` },
       (payload) => {
-        const parsed = parseMessage(payload.new);
+        const parsed = parseMessageRow(payload.new);
         if (parsed) onMessage(parsed);
       }
     )
@@ -208,7 +210,7 @@ export function subscribeToMessages(
       'postgres_changes',
       { event: 'UPDATE', schema: 'public', table: 'messages', filter: `match_id=eq.${matchId}` },
       (payload) => {
-        const parsed = parseMessage(payload.new);
+        const parsed = parseMessageRow(payload.new);
         if (parsed) onUpdated?.(parsed);
       }
     )
@@ -449,5 +451,19 @@ export async function unsendMessage(messageId: string): Promise<void> {
         ? error.message
         : 'This message cannot be unsent.';
     throw new Error(message);
+  }
+}
+
+/** Hide a message only from the signed-in member's thread. */
+export async function deleteMessageForMe(messageId: string): Promise<void> {
+  if (!messageId) throw new Error('A message is required.');
+
+  const { error } = await supabase.rpc('delete_message_for_me', {
+    p_message_id: messageId,
+  });
+
+  if (error) {
+    console.error('[messages] delete for me failed:', error.message);
+    throw new Error('We could not delete that message for you.');
   }
 }

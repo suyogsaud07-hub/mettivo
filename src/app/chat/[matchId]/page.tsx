@@ -16,6 +16,7 @@ import {
   setConversationMute,
   type ConversationSendState,
   unsendMessage,
+  deleteMessageForMe,
 } from '@/lib/messages';
 import { blockMember, BlockingError } from '@/lib/blocking';
 import { pinMessage, unpinMessage, fetchPinnedMessages } from '@/lib/pins';
@@ -102,6 +103,9 @@ export default function ChatPage({
   const [sendState, setSendState] = useState<ConversationSendState | null>(null);
   const [responding, setResponding] = useState(false);
   const [replyTo, setReplyTo] = useState<{ id: string; content: string; senderId: string } | null>(null);
+  const [editingMessage, setEditingMessage] = useState<{ id: string; content: string } | null>(null);
+  const [editDraft, setEditDraft] = useState('');
+  const [savingEdit, setSavingEdit] = useState(false);
 
   const { language: preferredTranslationLanguage } =
     usePreferredTranslationLanguage();
@@ -256,6 +260,39 @@ export default function ChatPage({
     ? { display_name: otherIdentity.display_name, avatar_url: otherIdentity.avatar_url }
     : null);
 
+  const handleSaveEdit = async () => {
+    if (!editingMessage || !currentUserId) return;
+    const content = editDraft.trim();
+    if (!content || content.length > 2000) {
+      setError(content ? 'Messages must be 2000 characters or fewer.' : 'Message content cannot be empty.');
+      return;
+    }
+
+    setSavingEdit(true);
+    setError(null);
+    try {
+      const { data, error: updateError } = await supabase
+        .from('messages')
+        .update({ content, is_edited: true })
+        .eq('id', editingMessage.id)
+        .eq('sender_id', currentUserId)
+        .select('id')
+        .maybeSingle();
+
+      if (updateError) throw updateError;
+      if (!data) throw new Error('You can only edit your own message.');
+
+      await refreshMessages();
+      setEditingMessage(null);
+      setEditDraft('');
+    } catch (editError) {
+      console.error('[messages] edit failed:', editError);
+      setError(editError instanceof Error ? editError.message : 'We could not edit that message.');
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
   // --- Typing indicators ---
   const typing = useTyping();
   const { subscribe: subscribeTyping, unsubscribe: unsubscribeTyping } = typing;
@@ -341,7 +378,7 @@ export default function ChatPage({
 
       const { data, error: fetchError } = await supabase
         .from('messages')
-        .select('id, match_id, sender_id, content, created_at, message_type, delivered_at, seen_at')
+        .select('id, match_id, sender_id, content, created_at, is_edited, message_type, delivered_at, seen_at')
         .eq('match_id', matchId)
         .order('created_at', { ascending: true });
 
@@ -592,7 +629,6 @@ export default function ChatPage({
   };
 
   const [menuOpen, setMenuOpen] = useState(false);
-  const [messages, setMessages] = useState<MessageRow[]>([]);
 
   const handleClearChat = async () => {
     if (!window.confirm('Clear this conversation for you? The other participant will keep their messages.')) return;
@@ -619,7 +655,7 @@ export default function ChatPage({
         if (insertError) throw insertError;
       }
 
-      setMessages([]);
+      await refreshMessages();
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'We could not clear this conversation.');
@@ -846,16 +882,20 @@ export default function ChatPage({
         isLoading={messagesLoading}
         error={messagesError}
         onRetry={refreshMessages}
-        onPinToggle={(messageId) => {
-          const next = new Set(pinnedMessageIds);
-          if (next.has(messageId)) next.delete(messageId);
-          else next.add(messageId);
-          setPinnedMessageIds(next);
-          if (next.has(messageId)) {
-            void pinMessage(matchId, messageId);
+        pinnedMessageIds={pinnedMessageIds}
+        onPinToggle={async (messageId) => {
+          const wasPinned = pinnedMessageIds.has(messageId);
+          if (wasPinned) {
+            await unpinMessage(matchId, messageId);
           } else {
-            void unpinMessage(matchId, messageId);
+            await pinMessage(matchId, messageId);
           }
+          setPinnedMessageIds((previous) => {
+            const next = new Set(previous);
+            if (wasPinned) next.delete(messageId);
+            else next.add(messageId);
+            return next;
+          });
         }}
         onReply={(messageId) => {
           const msg = messageItems.find(
@@ -879,6 +919,25 @@ export default function ChatPage({
             setForwardMessageContent(msg.content);
             setForwardOpen(true);
           }
+        }}
+        onEdit={(messageId) => {
+          const msg = messageItems.find(
+            (item): item is Extract<ChatListItem, { id: string }> =>
+              !('type' in item) && item.id === messageId
+          );
+          if (msg) {
+            setEditingMessage({ id: msg.id, content: msg.content });
+            setEditDraft(msg.content);
+            setError(null);
+          }
+        }}
+        onUnsend={async (messageId) => {
+          await unsendMessage(messageId);
+          await refreshMessages();
+        }}
+        onDeleteForMe={async (messageId) => {
+          await deleteMessageForMe(messageId);
+          await refreshMessages();
         }}
         typingUsers={typingUserNames}
       />
@@ -1060,6 +1119,53 @@ export default function ChatPage({
         messageContent={forwardMessageContent}
         currentUserId={currentUserId}
       />
+
+      {editingMessage && (
+        <div
+          className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-4"
+          onClick={() => {
+            if (!savingEdit) setEditingMessage(null);
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="edit-message-title"
+            className="w-full max-w-sm rounded-2xl border border-[#34283F] bg-[#1C1822] p-4 shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h2 id="edit-message-title" className="mb-3 text-sm font-semibold text-[#F2E9E4]">
+              Edit message
+            </h2>
+            <textarea
+              value={editDraft}
+              onChange={(event) => setEditDraft(event.target.value)}
+              maxLength={2000}
+              rows={4}
+              autoFocus
+              className="w-full resize-none rounded-xl border border-[#34283F] bg-[#131017] p-3 text-sm text-[#F2E9E4] outline-none focus:border-[#D4B18A]"
+            />
+            <div className="mt-3 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setEditingMessage(null)}
+                disabled={savingEdit}
+                className="rounded-xl border border-[#34283F] px-4 py-2 text-sm text-[#B58A83] disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleSaveEdit()}
+                disabled={savingEdit || !editDraft.trim()}
+                className="rounded-xl bg-[#C24A6E] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+              >
+                {savingEdit ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <ReportModal
         isOpen={reportOpen}

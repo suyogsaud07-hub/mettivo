@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 import MessageBubble from '@/app/components/chat/MessageBubble';
 import TypingIndicator from '@/app/components/chat/TypingIndicator';
@@ -18,9 +18,13 @@ interface ChatMessageListProps {
   isLoading: boolean;
   error: string | null;
   onRetry: () => void;
-  onPinToggle: (messageId: string) => void;
+  onPinToggle: (messageId: string) => Promise<void>;
+  pinnedMessageIds: ReadonlySet<string>;
   onReply: (messageId: string) => void;
   onForward: (messageId: string) => void;
+  onEdit: (messageId: string) => void;
+  onUnsend: (messageId: string) => Promise<void>;
+  onDeleteForMe: (messageId: string) => Promise<void>;
   onScrollBottom?: () => void;
   typingUsers: string[];
 }
@@ -37,15 +41,28 @@ export default function ChatMessageList({
   error,
   onRetry,
   onPinToggle,
+  pinnedMessageIds,
   onReply,
   onForward,
+  onEdit,
+  onUnsend,
+  onDeleteForMe,
   onScrollBottom,
   typingUsers,
 }: ChatMessageListProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [retryCount, setRetryCount] = useState(0);
-  const [searchMatchIndex, setSearchMatchIndex] = useState(-1);
-  const searchMatchesRef = useRef<{ messageId: string; content: string }[]>([]);
+  const [searchMatchIndex, setSearchMatchIndex] = useState(0);
+  const searchMatches = useMemo(() => {
+    if (!searchQuery?.trim()) return [];
+    const query = searchQuery.trim().toLowerCase();
+    return items
+      .filter((item): item is ChatMessage => !('type' in item))
+      .filter((item) => item.content.toLowerCase().includes(query))
+      .map((item) => ({ messageId: item.id }));
+  }, [items, searchQuery]);
+  const currentSearchIndex =
+    searchMatches.length === 0 ? -1 : Math.min(searchMatchIndex, searchMatches.length - 1);
 
   // Scroll to bottom when new messages arrive (unless user is scrolling up).
   useEffect(() => {
@@ -64,38 +81,19 @@ export default function ChatMessageList({
     }
   }, [items, onScrollBottom]);
 
-  // Recompute search matches when query or items change.
-  useEffect(() => {
-    if (!searchQuery?.trim()) {
-      searchMatchesRef.current = [];
-      setSearchMatchIndex(-1);
-      return;
-    }
-    const q = searchQuery.trim().toLowerCase();
-    const matches: { messageId: string; content: string }[] = [];
-    for (const item of items) {
-      if (!('type' in item)) {
-        if (item.content.toLowerCase().includes(q)) {
-          matches.push({ messageId: item.id, content: item.content });
-        }
-      }
-    }
-    searchMatchesRef.current = matches;
-    setSearchMatchIndex(matches.length > 0 ? 0 : -1);
-  }, [items, searchQuery]);
-
   const jumpToMatch = useCallback(
     (delta: number) => {
-      const matches = searchMatchesRef.current;
+      const matches = searchMatches;
       if (matches.length === 0) return;
-      const next = (searchMatchIndex + delta + matches.length) % matches.length;
+      const currentIndex = currentSearchIndex < 0 ? 0 : currentSearchIndex;
+      const next = (currentIndex + delta + matches.length) % matches.length;
       setSearchMatchIndex(next);
       const el = document.getElementById(`msg-${matches[next].messageId}`);
       if (el) {
         el.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
     },
-    [searchMatchIndex]
+    [currentSearchIndex, searchMatches]
   );
 
   const scrollToBottom = useCallback(() => {
@@ -172,19 +170,19 @@ export default function ChatMessageList({
       {searchQuery?.trim() && (
         <div className="px-4 pb-1 text-xs flex items-center justify-between text-[#B58A83]">
           <span>
-            {searchMatchesRef.current.length} match{searchMatchesRef.current.length !== 1 ? 'es' : ''}
+            {searchMatches.length} match{searchMatches.length !== 1 ? 'es' : ''}
           </span>
           <div className="flex gap-1">
             <button
               onClick={() => jumpToMatch(-1)}
-              disabled={searchMatchIndex < 0}
+              disabled={currentSearchIndex < 0}
               className="p-1 hover:bg-[#29202D] rounded disabled:opacity-50"
             >
               ▲
             </button>
             <button
               onClick={() => jumpToMatch(1)}
-              disabled={searchMatchIndex < 0}
+              disabled={currentSearchIndex < 0}
               className="p-1 hover:bg-[#29202D] rounded disabled:opacity-50"
             >
               ▼
@@ -223,6 +221,7 @@ export default function ChatMessageList({
                   sender_id: msg.senderId,
                   content: msg.content,
                   created_at: msg.createdAt,
+                  is_edited: msg.isEdited,
                   message_type: msg.messageType,
                   delivered_at: msg.deliveredAt,
                   seen_at: msg.seenAt,
@@ -230,14 +229,16 @@ export default function ChatMessageList({
                 media={mediaForMsg}
                 isMe={isMe}
                 currentUserId={currentUserId ?? null}
-                isPinned={false}
+                isPinned={pinnedMessageIds.has(msg.id)}
                 searchQuery={searchQuery}
                 onPinToggle={() => onPinToggle(msg.id)}
                 onReply={() => onReply(msg.id)}
                 onForward={() => onForward(msg.id)}
+                onEdit={() => onEdit(msg.id)}
+                onUnsend={() => onUnsend(msg.id)}
+                onDeleteForMe={() => onDeleteForMe(msg.id)}
                 showAvatar={!msg.isGrouped}
                 isGroupStart={msg.isGroupStart}
-                isGrouped={msg.isGrouped}
                 senderAvatar={!isMe ? otherUserAvatar : null}
                 senderName={!isMe && msg.isGroupStart ? otherUserName : null}
               />

@@ -17,17 +17,20 @@ create index if not exists idx_push_subscriptions_user_id
 -- RLS: a member can only manage their own push subscriptions.
 alter table public.push_subscriptions enable row level security;
 
-create policy if not exists "push_subscriptions_select_own"
-  on public.push_subscriptions for select
-  to authenticated
-  using (auth.uid() = user_id);
+DROP POLICY IF EXISTS "push_subscriptions_select_own" ON public.push_subscriptions;
+CREATE POLICY "push_subscriptions_select_own"
+  ON public.push_subscriptions FOR SELECT
+  TO authenticated
+  USING (auth.uid() = user_id);
 
-create policy if not exists "push_subscriptions_insert_own"
-  on public.push_subscriptions for insert
-  to authenticated
-  with check (auth.uid() = user_id);
+DROP POLICY IF EXISTS "push_subscriptions_insert_own" ON public.push_subscriptions;
+CREATE POLICY "push_subscriptions_insert_own"
+  ON public.push_subscriptions FOR INSERT
+  TO authenticated
+  WITH CHECK (auth.uid() = user_id);
 
-create policy if not exists "push_subscriptions_delete_own"
-  on public.push_subscriptions for delete
-  to authenticated
-  using (auth.uid() = user_id);
+DROP POLICY IF EXISTS "push_subscriptions_delete_own" ON public.push_subscriptions;
+CREATE POLICY "push_subscriptions_delete_own"
+  ON public.push_subscriptions FOR DELETE
+  TO authenticated
+  USING (auth.uid() = user_id);

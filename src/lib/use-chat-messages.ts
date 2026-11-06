@@ -5,6 +5,7 @@ import type { RealtimeChannel } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import {
   fetchMessages,
+  parseMessageRow,
   sendMessage,
   type MessageRecord,
 } from '@/lib/messages';
@@ -33,12 +34,13 @@ function toChatMessage(
     : otherIdentity?.display_name ?? 'Member';
   const senderAvatar = isMe ? null : otherIdentity?.avatar_url ?? null;
   const isGrouped = prevSenderId === row.senderId;
-  const messageType = (row as { message_type?: string }).message_type;
+  const messageType = row.messageType;
   return {
     id: row.id,
     matchId: row.matchId,
     senderId: row.senderId,
     content: row.content,
+    isEdited: row.isEdited,
     messageType: (messageType === 'text' || messageType === 'image' || messageType === 'video' || messageType === 'audio' || messageType === 'video_call' || messageType === 'audio_call' || messageType === 'call')
       ? messageType
       : 'text',
@@ -211,6 +213,7 @@ export function useChatMessages(
         matchId,
         senderId: currentUserIdRef.current,
         content,
+        isEdited: false,
         messageType: 'text',
         createdAt: new Date().toISOString(),
         deliveredAt: null,
@@ -301,20 +304,17 @@ export function useChatMessages(
         },
         (payload) => {
           if (!active) return;
-          const row = payload.new as MessageRecord | null;
           const eventType = payload.eventType;
-          if (!row) return;
-
-          // Ignore our own optimistic insert; the server row replaces it.
-          if ('optimisticId' in row) return;
-
-          // Suppress duplicate deliveries of the same row.
-          if (receivedIdsRef.current.has(row.id)) return;
-          receivedIdsRef.current.add(row.id);
-          if (receivedIdsRef.current.size > DEDUP_CAPACITY) {
-            const first = receivedIdsRef.current.values().next().value;
-            if (first !== undefined) receivedIdsRef.current.delete(first);
+          if (eventType === 'DELETE') {
+            const oldRow = payload.old as { id?: unknown };
+            if (typeof oldRow.id === 'string') {
+              setItems((prev) => prev.filter((item) => !('id' in item && item.id === oldRow.id)));
+            }
+            return;
           }
+          if (eventType !== 'INSERT' && eventType !== 'UPDATE') return;
+          const row = parseMessageRow(payload.new);
+          if (!row) return;
 
           const lastItem = itemsRef.current[itemsRef.current.length - 1];
           const lastSender = lastItem && 'senderId' in lastItem
@@ -322,6 +322,12 @@ export function useChatMessages(
             : null;
 
           if (eventType === 'INSERT') {
+            if (receivedIdsRef.current.has(row.id)) return;
+            receivedIdsRef.current.add(row.id);
+            if (receivedIdsRef.current.size > DEDUP_CAPACITY) {
+              const first = receivedIdsRef.current.values().next().value;
+              if (first !== undefined) receivedIdsRef.current.delete(first);
+            }
             const msg = toChatMessage(
               row,
               currentUserIdRef.current,
@@ -357,6 +363,8 @@ export function useChatMessages(
                 'senderId' in item && item.id === row.id
                   ? {
                       ...item,
+                      content: row.content,
+                      isEdited: row.isEdited,
                       deliveredAt: row.deliveredAt,
                       seenAt: row.seenAt,
                       status: row.seenAt
@@ -419,16 +427,17 @@ export function useChatMessages(
           },
           (payload) => {
             if (!active) return;
-            const row = payload.new as MessageRecord | null;
             const eventType = payload.eventType;
-            if (!row) return;
-            if ('optimisticId' in row) return;
-            if (receivedIdsRef.current.has(row.id)) return;
-            receivedIdsRef.current.add(row.id);
-            if (receivedIdsRef.current.size > DEDUP_CAPACITY) {
-              const first = receivedIdsRef.current.values().next().value;
-              if (first !== undefined) receivedIdsRef.current.delete(first);
+            if (eventType === 'DELETE') {
+              const oldRow = payload.old as { id?: unknown };
+              if (typeof oldRow.id === 'string') {
+                setItems((prev) => prev.filter((item) => !('id' in item && item.id === oldRow.id)));
+              }
+              return;
             }
+            if (eventType !== 'INSERT' && eventType !== 'UPDATE') return;
+            const row = parseMessageRow(payload.new);
+            if (!row) return;
 
             const lastItem = itemsRef.current[itemsRef.current.length - 1];
             const lastSender = lastItem && 'senderId' in lastItem
@@ -436,6 +445,12 @@ export function useChatMessages(
               : null;
 
             if (eventType === 'INSERT') {
+              if (receivedIdsRef.current.has(row.id)) return;
+              receivedIdsRef.current.add(row.id);
+              if (receivedIdsRef.current.size > DEDUP_CAPACITY) {
+                const first = receivedIdsRef.current.values().next().value;
+                if (first !== undefined) receivedIdsRef.current.delete(first);
+              }
               const msg = toChatMessage(
                 row,
                 currentUserIdRef.current,
@@ -470,6 +485,8 @@ export function useChatMessages(
                   'senderId' in item && item.id === row.id
                     ? {
                         ...item,
+                        content: row.content,
+                        isEdited: row.isEdited,
                         deliveredAt: row.deliveredAt,
                         seenAt: row.seenAt,
                         status: row.seenAt

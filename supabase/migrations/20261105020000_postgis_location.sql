@@ -190,7 +190,8 @@ REVOKE ALL ON FUNCTION public.get_nearby_profiles(float, float, float) FROM publ
 GRANT EXECUTE ON FUNCTION public.get_nearby_profiles(float, float, float) TO authenticated;
 
 -- RLS Policy: Allow users to update their own location
-CREATE POLICY IF NOT EXISTS profiles_update_own_location
+DROP POLICY IF EXISTS profiles_update_own_location ON public.profiles;
+CREATE POLICY profiles_update_own_location
   ON public.profiles FOR UPDATE
   TO authenticated
   USING (auth.uid() = id)
