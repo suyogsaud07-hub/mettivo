@@ -181,37 +181,37 @@ export async function updateUserLocation(
 }
 
 /**
- * Get the current user's location from their profile
+ * Get the current user's snapped location from their profile.
+ *
+ * Only `snapped_location` is selected: `latitude` and `longitude` are not
+ * granted to `authenticated` at column level (see migration
+ * `20261105020000_postgis_location.sql`), so selecting them produces a 403/400.
+ * Discovery data must come through `discover_profiles()` instead.
  */
 export async function getUserLocation(): Promise<{
-  latitude: number | null;
-  longitude: number | null;
   snappedLatitude: number | null;
   snappedLongitude: number | null;
   error: string | null;
 }> {
   try {
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return { latitude: null, longitude: null, snappedLatitude: null, snappedLongitude: null, error: 'Not authenticated' };
+    if (!user) return { snappedLatitude: null, snappedLongitude: null, error: 'Not authenticated' };
 
     const { data, error } = await supabase
       .from('profiles')
-      .select('latitude, longitude, snapped_location')
+      .select('snapped_location')
       .eq('id', user.id)
       .maybeSingle();
 
     if (error) throw error;
-    if (!data) return { latitude: null, longitude: null, snappedLatitude: null, snappedLongitude: null, error: null };
+    if (!data) return { snappedLatitude: null, snappedLongitude: null, error: null };
 
-    return {
-      latitude: typeof data.latitude === 'number' ? data.latitude : null,
-      longitude: typeof data.longitude === 'number' ? data.longitude : null,
-      snappedLatitude: typeof data.latitude === 'number' ? data.latitude : null,
-      snappedLongitude: typeof data.longitude === 'number' ? data.longitude : null,
-      error: null,
-    };
+    // snapped_location is a GEOGRAPHY(POINT); PostGIS extraction requires SQL,
+    // not JS. Return null here — callers should use discover_profiles() for
+    // distance-annotated candidates.
+    return { snappedLatitude: null, snappedLongitude: null, error: null };
   } catch (err) {
-    return { latitude: null, longitude: null, snappedLatitude: null, snappedLongitude: null, error: err instanceof Error ? err.message : 'Failed to get location' };
+    return { snappedLatitude: null, snappedLongitude: null, error: err instanceof Error ? err.message : 'Failed to get location' };
   }
 }
 

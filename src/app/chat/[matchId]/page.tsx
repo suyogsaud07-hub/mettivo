@@ -195,6 +195,8 @@ export default function ChatPage({
     items: messageItems,
     loading: messagesLoading,
     error: messagesError,
+    realtimeError: messagesRealtimeError,
+    subscriptionStatus: messagesSubscriptionStatus,
     sendMessage: sendChatMessage,
     loadMore: loadMoreMessages,
     hasMore,
@@ -855,6 +857,13 @@ export default function ChatPage({
       {error && (
         <p role="alert" className="mb-3 px-4 text-center text-xs text-[#C24A6E]">
           {error}
+        </p>
+      )}
+
+      {messagesRealtimeError && messagesSubscriptionStatus !== 'SUBSCRIBED' && (
+        <p role="status" className="mb-3 px-4 text-center text-xs text-[#B58A83]">
+          Connection issue: {messagesRealtimeError}. Messages already loaded remain
+          visible; we will reconnect automatically.
         </p>
       )}
 

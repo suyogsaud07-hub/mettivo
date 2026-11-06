@@ -778,10 +778,10 @@ export default function OrbitPage() {
       if (saveError) throw saveError;
 
       setOwnLocation({ latitude, longitude });
-      setViewport({ latitude, longitude, zoom: LOCATE_ZOOM });
+      setViewport({ latitude, longitude, zoom: 13 });
       mapRef.current?.getMap()?.flyTo({
         center: [longitude, latitude],
-        zoom: LOCATE_ZOOM,
+        zoom: 13,
         speed: 1.5,
       });
       void fetchProfiles(latitude, longitude, radiusKm);
