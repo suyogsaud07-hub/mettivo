@@ -124,6 +124,7 @@ export default function MessageBubble({
   const [translatedText, setTranslatedText] = useState<string | null>(null);
   const [translationLoading, setTranslationLoading] = useState(false);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const reactionBarRef = useRef<HTMLDivElement>(null);
   const messageRef = useRef<HTMLDivElement>(null);
@@ -232,8 +233,9 @@ export default function MessageBubble({
   const handleCopy = useCallback(async () => {
     try {
       await navigator.clipboard.writeText(message.content);
+      setToast({ message: 'Copied!', type: 'success' });
     } catch (err) {
-      console.error('[copy] failed:', err);
+      setToast({ message: 'Failed to copy.', type: 'error' });
     } finally {
       closeMenu();
     }
@@ -359,6 +361,13 @@ export default function MessageBubble({
     return () => document.removeEventListener('keydown', onKey);
   }, [closeMenu]);
 
+  // Auto-dismiss the copy toast after a short delay.
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(null), 1500);
+    return () => clearTimeout(timer);
+  }, [toast]);
+
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
       const target = e.target as Node;
@@ -382,7 +391,7 @@ export default function MessageBubble({
       : message.content;
     const highlighted = highlightMatches(textToShow, searchQuery);
     return <div
-      className="prose-sm prose-invert max-w-none text-[14px] leading-relaxed break-words whitespace-pre-wrap"
+      className="prose-sm prose-invert max-w-full min-w-0 text-[14px] leading-relaxed break-words whitespace-pre-wrap overflow-wrap-anywhere"
       dangerouslySetInnerHTML={{ __html: highlighted }}
     />;
   }, [message.content, isTranslated, translatedText, searchQuery]);
@@ -683,6 +692,28 @@ export default function MessageBubble({
             <button onClick={handleTranslate} className="w-full text-left px-3 py-2 text-sm hover:bg-[#34283F] text-[#F2E9E4] flex items-center gap-2">
               <ArrowLeftRight size={14} strokeWidth={2} /> Translate
             </button>
+          </div>
+        </div>
+      )}
+
+      {toast && (
+        <div
+          className="fixed bottom-[220px] left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 pointer-events-none"
+        >
+          <div
+            className={`px-6 py-3 rounded-full bg-[#211A28] border shadow-2xl flex items-center gap-2.5 text-[#F2E9E4] font-semibold text-sm animate-in fade-in slide-in-from-bottom-4 duration-300 ${
+              toast.type === 'success'
+                ? 'border-[#10B981]/40'
+                : 'border-[#EF4444]/40'
+            }`}
+            style={{
+              borderColor: toast.type === 'success' ? '#10B981' : '#EF4444',
+            }}
+          >
+            <span className="text-xl">
+              {toast.type === 'success' ? '✓' : '✕'}
+            </span>
+            <span>{toast.message}</span>
           </div>
         </div>
       )}

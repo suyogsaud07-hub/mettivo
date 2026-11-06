@@ -47,6 +47,7 @@ import ChatComposer from '@/app/components/chat/ChatComposer';
 import ChatMessageList from '@/app/components/chat/ChatMessageList';
 import IncomingCallModal from '@/app/components/chat/IncomingCallModal';
 import ActiveCallScreen from '@/app/components/chat/ActiveCallScreen';
+import ForwardModal from '@/app/components/chat/ForwardModal';
 import { useChatMessages } from '@/lib/use-chat-messages';
 import { useTyping } from '@/lib/use-typing';
 import type { ChatListItem } from '@/lib/chat-types';
@@ -89,6 +90,8 @@ export default function ChatPage({
 
   const [reportOpen, setReportOpen] = useState(false);
   const [reportTargetType, setReportTargetType] = useState<'user' | 'chat'>('user');
+  const [forwardOpen, setForwardOpen] = useState(false);
+  const [forwardMessageContent, setForwardMessageContent] = useState('');
   const [restrictions, setRestrictions] = useState<MyRestrictions>(NO_RESTRICTIONS);
   const [chatMedia, setChatMedia] = useState<ChatMediaByMessage>({});
   const [sendingMedia, setSendingMedia] = useState(false);
@@ -868,7 +871,14 @@ export default function ChatPage({
           }
         }}
         onForward={(messageId) => {
-          console.log('Forward:', messageId);
+          const msg = messageItems.find(
+            (m): m is Extract<ChatListItem, { id: string }> =>
+              !('type' in m) && m.id === messageId
+          );
+          if (msg) {
+            setForwardMessageContent(msg.content);
+            setForwardOpen(true);
+          }
         }}
         typingUsers={typingUserNames}
       />
@@ -1039,6 +1049,16 @@ export default function ChatPage({
         duration={webrtc.duration}
         state={webrtc.state}
         error={webrtc.error}
+      />
+
+      <ForwardModal
+        isOpen={forwardOpen}
+        onClose={() => {
+          setForwardOpen(false);
+          setForwardMessageContent('');
+        }}
+        messageContent={forwardMessageContent}
+        currentUserId={currentUserId}
       />
 
       <ReportModal
