@@ -73,6 +73,8 @@ interface Profile {
   exercise: string | null;
   education: string | null;
   profession: string | null;
+  jobTitle: string | null;
+  educationLevel: string | null;
   languages_spoken: string[] | null;
   /** M22 short headline, shown under the name. Optional. */
   status: string | null;
@@ -167,7 +169,7 @@ const EDITOR_FIELDS: Record<EditableKey, FieldConfig> = {
  *   readable on a partially migrated database.
  */
 const PROFILE_CORE_COLUMNS =
-  'id, first_name, last_name, has_last_name, username, display_name, age, gender, city, country, avatar_url, photos, bio, intention, looking_for, hobbies, pets, interests, physical_attributes, height, prompts, mbti, religion, drinking, smoking, exercise, education, profession, languages_spoken' as const;
+  'id, first_name, last_name, has_last_name, username, display_name, age, gender, city, country, avatar_url, photos, bio, intention, looking_for, hobbies, pets, interests, physical_attributes, height, prompts, mbti, religion, drinking, smoking, exercise, education, profession, job_title, education_level, languages_spoken' as const;
 
 /**
  * The M18 counters and the M22 status headline. Both are opt-in for the same
@@ -823,6 +825,8 @@ export default function ProfileDashboardPage() {
     exercise: profile.exercise,
     education: profile.education,
     profession: profile.profession,
+    jobTitle: profile.jobTitle,
+    educationLevel: profile.educationLevel,
     languagesSpoken: profile.languages_spoken ?? null,
     pets: profile.pets ?? null,
     prompts: profile.prompts,
@@ -1152,40 +1156,20 @@ export default function ProfileDashboardPage() {
               : 'Add a short bio so people have something to start a conversation about.'
           }
           bioAction={
-            !viewAs ? (
+            !viewAs && !profile.bio?.trim() ? (
               <button
                 type="button"
                 className="pf-link-btn"
                 onClick={() => openEditor('bio')}
-                aria-label={profile.bio?.trim() ? 'Edit bio' : 'Add bio'}
+                aria-label="Edit bio"
                 data-testid="bio-edit-button"
               >
-                {profile.bio?.trim() ? 'Edit bio' : 'Add bio'}
+                Edit bio
               </button>
             ) : undefined
           }
           onStatNavigate={(key) => router.push(`/profile/stats/${key}`)}
           topAction={!viewAs ? <ProfileViewsIconButton count={viewCount} /> : undefined}
-          actions={
-            !viewAs ? (
-              <button
-                type="button"
-                className="pf-btn pf-btn-primary"
-                onClick={() =>
-                  document.getElementById('profile-sections')?.scrollIntoView({
-                    behavior: 'smooth',
-                    block: 'start',
-                  })
-                }
-              >
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="M12 20h9" />
-                  <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
-                </svg>
-                Edit profile
-              </button>
-            ) : undefined
-          }
         />
 
         {viewAs && <ProfileViewAsBanner onExit={() => setViewAs(false)} />}
@@ -1228,7 +1212,7 @@ export default function ProfileDashboardPage() {
           </div>
         )}
 
-        {!viewAs && <ProfileCompletionPanel completion={completion} />}
+        {!viewAs && !completion.isComplete && <ProfileCompletionPanel completion={completion} />}
 
         <ProfileTabs active={activeTab} onChange={setActiveTab} />
 
@@ -1304,6 +1288,8 @@ export default function ProfileDashboardPage() {
                 pets: profile.pets,
                 mbti: profile.mbti,
                 hobbies: profile.hobbies,
+                jobTitle: profile.jobTitle,
+                educationLevel: profile.educationLevel,
               }}
               onEdit={viewAs ? undefined : openEditor}
               contact={{ email: userEmail, phone }}

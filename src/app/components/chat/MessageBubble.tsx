@@ -30,11 +30,11 @@ import ReactionBar from '@/app/components/chat/ReactionBar';
 import ReactionPill from '@/app/components/chat/ReactionPill';
 import MessageStatus from '@/app/components/chat/MessageStatus';
 import { formatMessageTime } from '@/lib/chat-tokens';
-import { type MessageRow } from '@/lib/types';
+import { type ChatMediaRow, type MessageRow } from '@/lib/types';
 
 interface MessageBubbleProps {
   message: MessageRow;
-  media: { media_type: string; id: string } | null;
+  media: ChatMediaRow | null;
   isMe: boolean;
   currentUserId: string | null;
   isPinned: boolean;
@@ -62,7 +62,8 @@ const TEXT = '#F2E9E4';
 const MUTED = '#B58A83';
 const ACCENT = '#D4B18A';
 
-function formatRelative(value: string): string {
+function formatRelative(value: string | null | undefined): string {
+  if (!value) return '';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '';
   const now = new Date();
@@ -447,10 +448,28 @@ export default function MessageBubble({
             <div className="relative group">
               {media ? (
                 <>
-                  <div className={bubbleClass}>
-                    {media.media_type === 'video' ? '🎬' : '🖼️'}
-                    <span className="ml-1 text-xs">{isMe ? 'Your media' : 'Photo or video'}</span>
-                  </div>
+                  {media.media_type === 'audio' ? (
+                    <div className={bubbleClass}>
+                      <audio
+                        src={supabase.storage
+                          .from('chat-media')
+                          .getPublicUrl(media.storage_path).data.publicUrl}
+                        controls
+                        preload="none"
+                        className="w-full"
+                      />
+                    </div>
+                  ) : media.media_type === 'video' ? (
+                    <div className={bubbleClass}>
+                      🎬
+                      <span className="ml-1 text-xs">{isMe ? 'Your media' : 'Photo or video'}</span>
+                    </div>
+                  ) : (
+                    <div className={bubbleClass}>
+                      🖼️
+                      <span className="ml-1 text-xs">{isMe ? 'Your media' : 'Photo or video'}</span>
+                    </div>
+                  )}
                 </>
               ) : (
                 <div className="relative group">

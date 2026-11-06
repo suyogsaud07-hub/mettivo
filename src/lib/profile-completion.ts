@@ -48,6 +48,8 @@ export interface CompletionProfile {
   exercise: string | null;
   education: string | null;
   profession: string | null;
+  jobTitle: string | null;
+  educationLevel: string | null;
   languagesSpoken: string[] | null;
   pets: string[] | null;
   prompts: Record<string, string> | null;
@@ -92,7 +94,7 @@ const RECOMMENDATIONS: Record<ProfileSectionId, string> = {
   interests: 'Add your interests to help people find common ground.',
   pets: 'Share how you feel about pets.',
   lifestyle: 'Complete your lifestyle preferences.',
-  career: 'Add your education and profession.',
+  career: 'Add your job and education.',
   languages: 'Add the languages you speak.',
   religion: 'Add a belief or choose prefer not to say.',
 };
@@ -162,7 +164,7 @@ const PREDICATES: Record<ProfileSectionId, (profile: CompletionProfile) => boole
     text(profile.drinking).length > 0 &&
     text(profile.exercise).length > 0,
   career: (profile) =>
-    text(profile.education).length > 0 && text(profile.profession).length > 0,
+    text(profile.jobTitle).length > 0 && text(profile.educationLevel).length > 0,
   languages: (profile) => filled(profile.languagesSpoken),
   religion: (profile) => text(profile.religion).length > 0,
 };

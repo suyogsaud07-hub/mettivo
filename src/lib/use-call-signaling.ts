@@ -194,6 +194,17 @@ export function useCallSignaling(
         )
         .on(
           'broadcast',
+          { event: 'call-accept' },
+          ((event: { payload?: CallSignal & { type: 'call-accept' } }) => {
+            const payload = event.payload;
+            if (!payload || payload.to !== myUserIdRef.current) return;
+            if (callRef.current.state === 'initiating') {
+              resetCall({ state: 'connecting' });
+            }
+          }) as BroadcastEventHandler
+        )
+        .on(
+          'broadcast',
           { event: 'call-cancel' },
           ((event: { payload?: CallSignal & { type: 'call-cancel' } }) => {
             const payload = event.payload;

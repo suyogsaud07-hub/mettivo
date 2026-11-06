@@ -32,9 +32,10 @@ export default function DiscoveryEmptyState({
         type="button"
         onClick={handleRefresh}
         disabled={refreshing}
+        data-testid="find-more-people"
         className="px-8 py-3.5 rounded-full bg-[#D9B38C] text-[#17121A] font-semibold text-sm shadow-lg hover:bg-[#cfab83] active:scale-95 transition-all disabled:opacity-60 disabled:pointer-events-none"
       >
-        {refreshing ? 'Refreshing…' : 'Refresh discovery'}
+        {refreshing ? 'Refreshing…' : 'Find more people'}
       </button>
     </div>
   );

@@ -17,9 +17,8 @@ import InterestChips from './InterestChips';
 import ProfileInfoSheet from './ProfileInfoSheet';
 import type { CasualIntent } from '@/lib/casual-intent';
 
-const CARD_WIDTH = 340;
 const SWIPE_THRESHOLD = 120;
-const ROTATION_MAX = 12;
+const ROTATION_MAX = 15;
 
 interface DiscoveryCardProps {
   profile: {
@@ -57,9 +56,9 @@ export default function DiscoveryCard({
   const [dragDirection, setDragDirection] = useState<'left' | 'right' | null>(null);
   const cardRef = useRef<HTMLDivElement>(null);
 
-const x = useMotionValue(0);
-const y = useMotionValue(0);
-const rotate = useTransform(x, [-SWIPE_THRESHOLD, 0, SWIPE_THRESHOLD], [-ROTATION_MAX, 0, ROTATION_MAX]);
+  const x = useMotionValue(0);
+  const y = useMotionValue(0);
+  const rotate = useTransform(x, [-SWIPE_THRESHOLD, 0, SWIPE_THRESHOLD], [-ROTATION_MAX, 0, ROTATION_MAX]);
 
   const leftOpacity = useTransform(
     x,
@@ -69,7 +68,7 @@ const rotate = useTransform(x, [-SWIPE_THRESHOLD, 0, SWIPE_THRESHOLD], [-ROTATIO
   const leftRotate = useTransform(
     x,
     [-SWIPE_THRESHOLD, -SWIPE_THRESHOLD / 2, 0],
-    [-15, -15, 0]
+    [-ROTATION_MAX, -ROTATION_MAX, 0]
   );
 
   const rightOpacity = useTransform(
@@ -80,19 +79,19 @@ const rotate = useTransform(x, [-SWIPE_THRESHOLD, 0, SWIPE_THRESHOLD], [-ROTATIO
   const rightRotate = useTransform(
     x,
     [0, SWIPE_THRESHOLD / 2, SWIPE_THRESHOLD],
-    [0, 15, 15]
+    [0, ROTATION_MAX, ROTATION_MAX]
   );
 
   const handleDragStart = useCallback(() => {
     if (disabled || isSheetOpen) return;
   }, [disabled, isSheetOpen]);
 
-  const handleDrag = useCallback((event: DragEvent, info: { point: { x: number; y: number } }) => {
+  const handleDrag = useCallback((_event: DragEvent, info: { point: { x: number; y: number } }) => {
     if (disabled || isSheetOpen) return;
     setDragDirection(info.point.x > 0 ? 'right' : 'left');
   }, [disabled, isSheetOpen]);
 
-  const handleDragEnd = useCallback((event: DragEvent, info: { point: { x: number; y: number }; velocity: { x: number; y: number } }) => {
+  const handleDragEnd = useCallback((_event: DragEvent, info: { point: { x: number; y: number }; velocity: { x: number; y: number } }) => {
     if (disabled || isSheetOpen) return;
 
     const { point, velocity } = info;
@@ -122,48 +121,52 @@ const rotate = useTransform(x, [-SWIPE_THRESHOLD, 0, SWIPE_THRESHOLD], [-ROTATIO
   return (
     <motion.div
       ref={cardRef}
-      className="w-full max-w-md mx-auto relative"
+      data-testid="people-swipe-card"
+      className="w-full max-w-[420px] h-full max-h-[82vh] relative overflow-hidden rounded-3xl bg-[#17121A] shadow-2xl border border-[#34283F]/40"
       style={{ x, y, rotate, opacity: dragDirection ? 0 : 1 }}
       transition={{ type: 'spring', stiffness: 400, damping: 30 }}
       drag="x"
-      dragConstraints={{ left: -CARD_WIDTH, right: CARD_WIDTH }}
+      dragConstraints={{ left: -300, right: 300 }}
       dragElastic={0.35}
       dragMomentum={false}
       onDragStart={handleDragStart}
       onDrag={handleDrag}
       onDragEnd={handleDragEnd}
     >
-      <ProfilePhotoCarousel
-        photos={profile.photos}
-        avatarUrl={profile.avatarUrl}
-        alt={profile.displayName}
-      />
+      {/* Photos — 65-75% of vertical space */}
+      <div className="w-full h-[70vh] max-h-[75vh] relative overflow-hidden rounded-t-3xl bg-[#1C1822] border-b border-[#34283F]/40">
+        <ProfilePhotoCarousel
+          key={profile.id}
+          photos={profile.photos}
+          avatarUrl={profile.avatarUrl}
+          alt={profile.displayName}
+          fullScreen={true}
+        />
+      </div>
 
-      <div
-        className="absolute inset-0 bg-gradient-to-t from-[#17121A]/80 via-[#17121A]/30 to-transparent pointer-events-none"
-      />
-
+      {/* Like/Pass swipe indicators */}
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
         <motion.div
-          className="absolute left-6 top-1/2 -translate-y-1/2 flex items-center gap-2"
+          className="absolute left-6 top-1/3 -translate-y-1/2 flex items-center gap-2"
           style={{ opacity: leftOpacity, rotate: leftRotate }}
           transition={{ type: 'spring', stiffness: 400, damping: 30 }}
         >
-          <span className="w-2 h-2 rounded-full bg-[#10B981]"></span>
-          <span className="text-[14px] font-bold text-[#10B981] tracking-tighter">LIKE</span>
+          <span className="w-3 h-3 rounded-full bg-[#10B981]"></span>
+          <span className="text-sm font-bold text-[#10B981] tracking-tighter">LIKE</span>
         </motion.div>
         <motion.div
-          className="absolute right-6 top-1/2 -translate-y-1/2 flex items-center gap-2"
+          className="absolute right-6 top-1/3 -translate-y-1/2 flex items-center gap-2"
           style={{ opacity: rightOpacity, rotate: rightRotate }}
           transition={{ type: 'spring', stiffness: 400, damping: 30 }}
         >
-          <span className="text-[14px] font-bold text-[#F3A7AD] tracking-tighter">PASS</span>
-          <span className="w-2 h-2 rounded-full bg-[#F3A7AD]"></span>
+          <span className="text-sm font-bold text-[#F3A7AD] tracking-tighter">PASS</span>
+          <span className="w-3 h-3 rounded-full bg-[#F3A7AD]"></span>
         </motion.div>
       </div>
 
-      <div className="absolute bottom-0 left-0 right-0 p-6 pt-[200px] z-10">
-        <div className="flex items-center justify-between mb-2">
+      {/* Details overlay at bottom */}
+      <div className="people-details absolute bottom-0 left-0 right-0 p-6 pt-[30vh] z-30">
+        <div className="flex items-center justify-between mb-3">
           <h2 className="text-xl font-bold text-[#F2E9E4] leading-tight">
             {distanceLine}
           </h2>

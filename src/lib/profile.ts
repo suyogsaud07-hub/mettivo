@@ -88,6 +88,9 @@ export interface ProfileDraft {
   exercise?: string;
   education?: string;
   profession?: string;
+  /** Canonical column names used by the dashboard completeness calculation. */
+  jobTitle?: string;
+  educationLevel?: string;
   languagesSpoken?: string[];
   bio?: string;
 }
@@ -255,6 +258,8 @@ export function validateProfileDraft(draft: ProfileDraft, now = new Date()): Val
     exercise: trimmed(draft.exercise),
     education: trimmed(draft.education),
     profession: trimmed(draft.profession),
+    job_title: trimmed(draft.jobTitle),
+    education_level: trimmed(draft.educationLevel),
     languages_spoken: bounded(draft.languagesSpoken, 8),
     bio,
     onboarding_completed: true,

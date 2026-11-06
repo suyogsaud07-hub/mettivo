@@ -62,7 +62,8 @@ export function toneColor(tone: ChatTone | null): string {
   }
 }
 
-export function formatMessageTime(value: string): string {
+export function formatMessageTime(value: string | null | undefined): string {
+  if (!value) return '';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '';
   const now = new Date();
@@ -93,9 +94,11 @@ export function formatCallDuration(seconds: number): string {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
-export function isSameDay(a: string, b: string): boolean {
+export function isSameDay(a: string | null | undefined, b: string | null | undefined): boolean {
+  if (!a || !b) return false;
   const da = new Date(a);
   const db = new Date(b);
+  if (Number.isNaN(da.getTime()) || Number.isNaN(db.getTime())) return false;
   return (
     da.getFullYear() === db.getFullYear() &&
     da.getMonth() === db.getMonth() &&

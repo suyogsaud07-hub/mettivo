@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Mic, Phone, Video, X } from 'lucide-react';
+import { Mic, Phone, Video, MoreVertical } from 'lucide-react';
 
 interface ChatHeaderProps {
   otherUserId: string | null;
@@ -109,7 +109,7 @@ export default function ChatHeader({
           className="p-2 rounded-full bg-[#1C1822] border border-[#34283F] text-[#F2E9E4] hover:bg-[#29202D] shrink-0"
           aria-label="More options"
         >
-          <X size={18} strokeWidth={2.2} />
+          <MoreVertical size={18} strokeWidth={2.2} />
         </button>
       </div>
     </div>

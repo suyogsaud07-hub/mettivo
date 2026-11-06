@@ -40,6 +40,8 @@ export interface ProfileDetailsData {
   pets: string[] | null;
   mbti: string | null;
   hobbies: string[] | null;
+  jobTitle: string | null;
+  educationLevel: string | null;
 }
 
 export interface ProfileContact {
@@ -85,6 +87,11 @@ export default function ProfileDetails({ data, onEdit, contact }: ProfileDetails
     { label: 'Age', value: data.age ? `${data.age} years` : 'Not set', key: 'age' },
     { label: 'Gender', value: data.gender || 'Not set', key: 'gender' },
     {
+      label: 'Bio',
+      value: data.bio?.trim() || 'Not set',
+      key: 'bio',
+    },
+    {
       label: 'Looking for',
       value: data.looking_for?.join(', ') || 'Not set',
       key: 'looking_for',
@@ -106,6 +113,8 @@ export default function ProfileDetails({ data, onEdit, contact }: ProfileDetails
       value: data.mbti ? personalityLabel(data.mbti) : 'Not set',
       key: 'mbti',
     },
+    { label: 'Job', value: data.jobTitle || 'Not set', key: 'jobTitle' },
+    { label: 'Education', value: data.educationLevel || 'Not set', key: 'educationLevel' },
   ];
 
   const renderRow = (row: InfoRowConfig) =>

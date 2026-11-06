@@ -10,7 +10,7 @@ import {
   releaseChatMedia,
   viewsRemaining,
 } from '@/lib/chatMedia';
-import type { ChatMediaRow } from '@/lib/types';
+import type { ChatMediaRow, MomentMediaType } from '@/lib/types';
 import { ReportButton } from '@/app/components/moderation/ReportButton';
 
 /**
@@ -46,7 +46,7 @@ function stop(event: React.SyntheticEvent): void {
 export default function ChatMediaMessage({ media, isOwn }: ChatMediaMessageProps) {
   const [state, setState] = useState<OpenState>('idle');
   const [url, setUrl] = useState<string | null>(null);
-  const [urlType, setUrlType] = useState<'image' | 'video'>('image');
+  const [urlType, setUrlType] = useState<MomentMediaType>('image');
   const [remaining, setRemaining] = useState(() => viewsRemaining(media));
   const [shielded, setShielded] = useState(false);
   const [error, setError] = useState<string | null>(null);

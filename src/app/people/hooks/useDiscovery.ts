@@ -29,6 +29,38 @@ interface UseDiscoveryOptions {
   genders?: string[] | null;
   batchSize?: number;
   radiusKm?: number;
+  onMatch?: (match: { matchId: string; matchedUserId: string }) => void;
+}
+
+interface PrefetchQueue {
+  urls: string[];
+  loaded: Set<string>;
+  images: Map<string, HTMLImageElement>;
+}
+
+const prefetchQueue: PrefetchQueue = {
+  urls: [],
+  loaded: new Set(),
+  images: new Map(),
+};
+
+function preloadImage(url: string): Promise<void> {
+  if (prefetchQueue.loaded.has(url) || prefetchQueue.images.has(url)) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      prefetchQueue.loaded.add(url);
+      prefetchQueue.images.set(url, img);
+      resolve();
+    };
+    img.onerror = () => {
+      prefetchQueue.loaded.add(url);
+      resolve();
+    };
+    img.src = url;
+  });
 }
 
 /**
@@ -44,6 +76,7 @@ export function useDiscovery(options: UseDiscoveryOptions = {}) {
     genders = null,
     batchSize = 10,
     radiusKm = 10,
+    onMatch,
   } = options;
 
   const [profiles, setProfiles] = useState<DiscoveryProfile[]>([]);
@@ -58,6 +91,7 @@ export function useDiscovery(options: UseDiscoveryOptions = {}) {
   const isMountedRef = useRef(true);
   const processingRef = useRef(false);
   const profilesRef = useRef<DiscoveryProfile[]>([]);
+  const pendingActionRef = useRef<{ targetId: string; isLike: boolean } | null>(null);
 
   const { following, hydrated } = useFollow();
 
@@ -124,6 +158,11 @@ export function useDiscovery(options: UseDiscoveryOptions = {}) {
         excludeIds,
       });
 
+      // Preload primary photos of the first candidate in the batch
+      if (candidates.length > 0 && candidates[0].photos.length > 0) {
+        void preloadImage(candidates[0].photos[0]);
+      }
+
       return candidates.map((c) => ({
         ...c,
         distanceMeters: null,
@@ -183,7 +222,7 @@ export function useDiscovery(options: UseDiscoveryOptions = {}) {
   }, [loadInitial]);
 
   /**
-   * Background prefetch when the stack is running low.
+   * Background prefetch when the stack is running low (2 profiles remain).
    */
   useEffect(() => {
     if (profilesRef.current.length === 0 || index < profilesRef.current.length - 2) return;
@@ -209,6 +248,10 @@ export function useDiscovery(options: UseDiscoveryOptions = {}) {
   const decide = useCallback(
     async (targetId: string, isLike: boolean): Promise<RecordLikeResult | null> => {
       if (!targetId || processingRef.current) return null;
+      // Prevent duplicate rapid actions
+      if (pendingActionRef.current?.targetId === targetId) return null;
+      pendingActionRef.current = { targetId, isLike };
+
       setDecisionPending(targetId);
       processingRef.current = true;
 
@@ -217,6 +260,12 @@ export function useDiscovery(options: UseDiscoveryOptions = {}) {
 
         if (!isMountedRef.current) return null;
 
+        // Handle mutual match
+        if (result.matched && result.match_id && result.matched_user_id && onMatch) {
+          onMatch({ matchId: result.match_id, matchedUserId: result.matched_user_id });
+        }
+
+        // Advance to next profile or load more
         if (index + 1 < profiles.length) {
           setIndex((i) => i + 1);
         } else {
@@ -224,6 +273,7 @@ export function useDiscovery(options: UseDiscoveryOptions = {}) {
           setIndex(0);
         }
 
+        pendingActionRef.current = null;
         return result;
       } catch (err) {
         if (!isMountedRef.current) return null;
@@ -231,6 +281,7 @@ export function useDiscovery(options: UseDiscoveryOptions = {}) {
           err instanceof Error ? err.message : 'Action failed. Please try again.';
         setError(message);
         console.error('[discovery] decide failed:', err);
+        pendingActionRef.current = null;
         return null;
       } finally {
         if (isMountedRef.current) {
@@ -239,7 +290,7 @@ export function useDiscovery(options: UseDiscoveryOptions = {}) {
         }
       }
     },
-    [index, profiles.length, loadBatch]
+    [index, profiles.length, loadBatch, onMatch]
   );
 
   const handleLike = useCallback(

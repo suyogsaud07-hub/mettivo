@@ -36,8 +36,6 @@ interface ProfileInfoSheetProps {
   onClose: () => void;
 }
 
-const SHEET_HEIGHT = 700;
-
 export default function ProfileInfoSheet({
   profile,
   isOpen,
@@ -47,8 +45,8 @@ export default function ProfileInfoSheet({
 
   const y = useMotionValue(0);
   const ySpring = useSpring(y, { stiffness: 300, damping: 30 });
-  const opacity = useTransform(y, [-SHEET_HEIGHT / 2, 0, SHEET_HEIGHT / 2], [0, 1, 0]);
-  const scale = useTransform(y, [-SHEET_HEIGHT / 2, 0, SHEET_HEIGHT / 2], [0.95, 1, 0.95]);
+  const opacity = useTransform(y, [-400, 0, 400], [0, 1, 0]);
+  const scale = useTransform(y, [-400, 0, 400], [0.95, 1, 0.95]);
 
   const handleDrag = (_event: MouseEvent | TouchEvent | PointerEvent, info: PanInfo) => {
     y.set(info.point.y);
@@ -85,16 +83,16 @@ export default function ProfileInfoSheet({
           />
           <motion.div
             ref={sheetRef}
-            initial={{ y: SHEET_HEIGHT }}
+            initial={{ y: 600 }}
             animate={{ y: 0 }}
-            exit={{ y: SHEET_HEIGHT }}
+            exit={{ y: 600 }}
             transition={{ type: 'spring', stiffness: 400, damping: 30 }}
             drag="y"
-            dragConstraints={{ top: 0, bottom: SHEET_HEIGHT }}
+            dragConstraints={{ top: 0, bottom: 600 }}
             dragElastic={0.4}
             onDrag={handleDrag}
             onDragEnd={handleDragEnd}
-            className="fixed bottom-0 left-0 right-0 z-50 bg-[#211A28] border-t border-[#34283F] rounded-t-3xl shadow-2xl min-h-[40vh] max-h-[70vh]"
+            className="fixed bottom-0 left-0 right-0 z-50 bg-[#211A28] border-t border-[#34283F] rounded-t-3xl shadow-2xl min-h-[55vh] max-h-[65vh]"
             style={{ y: ySpring, opacity, scale }}
           >
             <div className="mx-auto w-12 h-1.5 rounded-full bg-[#34283F]/60 mt-3" role="separator" aria-label="Drag handle" />

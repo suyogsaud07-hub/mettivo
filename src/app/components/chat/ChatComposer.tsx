@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useRef, useState } from 'react';
-import { ArrowRight, Mic, MicOff, Paperclip, Send, X } from 'lucide-react';
+import { ArrowRight, Mic, MicOff, Paperclip, Send } from 'lucide-react';
 import VoiceNoteRecorder from '@/app/components/chat/VoiceNoteRecorder';
 
 interface ChatComposerProps {
@@ -28,7 +28,6 @@ export default function ChatComposer({
 
   const handleInput = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setValue(e.target.value);
-    // Auto-resize textarea
     const el = e.target;
     el.style.height = 'auto';
     el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
@@ -106,29 +105,7 @@ export default function ChatComposer({
         <Paperclip size={18} />
       </button>
 
-      {voiceEnabled && (
-        <div className="flex items-center gap-1">
-          <button
-            type="button"
-            onClick={() => {
-              setVoiceState((prev) => (prev === 'idle' ? 'recording' : 'idle'));
-            }}
-            disabled={disabled}
-            aria-label="Record voice note"
-            className={`p-1.5 rounded-full shrink-0 transition-all ${
-              voiceState === 'recording'
-                ? 'bg-[#C24A6E]/20 text-[#EF4444]'
-                : 'bg-[#1C1822] border border-[#34283F] text-[#F2E9E4] hover:bg-[#29202D] disabled:opacity-50'
-            }`}
-          >
-            {voiceState === 'recording' ? (
-              <MicOff size={16} strokeWidth={2} />
-            ) : (
-              <Mic size={16} strokeWidth={2} />
-            )}
-          </button>
-        </div>
-      )}
+      {voiceEnabled && <VoiceNoteRecorder onSend={handleVoiceData} />}
 
       <textarea
         ref={inputRef}

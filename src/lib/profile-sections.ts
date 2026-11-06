@@ -192,6 +192,8 @@ export function buildProfileSectionPatch(
         patch: {
           education: trimmed(state.education),
           profession: trimmed(state.profession),
+          education_level: trimmed(state.education),
+          job_title: trimmed(state.profession),
         },
       };
 

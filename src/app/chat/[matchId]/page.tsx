@@ -38,6 +38,7 @@ import {
 } from '@/lib/reports';
 import { ReportModal } from '@/app/components/moderation/ReportModal';
 import { fetchPublicIdentities, type PublicIdentity } from '@/lib/public-profiles';
+import { presenceManager } from '@/lib/presence';
 import { usePreferredTranslationLanguage } from '@/app/components/chat/usePreferredTranslationLanguage';
 import ProfileStoryModal from '@/components/chat/ProfileStoryModal';
 import ChatHeader from '@/app/components/chat/ChatHeader';
@@ -122,6 +123,7 @@ export default function ChatPage({
     callId: string;
   } | null>(null);
   const [activeCall, setActiveCall] = useState(false);
+  const [outgoingCallPending, setOutgoingCallPending] = useState(false);
 
   // Initialize call signaling when we know our identity
   useEffect(() => {
@@ -152,42 +154,85 @@ export default function ChatPage({
     }
   }, [callSignaling.call, otherIdentity?.avatar_url]);
 
+  // Outgoing call: once the recipient accepts (call state -> connecting),
+  // create the WebRTC offer and start local media.
+  useEffect(() => {
+    const c = callSignaling.call;
+    if (c.state === 'connecting' && c.isInitiator && c.callType) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setActiveCall(true);
+      const constraints =
+        c.callType === 'video' ? { audio: true, video: true } : { audio: true, video: false };
+      void webrtc.initiate(constraints);
+    }
+  }, [callSignaling.call, webrtc]);
+
+  // Incoming call: once the offer arrives (webrtc state -> ringing), create
+  // the WebRTC answer and start local media. Waiting for the offer avoids
+  // creating an answer before a remote description exists.
+  useEffect(() => {
+    if (
+      webrtc.state === 'ringing' &&
+      callSignaling.call.callType &&
+      !callSignaling.call.isInitiator
+    ) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setActiveCall(true);
+      const constraints =
+        callSignaling.call.callType === 'video'
+          ? { audio: true, video: true }
+          : { audio: true, video: false };
+      void webrtc.accept(constraints);
+    }
+  }, [webrtc.state, callSignaling.call]);
+
+  // Hide outgoing call UI when the call is rejected, cancelled, or ended.
+  useEffect(() => {
+    const c = callSignaling.call;
+    if (
+      outgoingCallPending &&
+      (c.state === 'rejected' || c.state === 'cancelled' || c.state === 'ended')
+    ) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setOutgoingCallPending(false);
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setActiveCall(false);
+    }
+  }, [outgoingCallPending, callSignaling.call]);
+
   // Accept incoming call
   const handleAcceptCall = async () => {
     setIncomingCall(null);
-    setActiveCall(true);
     await callSignaling.acceptCall();
+    // WebRTC answer is created once the offer arrives (see effect above).
   };
 
   // Reject incoming call
   const handleRejectCall = () => {
     setIncomingCall(null);
+    setOutgoingCallPending(false);
     callSignaling.rejectCall();
   };
 
   // End active call
   const handleEndCall = () => {
     setActiveCall(false);
+    setOutgoingCallPending(false);
+    setIncomingCall(null);
     callSignaling.endCall();
   };
 
   // Initiate outgoing call
   const handleInitiateCall = async (callType: 'voice' | 'video') => {
     if (!otherUserId || !otherIdentity) return;
-    setActiveCall(true);
+    setOutgoingCallPending(true);
     await callSignaling.initiateCall(
       otherUserId,
       otherIdentity?.display_name ?? 'Member',
       callType
     );
-    // Start local WebRTC after a brief delay for the invite to propagate
-    setTimeout(() => {
-      if (callType === 'video') {
-        void webrtc.initiate({ audio: true, video: true });
-      } else {
-        void webrtc.initiate({ audio: true, video: false });
-      }
-    }, 1000);
+    // WebRTC offer is created only after the recipient accepts the invite
+    // (see the effect below that watches callSignaling.call.state).
   };
 
   // --- Message handling via useChatMessages hook ---
@@ -238,6 +283,26 @@ export default function ChatPage({
       unsubscribeTyping();
     };
   }, [currentUserId, otherUserId, matchId, otherIdentity?.display_name, subscribeTyping, unsubscribeTyping]);
+
+  // --- Online/offline presence ---
+  // Presence comes from the authoritative presence_sessions table via the
+  // user_is_online RPC / PresenceManager. A user is online only while an
+  // active, non-expired presence session exists (see PresenceHeartbeat).
+  useEffect(() => {
+    if (!otherUserId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setIsOnline(null);
+      return;
+    }
+
+    const unsub = presenceManager.subscribeToUser(otherUserId, (online) => {
+      setIsOnline(online);
+    });
+
+    return () => {
+      unsub();
+    };
+  }, [otherUserId]);
 
   // --- Init: load session, identity, settings ---
   const refreshMedia = useCallback(async () => {
@@ -897,25 +962,32 @@ export default function ChatPage({
 
       {/* Call modals */}
       <IncomingCallModal
-        isOpen={!!incomingCall}
-        onClose={() => setIncomingCall(null)}
+        isOpen={!!incomingCall || outgoingCallPending}
+        onClose={() => {
+          setIncomingCall(null);
+          setOutgoingCallPending(false);
+        }}
         onAccept={(callType) => {
           setIncomingCall(null);
           setActiveCall(true);
           void callSignaling.acceptCall();
-          setTimeout(() => {
-            if (callType === 'video') {
-              void webrtc.accept({ audio: true, video: true });
-            } else {
-              void webrtc.accept({ audio: true, video: false });
-            }
-          }, 500);
         }}
         onReject={handleRejectCall}
-        callerName={incomingCall?.callerName ?? 'Member'}
-        callerAvatar={incomingCall?.callerAvatar ?? null}
-        callType={incomingCall?.callType ?? 'voice'}
-        isIncoming
+        callerName={
+          outgoingCallPending
+            ? `Calling ${conversationName}…`
+            : incomingCall?.callerName ?? 'Member'
+        }
+        callerAvatar={
+          outgoingCallPending ? senderAvatar : incomingCall?.callerAvatar ?? null
+        }
+        callType={
+          outgoingCallPending
+            ? (callSignaling.call.callType ?? 'voice')
+            : incomingCall?.callType ?? 'voice'
+        }
+        isIncoming={!outgoingCallPending && !!incomingCall}
+        timeoutSeconds={outgoingCallPending ? 30 : 30}
       />
 
       <ActiveCallScreen

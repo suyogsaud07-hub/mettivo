@@ -5,6 +5,7 @@ import { AlertTriangle, RefreshCw } from 'lucide-react';
 import MessageBubble from '@/app/components/chat/MessageBubble';
 import TypingIndicator from '@/app/components/chat/TypingIndicator';
 import type { ChatListItem, ChatMessage } from '@/lib/chat-types';
+import type { ChatMediaByMessage } from '@/lib/chatMedia';
 
 interface ChatMessageListProps {
   items: ChatListItem[];
@@ -12,6 +13,7 @@ interface ChatMessageListProps {
   otherUserId: string | null;
   otherUserName: string | null;
   otherUserAvatar: string | null;
+  chatMedia?: ChatMediaByMessage;
   searchQuery?: string;
   isLoading: boolean;
   error: string | null;
@@ -29,6 +31,7 @@ export default function ChatMessageList({
   otherUserId,
   otherUserName,
   otherUserAvatar,
+  chatMedia = {},
   searchQuery,
   isLoading,
   error,
@@ -41,6 +44,8 @@ export default function ChatMessageList({
 }: ChatMessageListProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [retryCount, setRetryCount] = useState(0);
+  const [searchMatchIndex, setSearchMatchIndex] = useState(-1);
+  const searchMatchesRef = useRef<{ messageId: string; content: string }[]>([]);
 
   // Scroll to bottom when new messages arrive (unless user is scrolling up).
   useEffect(() => {
@@ -58,6 +63,40 @@ export default function ChatMessageList({
       }
     }
   }, [items, onScrollBottom]);
+
+  // Recompute search matches when query or items change.
+  useEffect(() => {
+    if (!searchQuery?.trim()) {
+      searchMatchesRef.current = [];
+      setSearchMatchIndex(-1);
+      return;
+    }
+    const q = searchQuery.trim().toLowerCase();
+    const matches: { messageId: string; content: string }[] = [];
+    for (const item of items) {
+      if (!('type' in item)) {
+        if (item.content.toLowerCase().includes(q)) {
+          matches.push({ messageId: item.id, content: item.content });
+        }
+      }
+    }
+    searchMatchesRef.current = matches;
+    setSearchMatchIndex(matches.length > 0 ? 0 : -1);
+  }, [items, searchQuery]);
+
+  const jumpToMatch = useCallback(
+    (delta: number) => {
+      const matches = searchMatchesRef.current;
+      if (matches.length === 0) return;
+      const next = (searchMatchIndex + delta + matches.length) % matches.length;
+      setSearchMatchIndex(next);
+      const el = document.getElementById(`msg-${matches[next].messageId}`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    },
+    [searchMatchIndex]
+  );
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
@@ -130,6 +169,29 @@ export default function ChatMessageList({
           <TypingIndicator userNames={typingUsers} />
         </div>
       )}
+      {searchQuery?.trim() && (
+        <div className="px-4 pb-1 text-xs flex items-center justify-between text-[#B58A83]">
+          <span>
+            {searchMatchesRef.current.length} match{searchMatchesRef.current.length !== 1 ? 'es' : ''}
+          </span>
+          <div className="flex gap-1">
+            <button
+              onClick={() => jumpToMatch(-1)}
+              disabled={searchMatchIndex < 0}
+              className="p-1 hover:bg-[#29202D] rounded disabled:opacity-50"
+            >
+              ▲
+            </button>
+            <button
+              onClick={() => jumpToMatch(1)}
+              disabled={searchMatchIndex < 0}
+              className="p-1 hover:bg-[#29202D] rounded disabled:opacity-50"
+            >
+              ▼
+            </button>
+          </div>
+        </div>
+      )}
       <div
         ref={messagesEndRef}
         className="flex-1 overflow-y-auto px-4 py-4 space-y-2 scrollbar-hide"
@@ -150,9 +212,10 @@ export default function ChatMessageList({
 
           const msg = item as ChatMessage;
           const isMe = msg.senderId === currentUserId;
+          const mediaForMsg = chatMedia[msg.id] ?? null;
 
           return (
-            <div key={msg.id} className="relative w-full">
+            <div key={msg.id} id={`msg-${msg.id}`} className="relative w-full">
               <MessageBubble
                 message={{
                   id: msg.id,
@@ -164,7 +227,7 @@ export default function ChatMessageList({
                   delivered_at: msg.deliveredAt,
                   seen_at: msg.seenAt,
                 }}
-                media={null}
+                media={mediaForMsg}
                 isMe={isMe}
                 currentUserId={currentUserId ?? null}
                 isPinned={false}

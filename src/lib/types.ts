@@ -195,7 +195,7 @@ export interface NotificationActor {
 }
 
 /** The kinds of media a Moment can carry. `null` means a legacy inline image. */
-export type MomentMediaType = 'image' | 'video';
+export type MomentMediaType = 'image' | 'video' | 'audio';
 
 /**
  * Who may see a Moment (M22 post privacy).
