@@ -462,6 +462,8 @@ export default function PublicProfilePage({ params }: { params: Promise<{ userId
               pets: profile.pets,
               mbti: profile.mbti,
               hobbies: profile.hobbies,
+              jobTitle: profile.job_title ?? null,
+              educationLevel: profile.education_level ?? null,
             }}
           />
         </div>

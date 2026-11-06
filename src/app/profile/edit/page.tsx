@@ -62,7 +62,7 @@ const PHYSICAL_ATTRS = [
 ];
 
 const WIZARD_PROFILE_COLUMNS =
-  'id, first_name, last_name, has_last_name, username, display_name, avatar_url, photos, gender, pronouns, age, country, city, height, physical_attributes, intention, looking_for, sexual_orientation, mbti, religion, hobbies, pets, interests, prompts, smoking, drinking, exercise, education, profession, languages_spoken, bio, onboarding_completed' as const;
+  'id, first_name, last_name, has_last_name, username, display_name, avatar_url, photos, gender, pronouns, age, country, city, height, physical_attributes, intention, looking_for, sexual_orientation, mbti, religion, hobbies, pets, interests, prompts, smoking, drinking, exercise, education, profession, job_title, education_level, languages_spoken, bio, onboarding_completed' as const;
 
 const MAX_PROMPT_SLOTS = 3;
 
@@ -94,6 +94,8 @@ interface FormState {
   exercise: string;
   education: string;
   profession: string;
+  jobTitle: string;
+  educationLevel: string;
   languagesSpoken: string[];
   bio: string;
   prompts: Record<string, string>;
@@ -167,6 +169,8 @@ function EditProfileWizardContent() {
     exercise: '',
     education: '',
     profession: '',
+    jobTitle: '',
+    educationLevel: '',
     languagesSpoken: [],
     bio: '',
     prompts: {},
@@ -257,6 +261,8 @@ function EditProfileWizardContent() {
             exercise: data.exercise ?? '',
             education: data.education ?? '',
             profession: data.profession ?? '',
+            jobTitle: data.job_title ?? '',
+            educationLevel: data.education_level ?? '',
             languagesSpoken: Array.isArray(data.languages_spoken) ? data.languages_spoken : [],
             bio: data.bio ?? '',
             interests: Array.isArray(data.interests) ? data.interests : [],
@@ -397,6 +403,8 @@ function EditProfileWizardContent() {
       exercise: formData.exercise,
       education: formData.education,
       profession: formData.profession,
+      jobTitle: formData.jobTitle,
+      educationLevel: formData.educationLevel,
       languagesSpoken: formData.languagesSpoken,
       bio: formData.bio,
     };

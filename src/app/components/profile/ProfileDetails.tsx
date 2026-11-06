@@ -25,6 +25,8 @@ export type ProfileDetailKey =
   | 'pets'
   | 'mbti'
   | 'hobbies'
+  | 'jobTitle'
+  | 'educationLevel'
   | 'email'
   | 'phone';
 

@@ -49,6 +49,8 @@ export interface PublicProfile {
   religion: string | null;
   drinking: string | null;
   smoking: string | null;
+  job_title: string | null;
+  education_level: string | null;
   is_online: boolean | null;
   followers_count: number | null;
   following_count: number | null;

@@ -73,8 +73,8 @@ interface Profile {
   exercise: string | null;
   education: string | null;
   profession: string | null;
-  jobTitle: string | null;
-  educationLevel: string | null;
+  job_title: string | null;
+  education_level: string | null;
   languages_spoken: string[] | null;
   /** M22 short headline, shown under the name. Optional. */
   status: string | null;
@@ -102,6 +102,8 @@ type EditableKey =
   | 'pets'
   | 'mbti'
   | 'hobbies'
+  | 'jobTitle'
+  | 'educationLevel'
   | 'email'
   | 'phone';
 
@@ -120,6 +122,8 @@ type ProfilePatch = Partial<
     | 'pets'
     | 'mbti'
     | 'hobbies'
+    | 'job_title'
+    | 'education_level'
   >
 >;
 
@@ -144,6 +148,8 @@ const EDITOR_FIELDS: Record<EditableKey, FieldConfig> = {
   pets: { title: 'Pets', hint: 'How you feel about animals.', kind: 'multi' },
   mbti: { title: 'Personality', hint: 'Your MBTI type.', kind: 'select' },
   hobbies: { title: 'Interests/Hobbies', hint: 'Pick everything you enjoy.', kind: 'multi' },
+  jobTitle: { title: 'Job', hint: 'Your job title.', kind: 'text' },
+  educationLevel: { title: 'Education', hint: 'Your education level.', kind: 'text' },
   email: { title: 'Email', hint: 'We will email you a link to confirm.', kind: 'email' },
   phone: { title: 'Phone', hint: 'We will text you a code to verify.', kind: 'phone' },
 };
@@ -185,7 +191,10 @@ const PROFILE_COLUMNS = `${PROFILE_CORE_COLUMNS}, ${PROFILE_OPTIONAL_COLUMNS}` a
 type ProfileCoreRow = Omit<
   Profile,
   'followers_count' | 'following_count' | 'matches_count' | 'profile_likes_count' | 'status'
->;
+> & {
+  job_title: string | null;
+  education_level: string | null;
+};
 
 /** Fills the counters and status so a partially migrated row still renders. */
 function withDefaultCounts(row: ProfileCoreRow): Profile {
@@ -441,6 +450,8 @@ export default function ProfileDashboardPage() {
       case 'looking_for': setListDraft([...(profile.looking_for ?? [])]); break;
       case 'pets': setListDraft([...(profile.pets ?? [])]); break;
       case 'hobbies': setListDraft([...(profile.hobbies ?? [])]); break;
+      case 'jobTitle': setTextDraft(profile.job_title ?? ''); break;
+      case 'educationLevel': setTextDraft(profile.education_level ?? ''); break;
       case 'email': setTextDraft(userEmail); break;
       case 'phone': setTextDraft(''); setPhoneStage('enter'); break;
     }
@@ -580,6 +591,22 @@ export default function ProfileDashboardPage() {
           const failure = await persistProfile({ hobbies: [...listDraft] });
           if (failure) { setEditorError(failure); return; }
           showToast('Interests updated');
+          closeEditor();
+          break;
+        }
+
+        case 'jobTitle': {
+          const failure = await persistProfile({ job_title: textDraft.trim() || null });
+          if (failure) { setEditorError(failure); return; }
+          showToast('Job updated');
+          closeEditor();
+          break;
+        }
+
+        case 'educationLevel': {
+          const failure = await persistProfile({ education_level: textDraft.trim() || null });
+          if (failure) { setEditorError(failure); return; }
+          showToast('Education updated');
           closeEditor();
           break;
         }
@@ -825,8 +852,8 @@ export default function ProfileDashboardPage() {
     exercise: profile.exercise,
     education: profile.education,
     profession: profile.profession,
-    jobTitle: profile.jobTitle,
-    educationLevel: profile.educationLevel,
+    jobTitle: profile.job_title,
+    educationLevel: profile.education_level,
     languagesSpoken: profile.languages_spoken ?? null,
     pets: profile.pets ?? null,
     prompts: profile.prompts,
@@ -1062,6 +1089,18 @@ export default function ProfileDashboardPage() {
           </div>
         );
 
+      case 'jobTitle':
+      case 'educationLevel':
+        return (
+          <input
+            type="text"
+            className="pf-input"
+            value={textDraft}
+            onChange={(e) => setTextDraft(e.target.value)}
+            placeholder={editor === 'jobTitle' ? 'e.g. Software Engineer' : "e.g. Bachelor's Degree"}
+          />
+        );
+
       case 'religion':
         return (
           <div className="pf-options">
@@ -1288,8 +1327,8 @@ export default function ProfileDashboardPage() {
                 pets: profile.pets,
                 mbti: profile.mbti,
                 hobbies: profile.hobbies,
-                jobTitle: profile.jobTitle,
-                educationLevel: profile.educationLevel,
+                jobTitle: profile.job_title,
+                educationLevel: profile.education_level,
               }}
               onEdit={viewAs ? undefined : openEditor}
               contact={{ email: userEmail, phone }}
