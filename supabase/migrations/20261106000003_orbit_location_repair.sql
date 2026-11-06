@@ -213,21 +213,21 @@ begin
       and p.id <> auth.uid()
   )
   select
-    id,
-    display_name,
-    username,
-    avatar_url,
-    age,
-    gender,
-    city,
-    country,
-    intention,
-    casual_intent,
-    bio,
-    derived_online as is_online,
-    snapped_lat,
-    snapped_lng,
-    distance_meters
+    scored.id as id,
+    scored.display_name as display_name,
+    scored.username as username,
+    scored.avatar_url as avatar_url,
+    scored.age as age,
+    scored.gender as gender,
+    scored.city as city,
+    scored.country as country,
+    scored.intention as intention,
+    scored.casual_intent as casual_intent,
+    scored.bio as bio,
+    scored.derived_online as is_online,
+    scored.snapped_lat as snapped_lat,
+    scored.snapped_lng as snapped_lng,
+    scored.distance_meters as distance_meters
   from scored
   where (p_online_only = false or derived_online = true)
   order by

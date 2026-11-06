@@ -83,30 +83,19 @@ export default function MettivoVoicePage() {
         // A read-only notice; never block browsing on it.
       }
 
-      try {
-        // M9/M12: this surface used to read the plain `public_profiles` view, so
-        // a blocked member could still appear here. Eligibility now comes from
-        // `discover_profiles()` in PostgreSQL — blocked pairs, suspended
-        // members, anyone already liked/passed and anyone already matched are
-        // removed before the browser sees them — and ordering comes from the
-        // deterministic rule-based score.
-        const { data: me } = await supabase
-          .from('profiles')
-          .select('intention, interests, prompts')
-          .eq('id', user.id)
-          .maybeSingle();
-
+        try {
+        // M9/M12: eligibility comes from `discover_profiles()` in PostgreSQL —
+        // blocked pairs, suspended members, anyone already liked/passed and
+        // anyone already matched are removed before the browser sees them.
+        // No direct profiles-table query is needed for discovery data.
         const candidates = await fetchDiscoveryCandidates({ onlineOnly: true, limit: 20 });
 
         const ranked = rankDiscovery(
           {
             id: user.id,
-            intention: typeof me?.intention === 'string' ? me.intention : null,
-            interests: Array.isArray(me?.interests) ? me.interests : [],
-            promptAnswers:
-              typeof me?.prompts === 'object' && me?.prompts !== null
-                ? (me.prompts as Record<string, string>)
-                : {},
+            intention: null,
+            interests: [],
+            promptAnswers: {},
           },
           candidates,
           { limit: 20 }

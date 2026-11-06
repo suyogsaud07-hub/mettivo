@@ -99,6 +99,7 @@ export function useChatMessages(
   } | null>(null);
   const hasMoreRef = useRef(hasMore);
   const currentUserIdRef = useRef<string | null>(null);
+  const itemsRef = useRef<ChatListItem[]>([]);
 
   useEffect(() => {
     otherIdentityRef.current = otherIdentity;
@@ -111,6 +112,10 @@ export function useChatMessages(
   useEffect(() => {
     currentUserIdRef.current = currentUserId;
   }, [currentUserId]);
+
+  useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
 
   const loadMessages = useCallback(
     async (older: boolean = false): Promise<void> => {
@@ -276,7 +281,7 @@ export function useChatMessages(
           // Ignore our own optimistic insert; the real row replaces it.
           if ('optimisticId' in row) return;
 
-          const lastItem = items[items.length - 1];
+          const lastItem = itemsRef.current[itemsRef.current.length - 1];
           const lastSender = lastItem && 'senderId' in lastItem
             ? (lastItem as ChatMessage).senderId
             : null;

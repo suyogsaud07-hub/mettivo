@@ -49,7 +49,7 @@ export function useTyping(): UseTypingResult {
   // changed on a re-render).
   const subscribedMatchIdRef = useRef<string | null>(null);
 
-  const addOrRefresh = useCallback((userId: string, userName: string) => {
+  const addOrRefresh = useCallback((userId: string) => {
     if (userId === myUserIdRef.current) return;
     clearTimer(userId);
     setTypingUsers((prev) => (prev.includes(userId) ? prev : [...prev, userId]));
@@ -123,7 +123,7 @@ export function useTyping(): UseTypingResult {
           }) => {
             const payload = message.payload;
             if (!payload || payload.userId === userId) return;
-            addOrRefresh(payload.userId, payload.userName);
+            addOrRefresh(payload.userId);
           }
         )
         .on(

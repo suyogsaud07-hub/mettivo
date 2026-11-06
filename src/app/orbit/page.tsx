@@ -576,7 +576,6 @@ export default function OrbitPage() {
   const [profiles, setProfiles] = useState<OrbitProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [emptyToast, setEmptyToast] = useState(false);
   const [locateError, setLocateError] = useState<string | null>(null);
   const [locating, setLocating] = useState(false);
 
@@ -647,12 +646,6 @@ export default function OrbitPage() {
             distanceMeters: typeof row.distance_meters === 'number' ? row.distance_meters : 0,
           }));
           setProfiles(parsed);
-          if (parsed.length === 0) {
-            setEmptyToast(true);
-            setTimeout(() => setEmptyToast(false), 4000);
-          } else {
-            setEmptyToast(false);
-          }
         }
       } catch (err) {
         if (seq !== requestSeqRef.current) return;

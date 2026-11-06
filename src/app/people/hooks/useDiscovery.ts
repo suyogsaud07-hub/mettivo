@@ -6,7 +6,6 @@ import {
   useRef,
   useState,
 } from 'react';
-import { supabase } from '@/lib/supabase';
 import {
   fetchDiscoveryCandidates,
   type DiscoveryCandidate,
@@ -16,7 +15,7 @@ import {
   setFollow,
   FollowError,
 } from '@/lib/follows';
-import { getBrowserLocation, formatDistance } from '@/lib/nearby';
+import { getBrowserLocation } from '@/lib/nearby';
 import { useFollow } from '@/context/FollowContext';
 
 export interface DiscoveryProfile extends DiscoveryCandidate {
@@ -58,6 +57,7 @@ export function useDiscovery(options: UseDiscoveryOptions = {}) {
 
   const isMountedRef = useRef(true);
   const processingRef = useRef(false);
+  const profilesRef = useRef<DiscoveryProfile[]>([]);
 
   const { following, hydrated } = useFollow();
 
@@ -66,6 +66,10 @@ export function useDiscovery(options: UseDiscoveryOptions = {}) {
       isMountedRef.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    profilesRef.current = profiles;
+  }, [profiles]);
 
   const current = profiles[index];
 
@@ -78,43 +82,21 @@ export function useDiscovery(options: UseDiscoveryOptions = {}) {
   );
 
   /**
-   * Resolve the signed-in member's location. Prefer the stored profile
-   * location; fall back to browser geolocation.
+   * Resolve the signed-in member's location via browser geolocation.
+   * Profile discovery eligibility is enforced server-side by `discover_profiles()`.
    */
   const resolveLocation = useCallback(async () => {
     let lat: number | null = null;
     let lng: number | null = null;
 
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('latitude, longitude')
-          .eq('id', user.id)
-          .maybeSingle();
-
-        if (!error && data) {
-          if (typeof data.latitude === 'number' && typeof data.longitude === 'number') {
-            lat = data.latitude;
-            lng = data.longitude;
-          }
-        }
+      const browserPos = await getBrowserLocation();
+      if (browserPos) {
+        lat = browserPos.latitude;
+        lng = browserPos.longitude;
       }
     } catch {
-      // fall through to browser geolocation
-    }
-
-    if (lat === null || lng === null) {
-      try {
-        const browserPos = await getBrowserLocation();
-        if (browserPos) {
-          lat = browserPos.latitude;
-          lng = browserPos.longitude;
-        }
-      } catch {
-        // location unavailable
-      }
+      // location unavailable
     }
 
     if (lat !== null && lng !== null) {
@@ -142,43 +124,13 @@ export function useDiscovery(options: UseDiscoveryOptions = {}) {
         excludeIds,
       });
 
-      const distances = new Map<string, number>();
-
-      if (userLat !== null && userLng !== null) {
-        try {
-          const { data: nearby, error: nearbyError } = await supabase.rpc(
-            'get_nearby_profiles',
-            {
-              user_lat: userLat,
-              user_lng: userLng,
-              radius_km: radiusKm,
-            }
-          );
-
-          if (!nearbyError && Array.isArray(nearby)) {
-            for (const row of nearby) {
-              const id = String(row.id ?? '');
-              const meters = typeof row.distance_meters === 'number' ? row.distance_meters : 0;
-              if (id) distances.set(id, meters);
-            }
-          } else {
-            console.error('[discovery] get_nearby_profiles failed:', nearbyError?.message);
-          }
-        } catch (err) {
-          console.error('[discovery] get_nearby_profiles threw:', err);
-        }
-      }
-
-      return candidates.map((c) => {
-        const meters = distances.get(c.id);
-        return {
-          ...c,
-          distanceMeters: meters ?? null,
-          distanceText: meters !== null && meters !== undefined ? formatDistance(meters) : null,
-        };
-      });
+      return candidates.map((c) => ({
+        ...c,
+        distanceMeters: null,
+        distanceText: null,
+      }));
     },
-    [minAge, maxAge, genders, batchSize, userLat, userLng, radiusKm]
+    [minAge, maxAge, genders, batchSize, radiusKm]
   );
 
   const loadBatch = useCallback(
@@ -188,7 +140,7 @@ export function useDiscovery(options: UseDiscoveryOptions = {}) {
 
       try {
         const existingIds = append
-          ? profiles.map((p) => p.id)
+          ? profilesRef.current.map((p) => p.id)
           : [];
 
         const next = await fetchBatch(existingIds);
@@ -216,7 +168,7 @@ export function useDiscovery(options: UseDiscoveryOptions = {}) {
         }
       }
     },
-    [profiles, fetchBatch]
+    [fetchBatch]
   );
 
   const loadInitial = useCallback(async () => {
@@ -234,11 +186,11 @@ export function useDiscovery(options: UseDiscoveryOptions = {}) {
    * Background prefetch when the stack is running low.
    */
   useEffect(() => {
-    if (profiles.length === 0 || index < profiles.length - 2) return;
+    if (profilesRef.current.length === 0 || index < profilesRef.current.length - 2) return;
 
     let cancelled = false;
     (async () => {
-      const existing = profiles.map((p) => p.id);
+      const existing = profilesRef.current.map((p) => p.id);
       const next = await fetchBatch(existing);
       if (cancelled || !isMountedRef.current) return;
       setProfiles((prev) => [...prev, ...next]);
@@ -247,7 +199,7 @@ export function useDiscovery(options: UseDiscoveryOptions = {}) {
     return () => {
       cancelled = true;
     };
-  }, [index, profiles.length, fetchBatch, profiles]);
+  }, [index, fetchBatch]);
 
   /**
    * Record a like or pass and advance the stack. Errors are surfaced but do

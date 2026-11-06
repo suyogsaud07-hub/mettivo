@@ -67,23 +67,11 @@ export default function DiscoverPage() {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) { router.push('/auth'); return; }
 
-    // GATEKEEPER: Check if profile exists first. This also loads the fields the
-    // ranking engine scores me on, so the feed is ordered for the actual member
-    // rather than for a generic one.
-    const { data: profileCheck } = await supabase
-      .from('profiles')
-      .select('onboarding_completed, gender, intention, interests, prompts, looking_for')
-      .eq('id', user.id)
-      .single();
+    // GATEKEEPER: eligibility is enforced server-side by `discover_profiles()`.
+    // No direct profiles-table query is needed for discovery data; the RPC
+    // handles blocked pairs, suspended members, and already-decided members.
 
-    if (!profileCheck || profileCheck.onboarding_completed === false) {
-      router.push('/profile');
-      return;
-    }
-
-    const savedPreferences = Array.isArray(profileCheck.looking_for)
-      ? profileCheck.looking_for
-      : [];
+    const savedPreferences: string[] = [];
     const preferredGenders = gendersForLookingFor(savedPreferences);
     const effectiveGenders = applyPreferences
       ? preferredGenders
@@ -106,13 +94,10 @@ export default function DiscoverPage() {
 
       const me = {
         id: user.id,
-        gender: typeof profileCheck.gender === 'string' ? profileCheck.gender : null,
-        intention: typeof profileCheck.intention === 'string' ? profileCheck.intention : null,
-        interests: Array.isArray(profileCheck.interests) ? profileCheck.interests : [],
-        promptAnswers:
-          typeof profileCheck.prompts === 'object' && profileCheck.prompts !== null
-            ? (profileCheck.prompts as Record<string, string>)
-            : {},
+        gender: null,
+        intention: null,
+        interests: [],
+        promptAnswers: {},
         lookingFor: savedPreferences,
       };
 
