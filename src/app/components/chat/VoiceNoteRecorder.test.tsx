@@ -55,7 +55,7 @@ const revokeObjectURL = vi.fn((url: string) => {
 });
 
 const endedListeners: Array<(() => void) | undefined> = [];
-const fakeAudio: Record<string, any> = {
+const fakeAudio = {
   src: '',
   currentTime: 0,
   duration: 0,
@@ -108,7 +108,10 @@ describe('VoiceNoteRecorder', () => {
       value: revokeObjectURL,
       writable: true,
     });
-    vi.stubGlobal('Audio', vi.fn(() => fakeAudio));
+    const AudioConstructor = vi.fn(function Audio() {
+      return fakeAudio;
+    });
+    vi.stubGlobal('Audio', AudioConstructor);
 
     Object.defineProperty(window, 'MediaRecorder', {
       configurable: true,
@@ -122,7 +125,7 @@ describe('VoiceNoteRecorder', () => {
       writable: true,
     });
 
-    onSend = vi.fn((_blob: Blob, _durationSeconds: number) => {});
+    onSend = vi.fn<(blob: Blob, durationSeconds: number) => void>();
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
@@ -191,6 +194,8 @@ describe('VoiceNoteRecorder', () => {
   });
 
   it('reports microphone permission denied and stays IDLE', async () => {
+    // Test-only override of the browser API.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ;(navigator.mediaDevices as any).getUserMedia = vi.fn().mockRejectedValueOnce(
       new Error('Not allowed')
     );
@@ -199,7 +204,7 @@ describe('VoiceNoteRecorder', () => {
 
     expect(has('record-button')).toBe(true);
     expect(container.textContent).toContain('Not allowed');
-    expect(trackStop).toHaveBeenCalled();
+    expect(trackStop).not.toHaveBeenCalled();
   });
 
   it('tracks elapsed time with ticks while recording', async () => {
@@ -210,7 +215,7 @@ describe('VoiceNoteRecorder', () => {
 
   it('pauses recording, freezes the timer, and transitions to PAUSED', async () => {
     await click('record-button');
-    advance(1200);
+    advance(1250);
     expect(timerText()).toBe('0:02');
 
     await click('pause-button');

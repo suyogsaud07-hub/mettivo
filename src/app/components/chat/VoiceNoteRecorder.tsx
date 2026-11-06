@@ -134,15 +134,12 @@ export default function VoiceNoteRecorder({ onSend }: VoiceNoteRecorderProps) {
     setIsPlaying(false);
   }, [stopPlayback]);
 
-  const elapsedMs = useCallback((): number => {
+  const tickRecording = useCallback(() => {
     const now = Date.now();
     const base = segmentStartRef.current ?? now;
-    return Math.max(0, accumulatedMsRef.current + (now - base));
+    const elapsed = Math.max(0, accumulatedMsRef.current + (now - base));
+    setDurationSeconds(Math.ceil(elapsed / 1000));
   }, []);
-
-  const tickRecording = useCallback(() => {
-    setDurationSeconds(Math.ceil(elapsedMs() / 1000));
-  }, [elapsedMs]);
 
   const setRecordingError = useCallback((message: string) => {
     setError(message);
@@ -256,7 +253,6 @@ export default function VoiceNoteRecorder({ onSend }: VoiceNoteRecorderProps) {
     }
   }, [
     clearRecordingTimer,
-    elapsedMs,
     releaseRecording,
     setRecordingError,
     stopPlayback,
@@ -319,10 +315,10 @@ export default function VoiceNoteRecorder({ onSend }: VoiceNoteRecorderProps) {
       audioRef.current = audio;
 
       const handleTimeUpdate = () => {
-        setPlaybackCurrent(audio.currentTime);
+        setPlaybackCurrent(audio?.currentTime ?? 0);
       };
       const handleEnded = () => {
-        audio.pause();
+        audio?.pause();
         setPlaybackCurrent(0);
         setIsPlaying(false);
         clearPlaybackTimer();
@@ -344,7 +340,7 @@ export default function VoiceNoteRecorder({ onSend }: VoiceNoteRecorderProps) {
       const audio = audioRef.current;
       if (audio) setPlaybackCurrent(audio.currentTime);
     }, TICK_MS);
-  }, [isPlaying, playbackCurrent, blobRef.current, clearPlaybackTimer]);
+  }, [isPlaying, playbackCurrent, clearPlaybackTimer]);
 
   const sendRecording = useCallback(async () => {
     if (sendingRef.current) return;
