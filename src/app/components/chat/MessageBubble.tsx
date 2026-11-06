@@ -8,9 +8,9 @@ import {
   useState,
 } from 'react';
 import {
+  ArrowLeftRight,
   Copy,
   EyeOff,
-  Languages,
   MessageCircle as ReplyIcon,
   Pin,
   Share2 as ForwardIcon,
@@ -120,14 +120,10 @@ export default function MessageBubble({
   const [reactionBarOpen, setReactionBarOpen] = useState(false);
   const [reactionBarPos, setReactionBarPos] = useState({ x: 0, y: 0 });
   const [reactions, setReactions] = useState<MessageReaction[]>([]);
-  const [translationState, setTranslationState] = useState<{
-    original: string;
-    translated: string | null;
-    showing: 'original' | 'translated' | null;
-    loading: boolean;
-  } | null>(null);
+  const [isTranslated, setIsTranslated] = useState(false);
+  const [translatedText, setTranslatedText] = useState<string | null>(null);
+  const [translationLoading, setTranslationLoading] = useState(false);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
-
   const menuRef = useRef<HTMLDivElement>(null);
   const reactionBarRef = useRef<HTMLDivElement>(null);
   const messageRef = useRef<HTMLDivElement>(null);
@@ -299,16 +295,19 @@ export default function MessageBubble({
   }, [message, closeMenu, onReply]);
 
   const handleTranslate = useCallback(async () => {
-    setTranslationState({
-      original: message.content,
-      translated: null,
-      showing: null,
-      loading: true,
-    });
-    closeMenu();
+    // Revert instantly without an API call when already translated.
+    if (isTranslated) {
+      setIsTranslated(false);
+      return;
+    }
+    if (translationLoading) return;
+    setTranslationLoading(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
-      const targetLang = (user?.user_metadata?.locale ?? 'en').toLowerCase();
+      const targetLang =
+        (user?.user_metadata?.preferred_language ??
+          user?.user_metadata?.locale ??
+          'en').toLowerCase();
       const res = await fetch('/api/translate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -319,21 +318,16 @@ export default function MessageBubble({
       });
       if (!res.ok) throw new Error('Translation failed');
       const json = await res.json();
-      setTranslationState((prev) => ({
-        ...(prev ?? { original: message.content, translated: null, showing: null, loading: true }),
-        translated: json.translated ?? json.text ?? null,
-        showing: 'translated',
-        loading: false,
-      }));
+      setTranslatedText(
+        json.translatedText ?? json.translated ?? json.text ?? null,
+      );
+      setIsTranslated(true);
     } catch (err) {
       console.error('[translate] failed:', err);
-      setTranslationState((prev) => ({
-        ...(prev ?? { original: message.content, translated: null, showing: null, loading: true }),
-        showing: 'original',
-        loading: false,
-      }));
+    } finally {
+      setTranslationLoading(false);
     }
-  }, [message.content, closeMenu]);
+  }, [message.content, isTranslated, translationLoading]);
 
   const onPointerDown = useCallback(
     (e: React.PointerEvent) => {
@@ -383,16 +377,15 @@ export default function MessageBubble({
   const showUnsend = canUnsend(message, currentUserId);
 
   const displayContent = useMemo(() => {
-    const textToShow =
-      translationState && translationState.showing !== 'original'
-        ? translationState.translated ?? message.content
-        : message.content;
+    const textToShow = isTranslated
+      ? (translatedText ?? message.content)
+      : message.content;
     const highlighted = highlightMatches(textToShow, searchQuery);
     return <div
       className="prose-sm prose-invert max-w-none text-[14px] leading-relaxed break-words whitespace-pre-wrap"
       dangerouslySetInnerHTML={{ __html: highlighted }}
     />;
-  }, [message.content, translationState, searchQuery]);
+  }, [message.content, isTranslated, translatedText, searchQuery]);
 
   const callLabel = (): string => {
     if (messageType === 'video_call') return 'Missed video call';
@@ -508,36 +501,6 @@ export default function MessageBubble({
                       </span>
                     ) : null}
                     {displayContent}
-                    {translationState && (
-                      <div className="mt-1 flex items-center gap-2">
-                        {translationState.loading ? (
-                          <span className="text-[10px] text-[#B58A83]">Translating…</span>
-                        ) : (
-                          <>
-                            <button
-                              onClick={() =>
-                                setTranslationState((prev) =>
-                                  prev
-                                    ? {
-                                        ...prev,
-                                        showing:
-                                          prev.showing === 'original'
-                                            ? 'translated'
-                                            : 'original',
-                                      }
-                                    : null
-                                )
-                              }
-                              className="text-[10px] underline hover:text-[#D4B18A]"
-                            >
-                              {translationState.showing === 'original'
-                                ? 'Translate'
-                                : 'Show Original'}
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    )}
                   </div>
                   <div
                     className={`absolute top-0 ${isMe ? '-left-24' : '-right-24'} hidden group-hover:flex flex-col gap-1 bg-[#1C1822] rounded p-1 text-xs border border-[#34283F]`}
@@ -572,7 +535,7 @@ export default function MessageBubble({
                       {isPinned ? 'Unpin' : 'Pin'}
                     </button>
                     <button onClick={handleTranslate} className="px-2 py-1 hover:bg-[#34283F] rounded text-left whitespace-nowrap text-[#F2E9E4] flex items-center gap-1">
-                      <Languages size={14} strokeWidth={2} /> Translate
+                      <ArrowLeftRight size={14} strokeWidth={2} /> Translate
                     </button>
                   </div>
                 </div>
@@ -617,7 +580,7 @@ export default function MessageBubble({
                 style={{
                   display: 'flex',
                   alignItems: 'center',
-                  gap: '4px',
+                  gap: '2px',
                   marginTop: '2px',
                   alignSelf: isMe ? 'flex-end' : 'flex-start',
                 }}
@@ -632,72 +595,13 @@ export default function MessageBubble({
                 </span>
                 <button
                   type="button"
-                  onClick={() => {
-                    if (!message.content.trim()) return;
-                    setTranslationState({
-                      original: message.content,
-                      translated: null,
-                      showing: null,
-                      loading: true,
-                    });
-                    void (async () => {
-                      try {
-                        const res = await fetch('/api/translate', {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({
-                            text: message.content,
-                            targetLanguage: 'en',
-                          }),
-                        });
-                        if (!res.ok) throw new Error('Translation failed');
-                        const json = await res.json();
-                        setTranslationState((prev) => ({
-                          ...(prev ?? {
-                            original: message.content,
-                            translated: null,
-                            showing: null,
-                            loading: true,
-                          }),
-                          translated: json.translatedText ?? json.translated ?? json.text ?? null,
-                          showing: 'translated',
-                          loading: false,
-                        }));
-                      } catch (err) {
-                        console.error('[translate] failed:', err);
-                        setTranslationState((prev) => ({
-                          ...(prev ?? {
-                            original: message.content,
-                            translated: null,
-                            showing: null,
-                            loading: true,
-                          }),
-                          showing: 'original',
-                          loading: false,
-                        }));
-                      }
-                    })();
-                  }}
-                  disabled={translationState?.loading}
-                  aria-label="Translate message"
-                  className="p-1 hover:bg-[#34283F] rounded transition-colors"
-                  title="Translate"
+                  onClick={handleTranslate}
+                  disabled={translationLoading}
+                  aria-label={isTranslated ? 'Show original' : 'Translate message'}
+                  title={isTranslated ? 'Show original' : 'Translate'}
+                  className={`p-1 rounded flex items-center justify-center transition-colors ${isTranslated ? 'bg-[#D4B18A] text-black' : 'bg-blue-600 text-white'}`}
                 >
-                  {translationState?.loading ? (
-                    <span className="text-[8px] animate-spin">↻</span>
-                  ) : (
-                    <Languages
-                      size={12}
-                      strokeWidth={1.5}
-                      className={`text-xs ${
-                        translationState?.showing === 'translated'
-                          ? 'text-[#D4B18A]'
-                          : isMe
-                            ? 'text-[#F2E9E4]/60'
-                            : 'text-[#B58A83]'
-                      }`}
-                    />
-                  )}
+                  <ArrowLeftRight size={12} strokeWidth={1.5} />
                 </button>
               </div>
             )}
@@ -777,7 +681,7 @@ export default function MessageBubble({
               <Pin size={14} strokeWidth={2} /> {isPinned ? 'Unpin' : 'Pin'}
             </button>
             <button onClick={handleTranslate} className="w-full text-left px-3 py-2 text-sm hover:bg-[#34283F] text-[#F2E9E4] flex items-center gap-2">
-              <Languages size={14} strokeWidth={2} /> Translate
+              <ArrowLeftRight size={14} strokeWidth={2} /> Translate
             </button>
           </div>
         </div>

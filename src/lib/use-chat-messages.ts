@@ -330,6 +330,7 @@ export function useChatMessages(
             );
 
             setItems((prev) => {
+              if (prev.some((m) => 'id' in m && m.id === msg.id)) return prev;
               const last = prev[prev.length - 1];
               const lastCreatedAt = last
                 ? ('createdAt' in last ? last.createdAt : null)
@@ -442,6 +443,7 @@ export function useChatMessages(
                 lastSender
               );
               setItems((prev) => {
+                if (prev.some((m) => 'id' in m && m.id === msg.id)) return prev;
                 const last = prev[prev.length - 1];
                 const lastCreatedAt = last
                   ? ('createdAt' in last ? last.createdAt : null)
