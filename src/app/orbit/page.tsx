@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import Map, { Marker, Popup, MapRef, useMap } from 'react-map-gl';
+import type { ErrorEvent } from 'react-map-gl';
 import type { GeoJSONSourceSpecification, LayerSpecification, PointLike } from 'mapbox-gl';
 import type { FeatureCollection, Point, Feature } from 'geojson';
 import 'mapbox-gl/dist/mapbox-gl.css';
@@ -507,7 +508,7 @@ const OrbitMap = ({
   const handleMapError = useCallback((e: ErrorEvent) => {
     if (errorLoggedRef.current) return;
     errorLoggedRef.current = true;
-    console.error('[orbit] map error:', e?.message ?? e);
+    console.error('[orbit] map error:', e?.error?.message ?? String(e));
   }, []);
 
   return (
