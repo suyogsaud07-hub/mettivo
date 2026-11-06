@@ -142,6 +142,79 @@ export async function unlikeProfile(targetUserId: string): Promise<void> {
 }
 
 /**
+ * Rewinds the signed-in member's most recent discovery decision.
+ *
+ * Reads the latest `likes` row owned by the caller (ordered by `updated_at`,
+ * then `created_at`) and deletes it only if it is still owned by the caller and
+ * still carries the same `updated_at` — optimistic concurrency control that
+ * aborts cleanly when another decision landed in between. This reverses a like
+ * or a pass without touching another member's rows, matches, conversations,
+ * blocks, or notifications.
+ *
+ * NOTE: if the rewound like created a mutual match, the like record is removed
+ * but the match row cannot be removed here (there is no delete policy on
+ * `matches`). The match is benign and can be removed through the existing
+ * unmatch flow. Callers should treat rewind of a match-forming like as a
+ * known, documented limitation rather than fabricating match deletion.
+ */
+export async function rewindLastLike(): Promise<{
+  targetUserId: string;
+  wasLike: boolean;
+} | null> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    throw new LikeError('You must be signed in to do that.', '28000');
+  }
+
+  const { data: rows, error: readError } = await supabase
+    .from('likes')
+    .select('id, liked_id, is_like, updated_at')
+    .eq('liker_id', user.id)
+    .order('updated_at', { ascending: false })
+    .order('created_at', { ascending: false })
+    .limit(1);
+
+  if (readError) {
+    console.error('[likes] rewind read failed:', readError.message);
+    throw new LikeError(readError.message, readError.code);
+  }
+
+  if (!rows?.length) {
+    return null;
+  }
+
+  const row = rows[0];
+
+  // Optimistic delete: only removes the row if it is still the one we read.
+  const { data: deleted, error: deleteError } = await supabase
+    .from('likes')
+    .delete()
+    .eq('id', row.id)
+    .eq('liker_id', user.id)
+    .eq('updated_at', row.updated_at)
+    .select('liked_id, is_like');
+
+  if (deleteError) {
+    console.error('[likes] rewind delete failed:', deleteError.message);
+    throw new LikeError(deleteError.message, deleteError.code);
+  }
+
+  if (!deleted?.length) {
+    throw new LikeError(
+      'Nothing to rewind — your stack may have changed. Refresh and try again.'
+    );
+  }
+
+  return {
+    targetUserId: deleted[0].liked_id,
+    wasLike: deleted[0].is_like === true,
+  };
+}
+
+/**
  * Whether the signed-in member currently has an ACTIVE like on `targetUserId`.
  *
  * A pass (`is_like = false`) is not a like. Reads are permitted by

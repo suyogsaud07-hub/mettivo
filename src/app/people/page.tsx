@@ -8,11 +8,17 @@ import DiscoveryCard from './components/DiscoveryCard';
 import DiscoveryActionButtons from './components/DiscoveryActionButtons';
 import DiscoveryEmptyState from './components/DiscoveryEmptyState';
 import DiscoveryCardSkeleton from './components/DiscoveryCardSkeleton';
+import DiscoveryTabs from './components/DiscoveryTabs';
+import { DiscoveryComingSoon } from './components/DiscoveryTabs';
 import Toast from '@/app/components/ui/Toast';
 
+type TabId = 'for-you' | 'double-date' | 'astrology';
+
 export default function PeoplePage() {
-  const [sheetOpen, setSheetOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<TabId>('for-you');
+  const [isModalOpen, setIsModalOpen] = useState(false);
   const [toast, setToast] = useState<{ type: 'like' | 'pass'; message: string } | null>(null);
+  const [infoToast, setInfoToast] = useState<string | null>(null);
 
   const {
     current,
@@ -21,10 +27,14 @@ export default function PeoplePage() {
     error,
     empty,
     decisionPending,
-    isFollowing,
+    canRewind,
+    isRewinding,
+    rewindError,
     handleLike,
     handlePass,
-    handleFollow,
+    handleRewind,
+    handleSuperLike,
+    handleMessage,
     refresh,
   } = useDiscovery({
     batchSize: 10,
@@ -34,6 +44,15 @@ export default function PeoplePage() {
   const clearToast = useCallback(() => {
     setTimeout(() => setToast(null), 1200);
   }, []);
+
+  const clearInfoToast = useCallback(() => {
+    setTimeout(() => setInfoToast(null), 2000);
+  }, []);
+
+  const showInfo = useCallback((message: string) => {
+    setInfoToast(message);
+    clearInfoToast();
+  }, [clearInfoToast]);
 
   const handleLikeAction = useCallback(
     (targetId: string) => {
@@ -53,12 +72,26 @@ export default function PeoplePage() {
     [handlePass, clearToast]
   );
 
-  const handleFollowAction = useCallback(
-    (targetId: string) => {
-      void handleFollow(targetId);
+  const handleRewindAction = useCallback(async () => {
+    const ok = await handleRewind();
+    if (!ok && rewindError) {
+      setInfoToast(rewindError);
+    }
+  }, [handleRewind, rewindError]);
+
+  const handleSuperLikeAction = useCallback(() => {
+    void handleSuperLike();
+    showInfo('Super Like is coming soon.');
+  }, [handleSuperLike, showInfo]);
+
+  const handleMessageAction = useCallback(
+    async (targetId: string) => {
+      await handleMessage(targetId);
     },
-    [handleFollow]
+    [handleMessage]
   );
+
+  const isComingSoon = activeTab !== 'for-you';
 
   if (loading) {
     return (
@@ -101,65 +134,56 @@ export default function PeoplePage() {
 
   return (
     <div className="h-screen dvh:h-[100dvh] bg-[#17121A] text-[#F2E9E4] relative overflow-hidden">
-      {/* Header */}
-      <header className="absolute top-0 left-0 right-0 z-30 p-6 flex justify-between items-center pointer-events-none">
+      {/* Header + navigation tabs */}
+      <header className="absolute top-0 left-0 right-0 z-30 p-6 flex flex-col items-center gap-4 pointer-events-none">
         <div className="bg-[#211A28]/80 backdrop-blur-md rounded-xl px-4 py-2 pointer-events-auto">
           <h1 className="text-lg font-bold text-[#F2E9E4]">People</h1>
         </div>
-        <div className="bg-[#211A28]/80 backdrop-blur-md rounded-xl px-4 py-2 pointer-events-auto">
-          <span className="text-sm text-[#B58A83]">
-            {current.displayName}{current.age ? `, ${current.age}` : ''}
-          </span>
-        </div>
+        <DiscoveryTabs activeTab={activeTab} onTabChange={(tab) => setActiveTab(tab)} />
       </header>
 
-      {/* Discovery card area — full screen, photos 65-75% */}
-      <main className="relative flex flex-col h-full w-full items-center justify-center pt-20 pb-24 px-4">
-        <DiscoveryCard
-          profile={{
-            id: current.id,
-            displayName: current.displayName,
-            age: current.age,
-            city: current.city,
-            country: current.country,
-            bio: current.bio,
-            intention: current.intention,
-            casualIntent: current.casualIntent,
-            interests: current.interests,
-            photos: current.photos,
-            avatarUrl: current.avatarUrl,
-            distanceText: current.distanceText,
-            distanceMeters: current.distanceMeters,
-            isOnline: current.online,
-            isVerified: current.isVerified,
-          }}
-          isSheetOpen={sheetOpen}
-          onSheetToggle={() => setSheetOpen((prev) => !prev)}
-          onLike={handleLikeAction}
-          onPass={handlePassAction}
-          disabled={decisionPending === current.id || loading}
-        />
-      </main>
+      <main className="relative flex flex-col h-full w-full items-center justify-center pt-24 pb-20 px-4">
+        {isComingSoon ? (
+          <DiscoveryComingSoon tab={activeTab} />
+        ) : (
+          <>
+            <DiscoveryCard
+              profile={current}
+              isModalOpen={isModalOpen}
+              onModalToggle={() => setIsModalOpen((prev) => !prev)}
+              onLike={handleLikeAction}
+              onPass={handlePassAction}
+              disabled={decisionPending === current.id || loading}
+            />
 
-      {/* Action buttons — Tinder style overlay */}
-      <div className="absolute bottom-[120px] left-0 right-0 z-40 flex justify-center items-end pb-12">
-        <DiscoveryActionButtons
-          current={{
-            id: current.id,
-            displayName: current.displayName,
-          }}
-          isLiked={false}
-          isPassed={false}
-          isFollowing={isFollowing(current.id)}
-          decisionPending={decisionPending}
-          onLike={handleLikeAction}
-          onPass={handlePassAction}
-          onFollow={handleFollowAction}
-        />
-      </div>
+            <DiscoveryActionButtons
+              current={{
+                id: current.id,
+                displayName: current.displayName,
+              }}
+              decisionPending={decisionPending}
+              canRewind={canRewind}
+              isRewinding={isRewinding}
+              onRewind={handleRewindAction}
+              onPass={handlePassAction}
+              onSuperLike={handleSuperLikeAction}
+              onLike={handleLikeAction}
+              onMessage={handleMessageAction}
+            />
+
+            {rewindError && (
+              <p className="mt-2 text-xs text-[#EF4444] text-center">{rewindError}</p>
+            )}
+          </>
+        )}
+      </main>
 
       {toast && (
         <Toast type={toast.type} message={toast.message} onDismiss={() => setToast(null)} />
+      )}
+
+      {infoToast && (
+        <Toast type="like" message={infoToast} onDismiss={() => setInfoToast(null)} />
       )}
 
       <MobileNav />

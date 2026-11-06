@@ -2,239 +2,173 @@
 
 import { useCallback } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { X, Heart, UserPlus } from 'lucide-react';
+import { X, Heart, Star, RefreshCw, Send } from 'lucide-react';
 
 interface DiscoveryActionButtonsProps {
   current: {
     id: string;
     displayName: string;
   } | null;
-  isLiked: boolean;
-  isPassed: boolean;
-  isFollowing: boolean;
   decisionPending: string | null;
-  onLike: (targetId: string) => void;
+  canRewind: boolean;
+  isRewinding: boolean;
+  onRewind: () => void;
   onPass: (targetId: string) => void;
-  onFollow: (targetId: string) => void;
+  onSuperLike: () => void;
+  onLike: (targetId: string) => void;
+  onMessage: (targetId: string) => void;
 }
 
 interface ButtonConfig {
   icon: React.ReactNode;
   iconColor: string;
   shadowColor: string;
+  label: string;
 }
 
-const BUTTON_CONFIG: Record<'pass' | 'like' | 'follow', ButtonConfig> = {
+const BUTTON_CONFIG: Record<
+  'rewind' | 'pass' | 'superlike' | 'like' | 'message',
+  ButtonConfig
+> = {
+  rewind: {
+    icon: <RefreshCw size={22} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />,
+    iconColor: '#D9B38C',
+    shadowColor: 'rgba(217, 179, 140, 0.25)',
+    label: 'Rewind',
+  },
   pass: {
     icon: <X size={28} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />,
     iconColor: '#F3A7AD',
     shadowColor: 'rgba(243, 167, 173, 0.25)',
+    label: 'Pass',
+  },
+  superlike: {
+    icon: <Star size={24} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" fill="none" />,
+    iconColor: '#3B82F6',
+    shadowColor: 'rgba(59, 130, 246, 0.3)',
+    label: 'Super Like',
   },
   like: {
-    icon: <Heart size={30} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" fill="none" />,
+    icon: <Heart size={32} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" fill="none" />,
     iconColor: '#10B981',
     shadowColor: 'rgba(16, 185, 129, 0.35)',
+    label: 'Like',
   },
-  follow: {
-    icon: <UserPlus size={24} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />,
+  message: {
+    icon: <Send size={22} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />,
     iconColor: '#D9B38C',
     shadowColor: 'rgba(217, 179, 140, 0.25)',
+    label: 'Message',
   },
+};
+
+const SIZE: Record<'rewind' | 'pass' | 'superlike' | 'like' | 'message', string> = {
+  rewind: 'w-16 h-16',
+  pass: 'w-20 h-20',
+  superlike: 'w-16 h-16',
+  like: 'w-24 h-24',
+  message: 'w-16 h-16',
 };
 
 export default function DiscoveryActionButtons({
   current,
-  isLiked,
-  isPassed,
-  isFollowing,
   decisionPending,
-  onLike,
+  canRewind,
+  isRewinding,
+  onRewind,
   onPass,
-  onFollow,
+  onSuperLike,
+  onLike,
+  onMessage,
 }: DiscoveryActionButtonsProps) {
-  const pending = decisionPending === current?.id;
+  const pending = decisionPending === current?.id || isRewinding;
 
-  const handleLike = useCallback(() => {
-    if (pending || !current) return;
-    onLike(current.id);
-  }, [current, onLike, pending]);
+  const handleRewind = useCallback(() => {
+    if (pending || !canRewind) return;
+    onRewind();
+  }, [pending, canRewind, onRewind]);
 
   const handlePass = useCallback(() => {
     if (pending || !current) return;
     onPass(current.id);
-  }, [current, onPass, pending]);
+  }, [pending, current, onPass]);
 
-  const handleFollow = useCallback(() => {
+  const handleSuperLike = useCallback(() => {
     if (pending || !current) return;
-    onFollow(current.id);
-  }, [current, onFollow, pending]);
+    onSuperLike();
+  }, [pending, current, onSuperLike]);
+
+  const handleLike = useCallback(() => {
+    if (pending || !current) return;
+    onLike(current.id);
+  }, [pending, current, onLike]);
+
+  const handleMessage = useCallback(() => {
+    if (pending || !current) return;
+    onMessage(current.id);
+  }, [pending, current, onMessage]);
 
   if (!current) return null;
 
+  const renderButton = (
+    key: keyof typeof BUTTON_CONFIG,
+    onClick: () => void,
+    disabled: boolean,
+    busy: boolean
+  ) => {
+    const config = BUTTON_CONFIG[key];
+    const size = SIZE[key];
+    return (
+      <motion.button
+        key={key}
+        type="button"
+        onClick={onClick}
+        disabled={disabled}
+        aria-label={disabled ? `${config.label} unavailable` : `${config.label} on ${current.displayName}`}
+        aria-busy={busy}
+        whileHover={disabled ? {} : { scale: 1.06 }}
+        whileTap={disabled ? {} : { scale: 0.94 }}
+        className={`relative ${size} rounded-full border border-[#34283F]/40 bg-[#17121A] shadow-lg transition-all duration-200 flex items-center justify-center ${disabled ? 'opacity-50 pointer-events-none' : ''}`}
+        style={{
+          boxShadow: `0 0 20px ${config.shadowColor}`,
+        }}
+      >
+        <AnimatePresence mode="wait">
+          {busy ? (
+            <motion.div
+              key="busy"
+              initial={{ opacity: 0, scale: 0.5 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.5 }}
+              className="absolute inset-0 flex items-center justify-center text-[#F2E9E4]"
+            >
+              <RefreshCw size={20} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />
+            </motion.div>
+          ) : (
+            <motion.div
+              key="idle"
+              initial={{ opacity: 0, scale: 0.5 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.5 }}
+              className="flex items-center justify-center w-full h-full"
+            >
+              <span className={`text-[16px] ${config.iconColor}`}>{config.icon}</span>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </motion.button>
+    );
+  };
+
   return (
-    <div className="flex items-center justify-center gap-6 w-full max-w-md mx-auto">
-      <motion.button
-        type="button"
-        onClick={handlePass}
-        disabled={pending}
-        aria-label={`Pass on ${current.displayName}`}
-        aria-busy={pending}
-        whileHover={{ scale: 1.05 }}
-        whileTap={{ scale: 0.95 }}
-        className="relative w-20 h-20 rounded-full border border-[#34283F]/40 bg-[#17121A] text-[#D9B38C] shadow-lg transition-all duration-200"
-        style={{
-          boxShadow: isPassed
-            ? '0 0 0 4px rgba(217, 179, 140, 0.15)'
-            : `0 0 20px ${BUTTON_CONFIG.pass.shadowColor}`,
-          ...(isPassed
-            ? { backgroundColor: '#34283F', borderColor: '#D9B38C' }
-            : {}),
-        }}
-      >
-        <AnimatePresence mode="wait">
-          {isPassed ? (
-            <motion.div
-              key="passed"
-              initial={{ opacity: 0, scale: 0.5 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.5 }}
-              className="flex items-center justify-center w-full h-full"
-            >
-              {BUTTON_CONFIG.pass.icon}
-            </motion.div>
-          ) : (
-            <motion.div
-              key="idle"
-              initial={{ opacity: 0, scale: 0.5 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.5 }}
-              className="flex items-center justify-center w-full h-full"
-            >
-              {BUTTON_CONFIG.pass.icon}
-            </motion.div>
-          )}
-          {pending && (
-            <motion.div
-              key="pending"
-              initial={{ opacity: 0, scale: 0.5 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.5 }}
-              className="absolute inset-0 flex items-center justify-center text-[#D9B38C]"
-            >
-              <X size={28} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </motion.button>
-
-      <motion.button
-        type="button"
-        onClick={handleLike}
-        disabled={pending}
-        aria-label={`Like ${current.displayName}`}
-        aria-busy={pending}
-        whileHover={{ scale: 1.1 }}
-        whileTap={{ scale: 0.9 }}
-        className="relative w-24 h-24 rounded-full border border-[#34283F]/40 bg-[#17121A] text-[#D9B38C] shadow-2xl transition-all duration-200"
-        style={{
-          boxShadow: isLiked
-            ? '0 0 0 5px rgba(217, 179, 140, 0.15)'
-            : `0 0 28px ${BUTTON_CONFIG.like.shadowColor}`,
-          ...(isLiked
-            ? { backgroundColor: '#34283F', borderColor: '#D9B38C' }
-            : {}),
-        }}
-      >
-        <AnimatePresence mode="wait">
-          {isLiked ? (
-            <motion.div
-              key="liked"
-              initial={{ opacity: 0, scale: 0.5 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.5 }}
-              className="flex items-center justify-center w-full h-full"
-            >
-              {BUTTON_CONFIG.like.icon}
-            </motion.div>
-          ) : (
-            <motion.div
-              key="idle"
-              initial={{ opacity: 0, scale: 0.5 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.5 }}
-              className="flex items-center justify-center w-full h-full"
-            >
-              {BUTTON_CONFIG.like.icon}
-            </motion.div>
-          )}
-          {pending && (
-            <motion.div
-              key="pending"
-              initial={{ opacity: 0, scale: 0.5 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.5 }}
-              className="absolute inset-0 flex items-center justify-center text-[#10B981]"
-            >
-              <Heart size={30} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" fill="none" />
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </motion.button>
-
-      <motion.button
-        type="button"
-        onClick={handleFollow}
-        disabled={pending}
-        aria-label={`Follow ${current.displayName}`}
-        aria-pressed={isFollowing}
-        aria-busy={pending}
-        whileHover={{ scale: 1.05 }}
-        whileTap={{ scale: 0.95 }}
-        className="relative w-20 h-20 rounded-full border border-[#34283F]/40 bg-[#17121A] text-[#D9B38C] shadow-lg transition-all duration-200"
-        style={{
-          boxShadow: isFollowing
-            ? '0 0 0 4px rgba(217, 179, 140, 0.15)'
-            : `0 0 20px ${BUTTON_CONFIG.follow.shadowColor}`,
-          ...(isFollowing
-            ? { color: '#D9B38C', borderColor: '#D9B38C' }
-            : {}),
-        }}
-      >
-        <AnimatePresence mode="wait">
-          {isFollowing ? (
-            <motion.div
-              key="following"
-              initial={{ opacity: 0, scale: 0.5 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.5 }}
-              className="flex items-center justify-center w-full h-full"
-            >
-              <span className="text-[10px] font-semibold tracking-wide uppercase">Following</span>
-            </motion.div>
-          ) : (
-            <motion.div
-              key="idle"
-              initial={{ opacity: 0, scale: 0.5 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.5 }}
-              className="flex items-center justify-center w-full h-full"
-            >
-              {BUTTON_CONFIG.follow.icon}
-            </motion.div>
-          )}
-          {pending && (
-            <motion.div
-              key="pending"
-              initial={{ opacity: 0, scale: 0.5 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.5 }}
-              className="absolute inset-0 flex items-center justify-center text-[#D9B38C]"
-            >
-              <UserPlus size={24} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </motion.button>
+    <div className="flex flex-col items-center justify-center gap-6 w-full px-6 pb-10">
+      <div className="flex items-center gap-4 w-full max-w-[420px] mx-auto">
+        {renderButton('rewind', handleRewind, !canRewind || pending, isRewinding)}
+        {renderButton('pass', handlePass, pending, false)}
+        {renderButton('like', handleLike, pending, false)}
+        {renderButton('superlike', handleSuperLike, pending, false)}
+        {renderButton('message', handleMessage, pending, false)}
+      </div>
     </div>
   );
 }

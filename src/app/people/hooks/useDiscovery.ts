@@ -6,16 +6,18 @@ import {
   useRef,
   useState,
 } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   fetchDiscoveryCandidates,
   type DiscoveryCandidate,
 } from '@/lib/discovery';
-import { recordLike, type RecordLikeResult } from '@/lib/likes';
+import { recordLike, rewindLastLike, type RecordLikeResult } from '@/lib/likes';
 import {
   setFollow,
   FollowError,
 } from '@/lib/follows';
 import { getBrowserLocation } from '@/lib/nearby';
+import { startConversation } from '@/lib/conversations';
 import { useFollow } from '@/context/FollowContext';
 
 export interface DiscoveryProfile extends DiscoveryCandidate {
@@ -75,7 +77,6 @@ export function useDiscovery(options: UseDiscoveryOptions = {}) {
     maxAge = 99,
     genders = null,
     batchSize = 10,
-    radiusKm = 10,
     onMatch,
   } = options;
 
@@ -87,11 +88,16 @@ export function useDiscovery(options: UseDiscoveryOptions = {}) {
   const [decisionPending, setDecisionPending] = useState<string | null>(null);
   const [userLat, setUserLat] = useState<number | null>(null);
   const [userLng, setUserLng] = useState<number | null>(null);
+  const [isRewinding, setIsRewinding] = useState(false);
+  const [rewindError, setRewindError] = useState<string | null>(null);
+  const [hasRewindable, setHasRewindable] = useState(false);
 
   const isMountedRef = useRef(true);
   const processingRef = useRef(false);
   const profilesRef = useRef<DiscoveryProfile[]>([]);
   const pendingActionRef = useRef<{ targetId: string; isLike: boolean } | null>(null);
+  const lastDecidedRef = useRef<DiscoveryProfile | null>(null);
+  const rewindInProgressRef = useRef(false);
 
   const { following, hydrated } = useFollow();
 
@@ -169,7 +175,7 @@ export function useDiscovery(options: UseDiscoveryOptions = {}) {
         distanceText: null,
       }));
     },
-    [minAge, maxAge, genders, batchSize, radiusKm]
+    [minAge, maxAge, genders, batchSize]
   );
 
   const loadBatch = useCallback(
@@ -260,6 +266,10 @@ export function useDiscovery(options: UseDiscoveryOptions = {}) {
 
         if (!isMountedRef.current) return null;
 
+        // Remember the profile being decided so Rewind can restore it to the top.
+        lastDecidedRef.current = profilesRef.current[index];
+        setHasRewindable(true);
+
         // Handle mutual match
         if (result.matched && result.match_id && result.matched_user_id && onMatch) {
           onMatch({ matchId: result.match_id, matchedUserId: result.matched_user_id });
@@ -290,7 +300,7 @@ export function useDiscovery(options: UseDiscoveryOptions = {}) {
         }
       }
     },
-    [index, profiles.length, loadBatch, onMatch]
+    [index, profiles.length, loadBatch, onMatch, setHasRewindable]
   );
 
   const handleLike = useCallback(
@@ -340,14 +350,109 @@ export function useDiscovery(options: UseDiscoveryOptions = {}) {
     [isFollowingTarget]
   );
 
+  const router = useRouter();
+
+  /**
+   * Rewinds the most recent discovery decision: deletes the caller's latest
+   * like/pass row and restores that profile to the top of the stack. Safe
+   * against concurrent decisions via optimistic concurrency on `updated_at`.
+   */
+  const handleRewind = useCallback(async (): Promise<boolean> => {
+    if (rewindInProgressRef.current) return false;
+    if (!lastDecidedRef.current) return false;
+
+    rewindInProgressRef.current = true;
+    setIsRewinding(true);
+    setRewindError(null);
+
+    try {
+      const result = await rewindLastLike();
+      if (!result) {
+        setRewindError('Nothing to rewind yet.');
+        return false;
+      }
+
+      // Restore the rewound profile to the top of the stack, avoiding duplicates.
+      const targetId = result.targetUserId;
+      setProfiles((prev) => {
+        const filtered = prev.filter((p) => p.id !== targetId);
+        const restored = lastDecidedRef.current;
+        return restored ? [restored, ...filtered] : filtered;
+      });
+      setIndex(0);
+      setDecisionPending(null);
+      setHasRewindable(false);
+      return true;
+    } catch (err) {
+      if (!isMountedRef.current) return false;
+      const message =
+        err instanceof Error ? err.message : 'Rewind failed. Please try again.';
+      setRewindError(message);
+      console.error('[discovery] rewind failed:', err);
+      return false;
+    } finally {
+      if (isMountedRef.current) {
+        rewindInProgressRef.current = false;
+        setIsRewinding(false);
+      }
+    }
+  }, []);
+
+  /**
+   * Super Like has no backend integration yet. It is a deliberate UI-only
+   * placeholder with an explicit future-backend boundary: it never calls the
+   * database and never reports a successful Super Like. The page layer owns the
+   * user-facing "coming soon" notice.
+   */
+  const handleSuperLike = useCallback(() => {
+    // Intentional no-op until a Super Like backend exists.
+  }, []);
+
+  /**
+   * Opens (or returns) a conversation with the target member through the
+   * existing `start_conversation()` RPC, which enforces matching, follow, and
+   * blocking rules server-side.
+   */
+  const handleMessage = useCallback(
+    async (targetId: string): Promise<boolean> => {
+      if (!targetId || processingRef.current) return false;
+      processingRef.current = true;
+      setDecisionPending(targetId);
+
+      try {
+        const connection = await startConversation(targetId);
+        if (!isMountedRef.current) return false;
+        setError(null);
+        // Navigate to the existing chat route. `conversationId` is the match id.
+        void router.push(`/chat/${connection.conversationId}`);
+        return true;
+      } catch (err) {
+        if (!isMountedRef.current) return false;
+        const message =
+          err instanceof Error ? err.message : 'Could not start conversation.';
+        setError(message);
+        console.error('[discovery] message failed:', err);
+        return false;
+      } finally {
+        if (isMountedRef.current) {
+          processingRef.current = false;
+          setDecisionPending(null);
+        }
+      }
+    },
+    [router]
+  );
+
   const refresh = useCallback(async () => {
     setRefreshing(true);
     setError(null);
     setIndex(0);
+    setHasRewindable(false);
     await loadBatch(false);
   }, [loadBatch]);
 
   const empty = profiles.length === 0 && !loading;
+  const canRewind = hasRewindable && !isRewinding;
 
   return {
     current,
@@ -358,11 +463,17 @@ export function useDiscovery(options: UseDiscoveryOptions = {}) {
     error,
     decisionPending,
     empty,
+    canRewind,
+    isRewinding,
+    rewindError,
     hydrated,
     isFollowing: isFollowingTarget,
     handleLike,
     handlePass,
     handleFollow,
+    handleRewind,
+    handleSuperLike,
+    handleMessage,
     refresh,
     userLat,
     userLng,
