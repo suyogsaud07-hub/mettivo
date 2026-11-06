@@ -3,12 +3,13 @@
 -- =============================================================================
 
 -- Ensure the geography columns exist (defensive; they are added by M44).
--- Note: We must use the extensions schema for PostGIS types.
+-- PostGIS types live in the public schema (CREATE EXTENSION postgis), not an
+-- `extensions` schema, so use unqualified GEOGRAPHY/GEOMETRY types.
 alter table public.profiles
-  add column if not exists location extensions.GEOGRAPHY(POINT, 4326);
+  add column if not exists location GEOGRAPHY(POINT, 4326);
 
 alter table public.profiles
-  add column if not exists snapped_location extensions.GEOGRAPHY(POINT, 4326);
+  add column if not exists snapped_location GEOGRAPHY(POINT, 4326);
 
 alter table public.profiles
   add column if not exists last_location_update timestamptz;
@@ -25,26 +26,26 @@ create index if not exists profiles_last_location_update_idx
 -- 0. Ensure snap_location_to_grid exists (M48 calls this but didn't define it)
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.snap_location_to_grid(
-  p_location extensions.geography,
+  p_location GEOGRAPHY,
   p_grid_size_meters numeric DEFAULT 1000
 )
-RETURNS extensions.geography
+RETURNS GEOGRAPHY
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public, extensions, pg_temp
+SET search_path = public, pg_temp
 AS $$
 DECLARE
   grid_size_degrees numeric := p_grid_size_meters / 111111.0;
-  snapped_geom extensions.geometry;
+  snapped_geom GEOMETRY;
 BEGIN
   snapped_geom := ST_SnapToGrid(
-    p_location::extensions.geometry,
+    p_location::GEOMETRY,
     grid_size_degrees,
     grid_size_degrees,
     0,
     0
   );
-  RETURN snapped_geom::extensions.geography;
+  RETURN snapped_geom::GEOGRAPHY;
 END;
 $$;
 
@@ -60,7 +61,7 @@ create or replace function public.update_location_snapped(
 returns void
 language plpgsql
 security definer
-set search_path = public, extensions, pg_temp -- FIXED: added extensions
+set search_path = public, pg_temp
 as $$
 declare
   me uuid := auth.uid();
@@ -92,9 +93,9 @@ begin
 
   update public.profiles
   set
-    location = ST_SetSRID(ST_MakePoint(p_longitude, p_latitude), 4326)::extensions.GEOGRAPHY(POINT, 4326),
+    location = ST_SetSRID(ST_MakePoint(p_longitude, p_latitude), 4326)::GEOGRAPHY(POINT, 4326),
     snapped_location = public.snap_location_to_grid(
-      ST_SetSRID(ST_MakePoint(p_longitude, p_latitude), 4326)::extensions.GEOGRAPHY(POINT, 4326),
+      ST_SetSRID(ST_MakePoint(p_longitude, p_latitude), 4326)::GEOGRAPHY(POINT, 4326),
       1000
     ),
     last_location_update = now()
@@ -138,10 +139,10 @@ returns table (
 )
 language plpgsql
 security definer
-set search_path = public, extensions, pg_temp -- FIXED: added extensions
+set search_path = public, pg_temp
 as $$
 declare
-  user_point extensions.geography(POINT, 4326); -- FIXED: explicit schema
+  user_point GEOGRAPHY(POINT, 4326);
 begin
   if p_lat is null or p_lng is null then
     return;
@@ -151,7 +152,7 @@ begin
     return;
   end if;
 
-  user_point := ST_SetSRID(ST_MakePoint(p_lng, p_lat), 4326)::extensions.geography(POINT, 4326);
+  user_point := ST_SetSRID(ST_MakePoint(p_lng, p_lat), 4326)::GEOGRAPHY(POINT, 4326);
 
   return query
   with scored as (
@@ -183,8 +184,8 @@ begin
           then p.last_seen_at >= now() - interval '2 minutes'
         else coalesce(p.is_online, false)
       end as derived_online,
-      ST_Y(p.snapped_location::extensions.GEOMETRY)::float as snapped_lat, -- FIXED: explicit schema
-      ST_X(p.snapped_location::extensions.GEOMETRY)::float as snapped_lng, -- FIXED: explicit schema
+      ST_Y(p.snapped_location::GEOMETRY)::float as snapped_lat,
+      ST_X(p.snapped_location::GEOMETRY)::float as snapped_lng,
       ST_Distance(user_point, p.snapped_location)::float as distance_meters
     from public.profiles p
     left join public.user_preferences pref on pref.user_id = p.id
