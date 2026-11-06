@@ -39,55 +39,36 @@ export default function LiveStage({
   return (
     <div
       data-testid="live-stage"
-      style={{
-        position: 'relative',
-        flex: 1,
-        minHeight: 0,
-        borderRadius: '20px',
-        overflow: 'hidden',
-        backgroundColor: '#0d0a10',
-        border: '1px solid #34283f',
-      }}
+      className="relative flex-1 min-h-0 rounded-2xl overflow-hidden bg-[#0d0a10] border border-[#34283f]"
     >
       {/* Main window: the partner. While searching, the member sees themselves
           so the screen is never a dead black rectangle. */}
       {remoteStream ? (
-        <VideoCanvas stream={remoteStream} testId="live-remote-video" label="Your partner's video" />
+        <VideoCanvas
+          stream={remoteStream}
+          testId="live-remote-video"
+          label="Your partner's video"
+          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' as const }}
+        />
       ) : localStream ? (
         <VideoCanvas stream={localStream} muted mirror testId="live-self-video" label="Your camera" />
       ) : (
-        <div style={{ width: '100%', height: '100%', backgroundColor: '#131017' }} />
+        <div className="w-full h-full bg-[#131017]" />
       )}
 
       {waiting && (
         <div
-          style={{
-            position: 'absolute',
-            inset: 0,
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: '14px',
-            backgroundColor: 'rgba(8, 6, 10, 0.45)',
-            pointerEvents: 'none',
-          }}
+          className="absolute inset-0 flex flex-col items-center justify-center gap-14 bg-[#08060a]/45 pointer-events-none"
         >
           {(phase === 'searching' || phase === 'connecting') && (
             <span
               aria-hidden
-              style={{
-                width: '14px',
-                height: '14px',
-                borderRadius: '50%',
-                backgroundColor: '#d8b38a',
-                animation: 'mr-live-pulse 1.2s ease-in-out infinite',
-              }}
+              className="w-3.5 h-3.5 rounded-full bg-[#d8b38a] animate-[mr-live-pulse_1.2s_ease-in-out_infinite]"
             />
           )}
           <p
             data-testid="live-status"
-            style={{ margin: 0, fontSize: '14px', fontWeight: 600, color: '#eae2f0', textShadow: '0 1px 6px rgba(0,0,0,0.6)' }}
+            className="m-0 text-14 font-semibold text-[#eae2f0] drop-shadow-md"
           >
             {STATUS_COPY[phase]}
           </p>
@@ -97,18 +78,7 @@ export default function LiveStage({
       {/* The member's own camera, once the partner is on screen. */}
       {remoteStream && localStream && (
         <div
-          style={{
-            position: 'absolute',
-            top: '14px',
-            right: '14px',
-            width: '30%',
-            maxWidth: '150px',
-            aspectRatio: '3 / 4',
-            borderRadius: '14px',
-            overflow: 'hidden',
-            border: '2px solid #d8b38a',
-            boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
-          }}
+          className="absolute top-4 right-4 w-32 h-48 rounded-xl overflow-hidden border-2 border-[#d8b38a] shadow-[0_8px_24px_rgba(0,0,0,0.5)]"
         >
           <VideoCanvas stream={localStream} muted mirror testId="live-local-video" label="Your camera" />
         </div>

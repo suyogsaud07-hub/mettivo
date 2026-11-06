@@ -150,9 +150,10 @@ export default function VoiceNoteRecorder({ onSend }: VoiceNoteRecorderProps) {
           type="button"
           onClick={startRecording}
           disabled={error !== null}
-          className="flex items-center gap-2 px-3 py-2 rounded-xl bg-[#C24A6E] text-white hover:bg-[#B33E5E] disabled:opacity-50 disabled:cursor-not-allowed"
+          aria-label="Record voice note"
+          className="p-2 rounded-full bg-[#C24A6E] text-white hover:bg-[#B33E5E] disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
         >
-          <Mic size={16} /> Record voice note
+          <Mic size={18} strokeWidth={2} />
         </button>
       )}
 

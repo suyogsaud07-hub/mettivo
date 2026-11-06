@@ -14,7 +14,7 @@ begin
   ) then
     alter table public.messages
       add constraint messages_message_type_check
-      check (message_type in ('text', 'video_call', 'audio_call'));
+      check (message_type in ('text', 'audio', 'video_call', 'audio_call'));
   end if;
 end $$;
 

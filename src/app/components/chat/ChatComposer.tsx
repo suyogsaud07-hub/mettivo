@@ -1,16 +1,18 @@
 'use client';
 
 import { useCallback, useRef, useState } from 'react';
-import { ArrowRight, Mic, MicOff, Paperclip, Send } from 'lucide-react';
+import { ArrowRight, Mic, MicOff, Paperclip, Send, X } from 'lucide-react';
 import VoiceNoteRecorder from '@/app/components/chat/VoiceNoteRecorder';
 
 interface ChatComposerProps {
   disabled: boolean;
-  onSend: (text: string) => void;
+  onSend: (text: string, replyTo?: string) => void;
   onAttach: () => void;
   onVoiceNote?: (blob: Blob, durationSeconds: number) => void;
   placeholder?: string;
   voiceEnabled?: boolean;
+  replyTo: { id: string; content: string; senderId: string } | null;
+  onClearReply: () => void;
 }
 
 export default function ChatComposer({
@@ -20,6 +22,8 @@ export default function ChatComposer({
   onVoiceNote,
   placeholder = 'Type a message...',
   voiceEnabled = true,
+  replyTo,
+  onClearReply,
 }: ChatComposerProps) {
   const [value, setValue] = useState('');
   const [voiceState, setVoiceState] = useState<'idle' | 'recording' | 'previewing' | 'sending'>('idle');
@@ -38,10 +42,14 @@ export default function ChatComposer({
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         const text = value.trim();
-        if (text && !disabled) onSend(text);
+        if (text && !disabled) {
+          onSend(text, replyTo?.id);
+          setValue('');
+          onClearReply();
+        }
       }
     },
-    [value, disabled, onSend]
+    [value, disabled, onSend, replyTo?.id, onClearReply]
   );
 
   const clearInput = useCallback(() => {
@@ -52,10 +60,11 @@ export default function ChatComposer({
   const handleSend = useCallback(() => {
     const text = value.trim();
     if (text && !disabled) {
-      onSend(text);
+      onSend(text, replyTo?.id);
       clearInput();
+      onClearReply();
     }
-  }, [value, disabled, onSend, clearInput]);
+  }, [value, disabled, onSend, replyTo?.id, clearInput, onClearReply]);
 
   const handleVoiceData = useCallback(
     (blob: Blob, durationSeconds: number) => {
@@ -106,6 +115,25 @@ export default function ChatComposer({
       </button>
 
       {voiceEnabled && <VoiceNoteRecorder onSend={handleVoiceData} />}
+
+      {replyTo && (
+        <div
+          className="flex items-center gap-2 px-3 py-2 rounded-xl bg-[#1C1822] border border-[#34283F] shrink-0"
+        >
+          <div className="flex-1 min-w-0">
+            <span className="text-[10px] text-[#D4B18A]/70 font-medium">Replying to</span>
+            <span className="text-xs text-[#F2E9E4] truncate block">{replyTo.content}</span>
+          </div>
+          <button
+            type="button"
+            onClick={onClearReply}
+            aria-label="Clear reply"
+            className="p-1 text-[#B58A83] hover:text-[#F2E9E4] hover:bg-[#29202D] rounded"
+          >
+            <X size={14} strokeWidth={2} />
+          </button>
+        </div>
+      )}
 
       <textarea
         ref={inputRef}

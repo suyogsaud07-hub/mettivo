@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState, use } from 'react';
+import { X } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -48,6 +49,7 @@ import IncomingCallModal from '@/app/components/chat/IncomingCallModal';
 import ActiveCallScreen from '@/app/components/chat/ActiveCallScreen';
 import { useChatMessages } from '@/lib/use-chat-messages';
 import { useTyping } from '@/lib/use-typing';
+import type { ChatListItem } from '@/lib/chat-types';
 import { useWebRTC } from '@/lib/use-webrtc';
 import { useCallSignaling } from '@/lib/use-call-signaling';
 import type { MessageRow } from '@/lib/types';
@@ -96,6 +98,7 @@ export default function ChatPage({
   const [storyOpen, setStoryOpen] = useState(false);
   const [sendState, setSendState] = useState<ConversationSendState | null>(null);
   const [responding, setResponding] = useState(false);
+  const [replyTo, setReplyTo] = useState<{ id: string; content: string; senderId: string } | null>(null);
 
   const { language: preferredTranslationLanguage } =
     usePreferredTranslationLanguage();
@@ -436,6 +439,7 @@ export default function ChatPage({
       setError(null);
       try {
         await sendChatMessage(text);
+        setReplyTo(null);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Message could not be sent.');
       }
@@ -459,7 +463,7 @@ export default function ChatPage({
             match_id: matchId,
             sender_id: me,
             content: '',
-            message_type: 'text',
+            message_type: 'audio',
           })
           .select('id, match_id, sender_id, content, created_at, message_type, delivered_at, seen_at')
           .single();
@@ -676,9 +680,23 @@ export default function ChatPage({
       />
 
       {menuOpen && (
-        <div className="absolute right-0 mt-2 w-60 bg-[#1C1822] rounded-xl shadow-2xl border border-[#34283F] z-20">
-          <div className="px-4 py-3">
-            <p className="text-xs font-semibold text-[#B58A83] uppercase tracking-wider mb-3">Conversation</p>
+        <>
+          <div
+            className="fixed inset-0 z-30"
+            onClick={() => setMenuOpen(false)}
+            aria-hidden
+          />
+          <div className="absolute right-0 mt-2 w-60 bg-[#1C1822] rounded-xl shadow-2xl border border-[#34283F] z-40">
+            <div className="px-4 py-3 flex items-center justify-between border-b border-[#34283F] mb-3">
+              <p className="text-xs font-semibold text-[#B58A83] uppercase tracking-wider">Conversation</p>
+              <button
+                onClick={() => setMenuOpen(false)}
+                className="p-1 text-[#B58A83] hover:text-[#F2E9E4]"
+                aria-label="Close menu"
+              >
+                <X size={16} strokeWidth={2} />
+              </button>
+            </div>
             <button
               onClick={() => {
                 setMenuOpen(false);
@@ -754,7 +772,7 @@ export default function ChatPage({
                   : 'Disappearing messages (24h)'}
             </button>
           </div>
-        </div>
+        </>
       )}
 
       {searchActive && (
@@ -831,8 +849,17 @@ export default function ChatPage({
           }
         }}
         onReply={(messageId) => {
-          // Reply context handled by composer
-          console.log('Reply to:', messageId);
+          const msg = messageItems.find(
+            (m): m is Extract<ChatListItem, { id: string }> =>
+              !('type' in m) && m.id === messageId
+          );
+          if (msg) {
+            setReplyTo({
+              id: msg.id,
+              content: msg.content,
+              senderId: msg.senderId,
+            });
+          }
         }}
         onForward={(messageId) => {
           console.log('Forward:', messageId);
@@ -941,6 +968,8 @@ export default function ChatPage({
           input?.click();
         }}
         onVoiceNote={handleSendVoiceNote}
+        replyTo={replyTo}
+        onClearReply={() => setReplyTo(null)}
         placeholder={
           conversationClosed
             ? 'This conversation is closed'
