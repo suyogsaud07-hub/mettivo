@@ -105,6 +105,7 @@ describe('ProfileDetailModal', () => {
   it('hides sections with no available information', () => {
     const minimal = {
       ...profile,
+      intention: null,
       lookingFor: [],
       bio: null,
       gender: null,
@@ -170,5 +171,47 @@ describe('ProfileDetailModal', () => {
     });
 
     expect(container.innerHTML).toContain('👤');
+  });
+
+  it('renders the Visit Profile button and invokes the handler', () => {
+    const onVisitProfile = vi.fn();
+    act(() => {
+      root!.render(
+        <ProfileDetailModal profile={profile} isOpen onClose={vi.fn()} onVisitProfile={onVisitProfile} />
+      );
+    });
+
+    const visitButton = Array.from(container.querySelectorAll('button')).find(
+      (b) => b.textContent === 'Visit Profile'
+    );
+    expect(visitButton).not.toBeNull();
+    act(() => {
+      (visitButton as HTMLButtonElement).click();
+    });
+    expect(onVisitProfile).toHaveBeenCalled();
+  });
+
+  it('does not crash when no Visit Profile handler is provided', () => {
+    act(() => {
+      root!.render(<ProfileDetailModal profile={profile} isOpen onClose={vi.fn()} />);
+    });
+    expect(container.textContent).not.toContain('Visit Profile');
+  });
+
+  it('updates the photo counter when navigating the hero', () => {
+    act(() => {
+      root!.render(<ProfileDetailModal profile={profile} isOpen onClose={vi.fn()} />);
+    });
+
+    expect(container.innerHTML).toContain('1 of 2');
+
+    const nextButton = container.querySelector('[aria-label="Next photo"]');
+    expect(nextButton).not.toBeNull();
+    act(() => {
+      (nextButton as HTMLButtonElement).click();
+    });
+
+    expect(container.innerHTML).toContain('2 of 2');
+    expect(container.innerHTML).toContain('https://example.com/photo2.jpg');
   });
 });

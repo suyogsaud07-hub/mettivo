@@ -12,7 +12,7 @@ import {
   AnimatePresence,
   motion,
 } from 'framer-motion';
-import { X } from 'lucide-react';
+import { MapPin, X } from 'lucide-react';
 import InterestChips from './InterestChips';
 
 interface ProfileDetailModalProps {
@@ -44,6 +44,9 @@ interface ProfileDetailModalProps {
   };
   isOpen: boolean;
   onClose: () => void;
+  /** Navigates to the member's public profile. Supplied by the page so the
+   *  modal stays free of the router context (and therefore testable). */
+  onVisitProfile?: () => void;
 }
 
 function formatLocation(profile: ProfileDetailModalProps['profile']): string | null {
@@ -51,18 +54,33 @@ function formatLocation(profile: ProfileDetailModalProps['profile']): string | n
   return parts.length > 0 ? parts.join(', ') : null;
 }
 
+/** Drop null, undefined, empty and whitespace-only photo entries. Legitimate
+ *  Supabase storage paths (relative URLs) are preserved. */
+function normalizePhotos(photos: string[]): string[] {
+  return photos.filter((photo) => typeof photo === 'string' && photo.trim().length > 0);
+}
+
 export default function ProfileDetailModal({
   profile,
   isOpen,
   onClose,
+  onVisitProfile,
 }: ProfileDetailModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
   const previousActiveRef = useRef<HTMLElement | null>(null);
-  const [zoomedPhoto, setZoomedPhoto] = useState<string | null>(null);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [imageError, setImageError] = useState(false);
 
+  const photos = normalizePhotos(profile.photos);
   const locationText = formatLocation(profile);
 
   // Lock body scroll while the modal is open; restore on close / unmount.
+  const handleClose = useCallback(() => {
+    setImageError(false);
+    setCurrentIndex(0);
+    onClose();
+  }, [onClose]);
+
   useEffect(() => {
     if (!isOpen) return;
     previousActiveRef.current = document.activeElement as HTMLElement | null;
@@ -70,7 +88,7 @@ export default function ProfileDetailModal({
     document.body.style.touchAction = 'none';
 
     const handleKeydown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
+      if (event.key === 'Escape') handleClose();
     };
     document.addEventListener('keydown', handleKeydown);
 
@@ -78,25 +96,52 @@ export default function ProfileDetailModal({
       document.removeEventListener('keydown', handleKeydown);
       document.body.style.overflow = '';
       document.body.style.touchAction = '';
-      // Restore focus to the element that opened the modal.
       if (previousActiveRef.current) {
         previousActiveRef.current.focus({ preventScroll: true });
       }
     };
-  }, [isOpen, onClose]);
+  }, [isOpen, handleClose]);
 
-  const handleClose = useCallback(() => {
-    setZoomedPhoto(null);
-    onClose();
-  }, [onClose]);
+  const goToPrevious = useCallback(() => {
+    if (photos.length <= 1) return;
+    setImageError(false);
+    setCurrentIndex((prev) => (prev === 0 ? photos.length - 1 : prev - 1));
+  }, [photos.length]);
 
-  const lookingFor = profile.lookingFor.length > 0 ? profile.lookingFor : null;
-  const lifestylePets = profile.pets;
-  const basicsMbti = profile.mbti ? profile.mbti : null;
+  const goToNext = useCallback(() => {
+    if (photos.length <= 1) return;
+    setImageError(false);
+    setCurrentIndex((prev) => (prev === photos.length - 1 ? 0 : prev + 1));
+  }, [photos.length]);
 
-  const hasEssentials = Boolean(locationText || profile.gender);
-  const hasLifestyle = lifestylePets.length > 0;
-  const hasBasics = Boolean(basicsMbti);
+  const handleHeroClick = useCallback(
+    (event: React.MouseEvent, side: 'left' | 'right') => {
+      event.stopPropagation();
+      if (side === 'left') goToPrevious();
+      else goToNext();
+    },
+    [goToPrevious, goToNext]
+  );
+
+  const handleThumbClick = useCallback(
+    (index: number) => {
+      setImageError(false);
+      setCurrentIndex(index);
+    },
+    []
+  );
+
+  const handleVisitProfile = useCallback(() => {
+    if (onVisitProfile) {
+      onVisitProfile();
+    }
+  }, [onVisitProfile]);
+
+  const hasEssentials = Boolean(locationText || profile.distanceText || profile.gender);
+  const hasLifestyle = profile.pets.length > 0;
+  const hasBasics = Boolean(profile.mbti);
+
+  const hasPhoto = photos.length > 0;
 
   return (
     <AnimatePresence>
@@ -116,10 +161,10 @@ export default function ProfileDetailModal({
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 40, opacity: 0 }}
             transition={{ type: 'spring', stiffness: 400, damping: 30 }}
-            onClick={(e) => e.stopPropagation()}
+            onClick={(event) => event.stopPropagation()}
             className="fixed inset-0 z-50 bg-[#17121A] overflow-y-auto"
           >
-            {/* Header */}
+            {/* Header — single close control */}
             <header className="relative z-10 px-6 pt-8 pb-3">
               <div className="flex items-center justify-between">
                 <button
@@ -133,63 +178,73 @@ export default function ProfileDetailModal({
               </div>
             </header>
 
-            {/* Photo gallery */}
+            {/* Hero image + photo gallery */}
             <section className="relative">
-              {profile.photos.length > 0 ? (
+              {hasPhoto ? (
                 <>
-                  <div className="relative h-[56vh] w-full bg-[#1C1822]">
-                    {zoomedPhoto ? (
-                      <div className="absolute inset-0 flex items-center justify-center bg-[#17121A]">
-                        <button
-                          type="button"
-                          onClick={() => setZoomedPhoto(null)}
-                          aria-label="Close enlarged photo"
-                          className="absolute top-4 right-4 z-20 w-10 h-10 rounded-full bg-[#17121A]/80 flex items-center justify-center text-[#F2E9E4] hover:bg-[#17121A]"
-                        >
-                          <X size={20} strokeWidth={2.5} />
-                        </button>
-                        <img
-                          src={zoomedPhoto}
-                          alt={profile.displayName}
-                          className="max-h-[85vh] max-w-[85vw] object-contain rounded-2xl border border-[#34283F]/40"
-                          loading="eager"
-                          decoding="async"
-                        />
+                  <div
+                    className="relative w-full h-[56vh] bg-[#1C1822]"
+                    style={{ minHeight: 320 }}
+                  >
+                    {imageError ? (
+                      <div
+                        className="w-full h-full bg-[#211A28] flex items-center justify-center rounded-2xl border border-[#34283F]/40"
+                      >
+                        <span className="text-6xl">📷</span>
                       </div>
                     ) : (
+                      <img
+                        key={currentIndex}
+                        src={photos[currentIndex]}
+                        alt={`${profile.displayName}, photo ${currentIndex + 1} of ${photos.length}`}
+                        className="w-full h-full object-cover"
+                        loading={currentIndex === 0 ? 'eager' : 'lazy'}
+                        decoding="async"
+                        onError={() => setImageError(true)}
+                      />
+                    )}
+                    {photos.length > 1 && (
                       <>
-                        <div
-                          className="w-full h-full object-cover"
-                          style={{ backgroundImage: `url("${profile.photos[0]}")` }}
+                        <button
+                          type="button"
+                          onClick={(event) => handleHeroClick(event, 'left')}
+                          aria-label="Previous photo"
+                          className="absolute left-0 top-0 bottom-0 w-[35%] z-20 bg-transparent hover:bg-white/5 active:bg-white/10"
                         />
-                        {profile.photos.length > 1 && (
-                          <button
-                            type="button"
-                            onClick={() => setZoomedPhoto(profile.photos[0])}
-                            aria-label="Enlarge photo"
-                            className="absolute inset-0 z-10 bg-gradient-to-t from-black/60 via-transparent to-transparent"
-                          />
-                        )}
-                        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1 px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-sm border border-white/10">
-                          <span className="text-xs font-medium text-[#F2E9E4]">1</span>
-                          <span className="text-xs text-[#B58A83]">of</span>
-                          <span className="text-xs font-medium text-[#F2E9E4]">{profile.photos.length}</span>
-                        </div>
+                        <button
+                          type="button"
+                          onClick={(event) => handleHeroClick(event, 'right')}
+                          aria-label="Next photo"
+                          className="absolute right-0 top-0 bottom-0 w-[65%] z-20 bg-transparent hover:bg-white/5 active:bg-white/10"
+                        />
                       </>
                     )}
+                    <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1 px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-sm border border-white/10">
+                      <span className="text-xs font-medium text-[#F2E9E4]">{currentIndex + 1}</span>
+                      <span className="text-xs text-[#B58A83]">of</span>
+                      <span className="text-xs font-medium text-[#F2E9E4]">{photos.length}</span>
+                    </div>
                   </div>
-                  {profile.photos.length > 1 && (
-                    <div className="mx-6 mt-4 grid grid-cols-4 gap-2">
-                      {profile.photos.map((photo, i) => (
+
+                  {photos.length > 1 && (
+                    <div className="mx-6 mt-4 overflow-x-auto flex flex-nowrap gap-2 pb-4">
+                      {photos.map((photo, i) => (
                         <button
                           key={i}
                           type="button"
-                          onClick={() => setZoomedPhoto(photo)}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            handleThumbClick(i);
+                          }}
                           aria-label={`View photo ${i + 1}`}
-                          className={`aspect-[4/5] rounded-xl overflow-hidden border ${
-                            i === 0 ? 'border-[#D9B38C]' : 'border-[#34283F]/40'
+                          className={`shrink-0 w-16 h-20 rounded-xl overflow-hidden border ${
+                            i === currentIndex ? 'border-[#D9B38C]' : 'border-[#34283F]/40'
                           } bg-[#1C1822]`}
-                          style={{ backgroundImage: `url("${photo}")`, backgroundSize: 'cover', backgroundPosition: 'center' }}
+                          style={{
+                            backgroundImage: `url("${photo}")`,
+                            backgroundSize: 'cover',
+                            backgroundPosition: 'center',
+                          }}
                         />
                       ))}
                     </div>
@@ -241,20 +296,33 @@ export default function ProfileDetailModal({
                 </div>
               </section>
 
-              {/* Section 2 — Looking For */}
-              {lookingFor && lookingFor.length > 0 && (
+              {/* Section 2 — Looking for */}
+              {Boolean(profile.intention) || profile.lookingFor.length > 0 ? (
                 <section>
-                  <h3 className="text-xs font-semibold text-[#B58A83] uppercase tracking-wider">Looking for</h3>
-                  <p className="mt-1 text-[#F2E9E4] text-sm leading-relaxed">
-                    {lookingFor.join(', ')}
-                  </p>
+                  <h3 className="text-xs font-semibold text-[#B58A83] uppercase tracking-wider">
+                    Looking for
+                  </h3>
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {profile.intention && (
+                      <p className="text-[#F2E9E4] text-sm leading-relaxed">
+                        {profile.intention}
+                      </p>
+                    )}
+                    {profile.lookingFor.map((item, i) => (
+                      <p key={i} className="text-[#F2E9E4] text-sm leading-relaxed">
+                        {item}
+                      </p>
+                    ))}
+                  </div>
                 </section>
-              )}
+              ) : null}
 
-              {/* Section 3 — About Me */}
+              {/* Section 3 — About me */}
               {profile.bio && profile.bio.trim().length > 0 && (
                 <section>
-                  <h3 className="text-xs font-semibold text-[#B58A83] uppercase tracking-wider">About me</h3>
+                  <h3 className="text-xs font-semibold text-[#B58A83] uppercase tracking-wider">
+                    About me
+                  </h3>
                   <p className="mt-1 text-[#F2E9E4] text-sm leading-relaxed">{profile.bio}</p>
                 </section>
               )}
@@ -262,12 +330,23 @@ export default function ProfileDetailModal({
               {/* Section 4 — Essentials */}
               {hasEssentials && (
                 <section>
-                  <h3 className="text-xs font-semibold text-[#B58A83] uppercase tracking-wider">Essentials</h3>
+                  <h3 className="text-xs font-semibold text-[#B58A83] uppercase tracking-wider">
+                    Essentials
+                  </h3>
                   <dl className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-3">
                     {locationText && (
                       <>
                         <dt className="text-[#B58A83] text-xs font-medium">Location</dt>
                         <dd className="text-[#F2E9E4] text-sm">{locationText}</dd>
+                      </>
+                    )}
+                    {profile.distanceText && (
+                      <>
+                        <dt className="text-[#B58A83] text-xs font-medium flex items-center gap-1">
+                          <MapPin size={12} strokeWidth={1.5} />
+                          Distance
+                        </dt>
+                        <dd className="text-[#F2E9E4] text-sm">{profile.distanceText}</dd>
                       </>
                     )}
                     {profile.gender && (
@@ -283,9 +362,11 @@ export default function ProfileDetailModal({
               {/* Section 5 — Lifestyle */}
               {hasLifestyle && (
                 <section>
-                  <h3 className="text-xs font-semibold text-[#B58A83] uppercase tracking-wider">Lifestyle</h3>
+                  <h3 className="text-xs font-semibold text-[#B58A83] uppercase tracking-wider">
+                    Lifestyle
+                  </h3>
                   <div className="mt-2 flex flex-wrap gap-2">
-                    {lifestylePets.map((pet) => (
+                    {profile.pets.map((pet) => (
                       <span
                         key={pet}
                         className="rounded-full border border-[#34283F]/60 bg-[#17121A]/60 backdrop-blur-sm px-3 py-1.5 text-xs font-medium text-[#B58A83] capitalize"
@@ -301,24 +382,39 @@ export default function ProfileDetailModal({
               {/* Section 6 — Basics */}
               {hasBasics && (
                 <section>
-                  <h3 className="text-xs font-semibold text-[#B58A83] uppercase tracking-wider">Basics</h3>
+                  <h3 className="text-xs font-semibold text-[#B58A83] uppercase tracking-wider">
+                    Basics
+                  </h3>
                   <div className="mt-2 flex flex-wrap gap-2">
                     <span
                       className="rounded-full border border-[#34283F]/60 bg-[#17121A]/60 backdrop-blur-sm px-3 py-1.5 text-xs font-medium text-[#B58A83]"
-                      aria-label={basicsMbti as string}
+                      aria-label={profile.mbti ?? undefined}
                     >
-                      {basicsMbti}
+                      {profile.mbti}
                     </span>
                   </div>
                 </section>
               )}
 
-              {/* Section 7 — Interests */}
+              {/* Section 7 — Interests (interests live only in the detail modal) */}
               {profile.interests.length > 0 && (
                 <section>
-                  <h3 className="text-xs font-semibold text-[#B58A83] uppercase tracking-wider">Interests</h3>
+                  <h3 className="text-xs font-semibold text-[#B58A83] uppercase tracking-wider">
+                    Interests
+                  </h3>
                   <InterestChips interests={profile.interests} maxVisible={12} />
                 </section>
+              )}
+
+              {/* Visit Profile action */}
+              {onVisitProfile && (
+                <button
+                  type="button"
+                  onClick={handleVisitProfile}
+                  className="w-full px-6 py-3.5 rounded-xl bg-[#D9B38C] text-[#17121A] font-semibold text-sm shadow-lg hover:bg-[#cfab83] active:scale-[0.98] transition-all"
+                >
+                  Visit Profile
+                </button>
               )}
 
               <p className="text-xs text-[#B58A83]/60 text-center">

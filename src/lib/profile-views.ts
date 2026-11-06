@@ -45,7 +45,7 @@ function asBoolean(value: unknown): boolean {
   return value === true;
 }
 
-function parseRecordResult(value: unknown): RecordProfileViewResult | null {
+export function parseRecordResult(value: unknown): RecordProfileViewResult | null {
   const raw = asRecord(value);
   if (!raw || typeof raw.recorded !== 'boolean') return null;
 
@@ -62,7 +62,7 @@ function parseRecordResult(value: unknown): RecordProfileViewResult | null {
   };
 }
 
-function parseSummary(value: unknown): ProfileViewSummary | null {
+export function parseSummary(value: unknown): ProfileViewSummary | null {
   const raw = asRecord(value);
   if (!raw) return null;
 
@@ -79,7 +79,7 @@ function parseSummary(value: unknown): ProfileViewSummary | null {
   };
 }
 
-function parseViewer(value: unknown): ProfileViewerRow | null {
+export function parseViewer(value: unknown): ProfileViewerRow | null {
   const raw = asRecord(value);
   if (!raw) return null;
 
@@ -188,6 +188,8 @@ export interface FetchProfileViewersOptions {
   limit?: number;
   offset?: number;
   search?: string;
+  /** 'all' | 'new' | 'repeated'. Defaults to 'all' on the server. */
+  filter?: 'all' | 'new' | 'repeated';
 }
 
 /**
@@ -200,11 +202,13 @@ export async function fetchProfileViewers(
   const limit = Math.min(Math.max(options.limit ?? 30, 1), 100);
   const offset = Math.max(options.offset ?? 0, 0);
   const search = options.search?.trim() || null;
+  const filter = options.filter ?? 'all';
 
   const { data, error } = await supabase.rpc('list_profile_viewers', {
     p_limit: limit,
     p_offset: offset,
     p_search: search,
+    p_filter: filter,
   });
 
   if (error) {

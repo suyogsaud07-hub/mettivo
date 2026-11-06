@@ -15,6 +15,14 @@ import FollowButton from '../../../components/profile/FollowButton';
 
 const PAGE_SIZE = 30;
 
+type ViewerTab = 'all' | 'new' | 'repeated';
+
+const TABS: { key: ViewerTab; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'new', label: 'New Visitors' },
+  { key: 'repeated', label: 'Repeated' },
+];
+
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) return '?';
@@ -56,6 +64,11 @@ function relativeTime(iso: string | null): string {
   return formatDate(iso);
 }
 
+function visitCountLabel(viewCount: number): string {
+  if (viewCount === 1) return 'Visited 1 time';
+  return `Visited ${viewCount} times`;
+}
+
 /**
  * The signed-in member's own profile-view analytics.
  *
@@ -70,6 +83,7 @@ export default function ProfileViewsPage() {
   const [authReady, setAuthReady] = useState(false);
   const [summary, setSummary] = useState<ProfileViewSummary | null>(null);
   const [viewers, setViewers] = useState<ProfileViewerRow[]>([]);
+  const [activeTab, setActiveTab] = useState<ViewerTab>('all');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
@@ -78,8 +92,8 @@ export default function ProfileViewsPage() {
   const [searchInput, setSearchInput] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
 
-  // Monotonic id so a slow response from a previous search can never overwrite
-  // the current one.
+  // Monotonic id so a slow response from a previous tab/search can never
+  // overwrite the current one.
   const requestRef = useRef(0);
 
   useEffect(() => {
@@ -117,7 +131,12 @@ export default function ProfileViewsPage() {
     try {
       const [nextSummary, rows] = await Promise.all([
         fetchProfileViewSummary(),
-        fetchProfileViewers({ limit: PAGE_SIZE, offset: 0, search: term }),
+        fetchProfileViewers({
+          limit: PAGE_SIZE,
+          offset: 0,
+          search: term,
+          filter: activeTab,
+        }),
       ]);
 
       if (requestRef.current !== requestId) return;
@@ -135,13 +154,13 @@ export default function ProfileViewsPage() {
     } finally {
       if (requestRef.current === requestId) setLoading(false);
     }
-  }, []);
+  }, [activeTab]);
 
   useEffect(() => {
     if (!authReady) return;
     const timer = setTimeout(() => void load(searchTerm), 0);
     return () => clearTimeout(timer);
-  }, [authReady, searchTerm, load]);
+  }, [authReady, searchTerm, activeTab, load]);
 
   const loadMore = async () => {
     if (loadingMore || !hasMore) return;
@@ -155,6 +174,7 @@ export default function ProfileViewsPage() {
         limit: PAGE_SIZE,
         offset: viewers.length,
         search: searchTerm,
+        filter: activeTab,
       });
 
       if (requestRef.current !== requestId) return;
@@ -237,8 +257,17 @@ export default function ProfileViewsPage() {
   }
 
   const data = summary as ProfileViewSummary;
-  const noViewsAtAll = data.unique_viewers === 0;
+  const uniqueViewers = data.unique_viewers;
+  const returningViewers = data.returning_viewers;
+  const newVisitorCount = Math.max(0, uniqueViewers - returningViewers);
+  const noViewsAtAll = uniqueViewers === 0;
   const noSearchResults = !noViewsAtAll && viewers.length === 0;
+
+  const tabCounts: Record<ViewerTab, number> = {
+    all: uniqueViewers,
+    new: newVisitorCount,
+    repeated: returningViewers,
+  };
 
   return (
     <div className="pf-page">
@@ -257,6 +286,9 @@ export default function ProfileViewsPage() {
           <div className="pf-title">Profile Views</div>
           <span className="pf-toolbar-spacer" />
         </div>
+        <div className="pf-subtitle">
+          See who&rsquo;s been checking out your profile.
+        </div>
       </header>
 
       <main className="pf-content">
@@ -272,12 +304,12 @@ export default function ProfileViewsPage() {
         <section className="pf-views-overview" aria-label="Viewer statistics">
           <div className="pf-views-card pf-views-card-primary">
             <span className="pf-views-card-label">Unique viewers</span>
-            <span className="pf-views-card-value">{data.unique_viewers}</span>
+            <span className="pf-views-card-value">{uniqueViewers}</span>
             <span className="pf-views-card-note">Distinct accounts</span>
           </div>
           <div className="pf-views-card">
             <span className="pf-views-card-label">Returning</span>
-            <span className="pf-views-card-value">{data.returning_viewers}</span>
+            <span className="pf-views-card-value">{returningViewers}</span>
             <span className="pf-views-card-note">Visited more than once</span>
           </div>
           <div className="pf-views-card">
@@ -293,6 +325,39 @@ export default function ProfileViewsPage() {
             <span className="pf-views-card-note">Most recent visit</span>
           </div>
         </section>
+
+        {/* Three-tab navigation */}
+        <nav className="pf-views-tabs" aria-label="Visitor filter">
+          {TABS.map((tab) => {
+            const isActive = activeTab === tab.key;
+            const count = tabCounts[tab.key];
+            const showBadge = tab.key === 'new' && count > 0;
+            return (
+              <button
+                key={tab.key}
+                type="button"
+                role="tab"
+                aria-selected={isActive}
+                aria-label={
+                  showBadge
+                    ? `${tab.label}, ${count} visitors`
+                    : `${tab.label}${isActive ? ', selected' : ''}`
+                }
+                onClick={() => setActiveTab(tab.key)}
+                className={`pf-views-tab ${
+                  isActive ? 'pf-views-tab-active' : ''
+                }`}
+              >
+                <span className="pf-views-tab-label">{tab.label}</span>
+                {showBadge && (
+                  <span className="pf-views-tab-badge" aria-hidden="true">
+                    {count}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </nav>
 
         <div className="pf-views-search">
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
@@ -333,9 +398,19 @@ export default function ProfileViewsPage() {
           </div>
         ) : noSearchResults ? (
           <div className="pf-views-empty">
-            <div className="pf-views-empty-title">No viewers match your search</div>
+            <div className="pf-views-empty-title">
+              {activeTab === 'new'
+                ? 'No new visitors right now'
+                : activeTab === 'repeated'
+                  ? 'No repeat visitors yet'
+                  : 'No viewers match your search'}
+            </div>
             <p className="pf-views-empty-body">
-              Try a different name or @username.
+              {activeTab === 'new'
+                ? 'First-time viewers will appear here.'
+                : activeTab === 'repeated'
+                  ? 'Viewers who return will appear here.'
+                  : 'Try a different name or @username.'}
             </p>
           </div>
         ) : (
@@ -355,8 +430,7 @@ export default function ProfileViewsPage() {
                       <span className="pf-views-avatar-wrap">
                         {viewer.avatar_url ? (
                           <img loading="lazy"
-
- src={viewer.avatar_url} alt="" className="pf-views-avatar" />
+                            src={viewer.avatar_url} alt="" className="pf-views-avatar" />
                         ) : (
                           <span className="pf-views-avatar pf-views-avatar-fallback" aria-hidden="true">
                             {initials(name)}
@@ -380,9 +454,11 @@ export default function ProfileViewsPage() {
                     </div>
 
                     <div className="pf-views-row-actions">
-                      <span className={`pf-views-badge${returning ? ' is-returning' : ''}`}>
-                        {returning ? `Returning · ${viewer.view_count} visits` : 'New viewer'}
-                      </span>
+                      {returning && activeTab === 'repeated' ? (
+                        <span className="pf-views-badge is-returning">
+                          {visitCountLabel(viewer.view_count)}
+                        </span>
+                      ) : null}
                       <FollowButton
                         targetUserId={viewer.viewer_id}
                         initialFollowing={viewer.is_followed_by_me}

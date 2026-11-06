@@ -16,12 +16,11 @@ import {
   setFollow,
   FollowError,
 } from '@/lib/follows';
-import { getBrowserLocation } from '@/lib/nearby';
+import { formatDistance, getBrowserLocation } from '@/lib/nearby';
 import { startConversation } from '@/lib/conversations';
 import { useFollow } from '@/context/FollowContext';
 
 export interface DiscoveryProfile extends DiscoveryCandidate {
-  distanceMeters: number | null;
   distanceText: string | null;
 }
 
@@ -66,6 +65,17 @@ function preloadImage(url: string): Promise<void> {
 }
 
 /**
+ * Reuse the project's existing distance convention (`formatDistance` from
+ * `@/lib/nearby`) and render it as "500 m away" / "1.0 km away" / "10 km away".
+ * Keeps the card and modal consistent.
+ */
+function formatDistanceText(meters: number): string {
+  const base = formatDistance(meters); // e.g. "500m" | "1.0km" | "10km"
+  const spaced = base.replace(/(\d)([mk])$/, '$1 $2'); // "500 m" | "1.0 km" | "10 km"
+  return `${spaced} away`;
+}
+
+/**
  * Manages the discovery stack: fetching batches, liking, passing, following,
  * and distance annotation. All eligibility is enforced server-side by
  * `discover_profiles()`; this hook only orchestrates UI state and remote
@@ -98,6 +108,7 @@ export function useDiscovery(options: UseDiscoveryOptions = {}) {
   const pendingActionRef = useRef<{ targetId: string; isLike: boolean } | null>(null);
   const lastDecidedRef = useRef<DiscoveryProfile | null>(null);
   const rewindInProgressRef = useRef(false);
+  const locationDistanceAppliedRef = useRef(false);
 
   const { following, hydrated } = useFollow();
 
@@ -162,6 +173,8 @@ export function useDiscovery(options: UseDiscoveryOptions = {}) {
         genders,
         limit: batchSize,
         excludeIds,
+        latitude: userLat,
+        longitude: userLng,
       });
 
       // Preload primary photos of the first candidate in the batch
@@ -171,11 +184,12 @@ export function useDiscovery(options: UseDiscoveryOptions = {}) {
 
       return candidates.map((c) => ({
         ...c,
-        distanceMeters: null,
-        distanceText: null,
+        distanceText: c.distanceMeters != null
+          ? formatDistanceText(c.distanceMeters)
+          : null,
       }));
     },
-    [minAge, maxAge, genders, batchSize]
+    [minAge, maxAge, genders, batchSize, userLat, userLng]
   );
 
   const loadBatch = useCallback(
@@ -215,6 +229,26 @@ export function useDiscovery(options: UseDiscoveryOptions = {}) {
     },
     [fetchBatch]
   );
+
+  const refresh = useCallback(async () => {
+    setRefreshing(true);
+    setError(null);
+    setIndex(0);
+    setHasRewindable(false);
+    await loadBatch(false);
+  }, [loadBatch]);
+
+  /**
+   * Once the caller's location is known, re-fetch so the RPC can annotate
+   * each candidate with distance_meters. Guarded so it only happens once.
+   */
+  useEffect(() => {
+    if (locationDistanceAppliedRef.current) return;
+    if (userLat === null || userLng === null) return;
+    locationDistanceAppliedRef.current = true;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void refresh();
+  }, [userLat, userLng, refresh]);
 
   const loadInitial = useCallback(async () => {
     setLoading(true);
@@ -442,14 +476,6 @@ export function useDiscovery(options: UseDiscoveryOptions = {}) {
     },
     [router]
   );
-
-  const refresh = useCallback(async () => {
-    setRefreshing(true);
-    setError(null);
-    setIndex(0);
-    setHasRewindable(false);
-    await loadBatch(false);
-  }, [loadBatch]);
 
   const empty = profiles.length === 0 && !loading;
   const canRewind = hasRewindable && !isRewinding;

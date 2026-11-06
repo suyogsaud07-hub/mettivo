@@ -51,6 +51,8 @@ export interface DiscoveryCandidate extends MatchProfile {
   casualIntent: string | null;
   online: boolean;
   isVerified: boolean;
+  /** Distance from the caller in metres, only when the RPC was given a location. */
+  distanceMeters: number | null;
 }
 
 export interface DiscoveryFilters {
@@ -61,6 +63,10 @@ export interface DiscoveryFilters {
   onlineOnly?: boolean;
   /** Ids already shown by this surface; prevents duplicate load-more cards. */
   excludeIds?: readonly string[];
+  /** Caller's latitude, supplied when available so the RPC can annotate distance. */
+  latitude?: number | null;
+  /** Caller's longitude, supplied when available so the RPC can annotate distance. */
+  longitude?: number | null;
 }
 
 /** Safety rails mirrored in SQL: `discover_profiles` clamps to the same range. */
@@ -132,6 +138,7 @@ export function parseDiscoveryCandidate(row: unknown): DiscoveryCandidate | null
     promptAnswers: stringRecord(row.prompts),
     online: bool(row.is_online),
     isVerified: row.is_verified === true,
+    distanceMeters: num(row.distance_meters),
   };
 }
 
@@ -168,6 +175,8 @@ export async function fetchDiscoveryCandidates(
     p_exclude_ids: filters.excludeIds && filters.excludeIds.length > 0
       ? [...filters.excludeIds]
       : [],
+    p_lat: filters.latitude ?? null,
+    p_lng: filters.longitude ?? null,
   });
 
   if (error) {

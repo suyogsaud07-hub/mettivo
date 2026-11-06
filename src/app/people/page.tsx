@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Info } from 'lucide-react';
 import MobileNav from '@/app/components/layout/MobileNav';
 import { useDiscovery } from './hooks/useDiscovery';
@@ -19,6 +20,8 @@ export default function PeoplePage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [toast, setToast] = useState<{ type: 'like' | 'pass'; message: string } | null>(null);
   const [infoToast, setInfoToast] = useState<string | null>(null);
+
+  const router = useRouter();
 
   const {
     current,
@@ -91,6 +94,12 @@ export default function PeoplePage() {
     [handleMessage]
   );
 
+  const handleVisitProfile = useCallback(() => {
+    if (!current) return;
+    // The public profile route is /profile/[userId], keyed by the member's id.
+    void router.push(`/profile/${current.id}`);
+  }, [router, current]);
+
   const isComingSoon = activeTab !== 'for-you';
 
   if (loading) {
@@ -153,6 +162,7 @@ export default function PeoplePage() {
               onModalToggle={() => setIsModalOpen((prev) => !prev)}
               onLike={handleLikeAction}
               onPass={handlePassAction}
+              onVisitProfile={handleVisitProfile}
               disabled={decisionPending === current.id || loading}
             />
 

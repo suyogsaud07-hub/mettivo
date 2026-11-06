@@ -10,10 +10,9 @@ import {
   useMotionValue,
   useTransform,
 } from 'framer-motion';
-import { ChevronUp } from 'lucide-react';
+import { ChevronUp, MapPin } from 'lucide-react';
 import ProfilePhotoCarousel from './ProfilePhotoCarousel';
 import CasualIntentBadge from './CasualIntentBadge';
-import InterestChips from './InterestChips';
 import ProfileDetailModal from './ProfileDetailModal';
 import type { CasualIntent } from '@/lib/casual-intent';
 import type { DiscoveryCandidate } from '@/lib/discovery';
@@ -30,6 +29,7 @@ interface DiscoveryCardProps {
   onModalToggle: () => void;
   onLike: (targetId: string) => void;
   onPass: (targetId: string) => void;
+  onVisitProfile?: () => void;
   disabled?: boolean;
 }
 
@@ -39,6 +39,7 @@ export default function DiscoveryCard({
   onModalToggle,
   onLike,
   onPass,
+  onVisitProfile,
   disabled = false,
 }: DiscoveryCardProps) {
   const [dragDirection, setDragDirection] = useState<'left' | 'right' | null>(null);
@@ -95,10 +96,12 @@ export default function DiscoveryCard({
     }
   }, [disabled, isModalOpen, profile.id, onPass, onLike]);
 
-  const nameAgeLine = profile.age ? `${profile.displayName}, ${profile.age}` : profile.displayName;
-  const distanceLine = profile.distanceText
-    ? `${nameAgeLine} · ${profile.distanceText} away`
-    : nameAgeLine;
+  const nameAgeLine = profile.age
+    ? `${profile.displayName}, ${profile.age}`
+    : profile.displayName;
+  const photoCountText = profile.photos.length > 1
+    ? `Swipe to browse ${profile.photos.length} photos`
+    : null;
 
   const bioPreview = profile.bio
     ? profile.bio.length > 140
@@ -154,11 +157,19 @@ export default function DiscoveryCard({
         </div>
 
         {/* Details overlay at bottom */}
-        <div className="people-details absolute bottom-0 left-0 right-0 p-6 pt-[30vh] z-30">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-xl font-bold text-[#F2E9E4] leading-tight">
-              {distanceLine}
-            </h2>
+        <div className="people-details absolute bottom-0 left-0 right-0 p-6 pt-[32vh] z-30">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+            <div className="flex flex-col gap-0.5">
+              <h2 className="text-xl font-bold text-[#F2E9E4] leading-tight">
+                {nameAgeLine}
+              </h2>
+              {profile.distanceText && (
+                <p className="flex items-center gap-1 text-[#B58A83] text-sm leading-none">
+                  <MapPin size={13} strokeWidth={1.5} />
+                  {profile.distanceText}
+                </p>
+              )}
+            </div>
             <div className="flex items-center gap-1.5">
               {profile.isVerified === true && (
                 <span className="flex items-center gap-0.5 px-2 py-0.5 rounded-full border border-[#D9B38C]/40 bg-[#D9B38C]/10 text-[#D9B38C] text-[10px] font-medium">
@@ -179,19 +190,21 @@ export default function DiscoveryCard({
           </div>
 
           {profile.casualIntent && (
-            <div className="mb-3">
+            <div className="mt-3">
               <CasualIntentBadge intent={profile.casualIntent as CasualIntent} size="sm" />
             </div>
           )}
 
-          <div className="space-y-3">
+          <div className="mt-3 space-y-2">
             {bioPreview && (
               <p className="text-[#B58A83] text-sm leading-relaxed line-clamp-2">
                 {bioPreview}
               </p>
             )}
-            {profile.interests.length > 0 && (
-              <InterestChips interests={profile.interests} maxVisible={4} />
+            {photoCountText && (
+              <p className="text-[10px] text-[#B58A83]/60 leading-none">
+                {photoCountText}
+              </p>
             )}
           </div>
         </div>
@@ -227,6 +240,7 @@ export default function DiscoveryCard({
         }}
         isOpen={isModalOpen}
         onClose={onModalToggle}
+        onVisitProfile={onVisitProfile}
       />
     </>
   );
