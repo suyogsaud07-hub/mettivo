@@ -2,7 +2,12 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 import { useLanguage } from '@/context/LanguageContext';
 import { supabase } from '@/lib/supabase';
 import InstallButton from '@/app/components/InstallButton';
@@ -19,47 +24,66 @@ export default function LandingPage() {
   const router = useRouter();
   const { t } = useLanguage();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [isOnline, setIsOnline] = useState(true);
+
+  // Auth initialisation state.
+  // - 'checking'   : session is being resolved (render splash, no flash).
+  // - 'authenticated': an active session exists (splash, then redirect).
+  // - 'unauthenticated': no session (render the marketing landing page).
+  const [authState, setAuthState] = useState<'checking' | 'authenticated' | 'unauthenticated'>('checking');
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [isIntroComplete, setIsIntroComplete] = useState(true);
   const introDoneRef = useRef(false);
 
-  // Session + online state for smart routing.
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [isOnline, setIsOnline] = useState(true);
+  const authListenerRef = useRef<ReturnType<typeof supabase.auth.onAuthStateChange> | null>(null);
 
+  // Resolve the session once on mount, then listen for auth changes.
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    let cancelled = false;
+
+    async function resolveSession() {
+      const { data } = await supabase.auth.getSession();
+      if (cancelled) return;
+      setAuthState(data.session ? 'authenticated' : 'unauthenticated');
+      setIsLoggedIn(!!data.session);
+    }
+
+    resolveSession();
+
+    // Persist the redirect decision across auth events so a SIGNED_IN event
+    // (e.g. returning from an OAuth callback) always lands on /discover.
+    const listener = supabase.auth.onAuthStateChange((event, session) => {
+      if (cancelled) return;
+      const signedIn = event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED';
+      setAuthState(signedIn ? 'authenticated' : 'unauthenticated');
       setIsLoggedIn(!!session);
-    });
-  }, []);
-
-  useEffect(() => {
-    // Initial online state read during effect setup; subsequent changes come
-    // from the online/offline listeners.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setIsOnline(navigator.onLine);
-    const onOnline = () => setIsOnline(true);
-    const onOffline = () => setIsOnline(false);
-    window.addEventListener('online', onOnline);
-    window.addEventListener('offline', onOffline);
-    return () => {
-      window.removeEventListener('online', onOnline);
-      window.removeEventListener('offline', onOffline);
-    };
-  }, []);
-
-  useEffect(() => {
-    const frame = window.requestAnimationFrame(() => {
-      if (introDoneRef.current) return;
-      try {
-        const seen = window.sessionStorage.getItem(INTRO_SEEN_KEY) === '1';
-        const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-        if (!seen && !reduceMotion) setIsIntroComplete(false);
-      } catch {
-        // sessionStorage can be blocked (private mode); fall through to the page.
+      if (signedIn && session) {
+        // Use replace so the landing page never enters the history stack and
+        // the back button never returns the member to it.
+        void router.replace('/discover');
+      } else if (event === 'SIGNED_OUT') {
+        setAuthState('unauthenticated');
+        setIsLoggedIn(false);
       }
     });
-    return () => window.cancelAnimationFrame(frame);
-  }, []);
+
+    authListenerRef.current = listener;
+
+    return () => {
+      cancelled = true;
+      if (listener?.data?.subscription?.unsubscribe) {
+        listener.data.subscription.unsubscribe();
+      }
+    };
+  }, [router]);
+
+  const handleGetStarted = useCallback(() => {
+    if (isLoggedIn) {
+      router.replace('/discover');
+    } else {
+      router.push('/auth');
+    }
+  }, [isLoggedIn, router]);
 
   const handleIntroDone = useCallback(() => {
     if (introDoneRef.current) return;
@@ -72,18 +96,51 @@ export default function LandingPage() {
     setIsIntroComplete(true);
   }, []);
 
-  // SMART ROUTING
-  // - logged in AND online   → /discover
-  // - logged in AND offline  → /discover (loads from IndexedDB cache)
-  // - not logged in          → /auth
-  const handleGetStarted = useCallback(() => {
-    if (isLoggedIn) {
-      router.push('/discover');
-    } else {
-      router.push('/auth');
-    }
-  }, [isLoggedIn, router]);
+  // Online / offline state (kept from the original implementation).
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setIsOnline(navigator.onLine);
+    const onOnline = () => setIsOnline(true);
+    const onOffline = () => setIsOnline(false);
+    window.addEventListener('online', onOnline);
+    window.addEventListener('offline', onOffline);
+    return () => {
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('offline', onOffline);
+    };
+  }, []);
 
+  // ========================================================================
+  // RENDER
+  // While the session is still being resolved we render a branded splash so
+  // the marketing page never flashes for an authenticated member. Once the
+  // session is known we either show the splash (then redirect) or the landing
+  // page.
+  // ========================================================================
+  if (authState === 'checking') {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#131017]">
+        <div className="w-16 h-16 rounded-full border-4 border-[#D4B18A]/40 border-t-[#D4B18A] animate-spin" />
+      </div>
+    );
+  }
+
+  if (authState === 'authenticated') {
+    // Authenticated member: show the branded splash, then redirect to /discover.
+    // IntroSplash respects sessionStorage so returning members skip the full
+    // animation and land in the app quickly.
+    return (
+      <IntroSplash
+        onDone={() => {
+          void router.replace('/discover');
+        }}
+      />
+    );
+  }
+
+  // ========================================================================
+  // MARKETING LANDING PAGE (unauthenticated)
+  // ========================================================================
   return (
     <div className="relative isolate min-h-screen flex flex-col overflow-x-hidden bg-[#17121C] text-[#F2E9E4] font-sans antialiased">
       {/* ============================== TOP NAV ============================== */}

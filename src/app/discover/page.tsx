@@ -7,6 +7,7 @@ import MobileNav from '../components/layout/MobileNav';
 import IntentionBadge from '../components/profile/IntentionBadge';
 import FollowButton from '../components/profile/FollowButton';
 import ProfileLink from '../components/profile/ProfileLink';
+import NotificationPrompt from '../components/NotificationPrompt';
 import { recordLike, LikeError } from '@/lib/likes';
 import { blockMember, BlockingError } from '@/lib/blocking';
 import { fetchDiscoveryCandidates, rankDiscovery } from '@/lib/discovery';
@@ -536,6 +537,10 @@ export default function DiscoverPage() {
           </div>
         </div>
       )}
+      
+      {/* Notification prompt — appears only after the feed has loaded, never on mount. */}
+      {!loading && <NotificationPrompt ready={true} />}
+
       <MobileNav />
     </div>
   );
