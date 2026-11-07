@@ -172,22 +172,18 @@ export default function ChatPage({
     }
   }, [callSignaling.call, otherIdentity?.avatar_url]);
 
-  // Outgoing call: once the recipient accepts (call state -> connecting),
-  // create the WebRTC offer and start local media.
+  // Outgoing call UI: once we've initiated (state -> connecting), show the active call screen.
+  // The WebRTC offer is created by callSignaling.initiateCall().
   useEffect(() => {
     const c = callSignaling.call;
     if (c.state === 'connecting' && c.isInitiator && c.callType) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setActiveCall(true);
-      const constraints =
-        c.callType === 'video' ? { audio: true, video: true } : { audio: true, video: false };
-      void webrtc.initiate(constraints);
     }
-  }, [callSignaling.call, webrtc]);
+  }, [callSignaling.call]);
 
-  // Incoming call: once the offer arrives (webrtc state -> ringing), create
-  // the WebRTC answer and start local media. Waiting for the offer avoids
-  // creating an answer before a remote description exists.
+  // Incoming call UI: once the WebRTC offer arrives (state -> ringing), show the active call screen.
+  // The WebRTC answer is created by callSignaling.acceptCall().
   useEffect(() => {
     if (
       webrtc.state === 'ringing' &&
@@ -196,11 +192,6 @@ export default function ChatPage({
     ) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setActiveCall(true);
-      const constraints =
-        callSignaling.call.callType === 'video'
-          ? { audio: true, video: true }
-          : { audio: true, video: false };
-      void webrtc.accept(constraints);
     }
   }, [webrtc.state, callSignaling.call]);
 

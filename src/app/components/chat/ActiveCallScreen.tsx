@@ -49,6 +49,7 @@ export default function ActiveCallScreen({
             <video
               autoPlay
               playsInline
+              {...({ srcObject: remoteStream } as React.VideoHTMLAttributes<HTMLVideoElement>)}
               className="w-full h-full object-cover"
             />
           ) : (
@@ -61,6 +62,7 @@ export default function ActiveCallScreen({
               autoPlay
               playsInline
               muted
+              {...({ srcObject: localStream } as React.VideoHTMLAttributes<HTMLVideoElement>)}
               className="absolute bottom-4 right-4 w-48 h-36 bg-[#1C1822] rounded-xl border border-[#34283F] object-cover"
             />
           )}

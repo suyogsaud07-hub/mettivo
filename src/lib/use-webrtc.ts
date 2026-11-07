@@ -45,9 +45,9 @@ export interface UseWebRTCResult {
   duration: number;
   /** Error message if any. */
   error: string | null;
-  /** Initiate an outgoing call. */
-  initiate: (constraints: MediaConstraints) => Promise<void>;
-  /** Accept an incoming call. */
+  /** Initiate an outgoing call (creates PC, acquires media, sends offer). */
+  initiate: (constraints: MediaConstraints, targetUserId?: string) => Promise<void>;
+  /** Accept an incoming call (acquires media, creates answer). */
   accept: (constraints: MediaConstraints) => Promise<void>;
   /** Reject an incoming call. */
   reject: () => void;
@@ -70,6 +70,11 @@ export interface UseWebRTCResult {
  *
  * Signaling (offer/answer/ICE) is NOT handled here — it is handled by
  * useCallSignaling, which calls the callbacks exposed by this hook.
+ *
+ * Call flow:
+ *   Outgoing: initiate() -> create PC, add tracks, create offer, send offer
+ *   Incoming: handleOffer() -> create PC, set remote description (state: ringing)
+ *             -> accept() -> acquire media, add tracks, create answer, send answer
  */
 export function useWebRTC(onSignal: (payload: { type: string; target: string; sdp?: RTCSessionDescriptionInit; candidate?: RTCIceCandidateInit }) => void): UseWebRTCResult {
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
@@ -84,6 +89,8 @@ export function useWebRTC(onSignal: (payload: { type: string; target: string; sd
   const durationRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const remoteUserIdRef = useRef<string | null>(null);
   const isInitiatorRef = useRef(false);
+  const pendingTracksRef = useRef<MediaStreamTrack[]>([]);
+  const localStreamRef = useRef<MediaStream | null>(null);
 
   const iceServers = buildIceServers();
 
@@ -102,6 +109,10 @@ export function useWebRTC(onSignal: (payload: { type: string; target: string; sd
     }, 1000);
   }, [clearDuration]);
 
+  /**
+   * Creates a single RTCPeerConnection with ICE servers and all event handlers.
+   * Exactly one PC exists per active call.
+   */
   const createPeerConnection = useCallback((): RTCPeerConnection => {
     const pc = new RTCPeerConnection({ iceServers });
 
@@ -126,11 +137,15 @@ export function useWebRTC(onSignal: (payload: { type: string; target: string; sd
       switch (pc.connectionState) {
         case 'connected':
           setState('connected');
+          setError(null);
           startDuration();
           break;
         case 'disconnected':
+          setState('reconnecting');
+          break;
         case 'failed':
           setState('failed');
+          setError('Could not establish a media connection. Try again.');
           break;
         case 'closed':
           setState('ended');
@@ -145,8 +160,15 @@ export function useWebRTC(onSignal: (payload: { type: string; target: string; sd
       }
     };
 
+    pc.onsignalingstatechange = () => {
+      // Diagnostic only — never log SDP contents.
+      if (process.env.NODE_ENV === 'development') {
+        console.debug('[webrtc] signalingState:', pc.signalingState);
+      }
+    };
+
     return pc;
-  }, [onSignal, startDuration]);
+  }, [onSignal]);
 
   const cleanup = useCallback(() => {
     clearDuration();
@@ -154,15 +176,17 @@ export function useWebRTC(onSignal: (payload: { type: string; target: string; sd
       peerRef.current.close();
       peerRef.current = null;
     }
-    if (localStream) {
-      localStream.getTracks().forEach((track) => track.stop());
-      setLocalStream(null);
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((track) => track.stop());
+      localStreamRef.current = null;
     }
+    setLocalStream(null);
     setRemoteStream(null);
     setState('ended');
     remoteUserIdRef.current = null;
     isInitiatorRef.current = false;
-  }, [clearDuration, localStream]);
+    pendingTracksRef.current = [];
+  }, [clearDuration]);
 
   useEffect(() => {
     return () => {
@@ -187,15 +211,23 @@ export function useWebRTC(onSignal: (payload: { type: string; target: string; sd
     []
   );
 
+  /**
+   * Outgoing call: acquire media, create PC, add tracks, create offer, send offer.
+   */
   const initiate = useCallback(
-    async (constraints: MediaConstraints) => {
+    async (constraints: MediaConstraints, targetUserId?: string) => {
       setError(null);
       setState('initiating');
       isInitiatorRef.current = true;
 
+      if (targetUserId) {
+        remoteUserIdRef.current = targetUserId;
+      }
+
       try {
         const stream = await acquireMedia(constraints);
         setLocalStream(stream);
+        localStreamRef.current = stream;
 
         const pc = createPeerConnection();
         peerRef.current = pc;
@@ -222,6 +254,10 @@ export function useWebRTC(onSignal: (payload: { type: string; target: string; sd
     [acquireMedia, createPeerConnection, onSignal]
   );
 
+  /**
+   * Incoming call: acquire media, add tracks to existing PC, create answer, send answer.
+   * The PC and remote description were already set up by handleOffer().
+   */
   const accept = useCallback(
     async (constraints: MediaConstraints) => {
       setError(null);
@@ -230,13 +266,21 @@ export function useWebRTC(onSignal: (payload: { type: string; target: string; sd
       try {
         const stream = await acquireMedia(constraints);
         setLocalStream(stream);
+        localStreamRef.current = stream;
 
-        const pc = createPeerConnection();
-        peerRef.current = pc;
+        // Reuse the PC created by handleOffer() if it exists.
+        let pc = peerRef.current;
+        if (!pc) {
+          pc = createPeerConnection();
+          peerRef.current = pc;
+        }
+
+        // Add any tracks that were queued before the PC existed.
+        pendingTracksRef.current.forEach((track) => pc.addTrack(track));
+        pendingTracksRef.current = [];
 
         stream.getTracks().forEach((track) => pc.addTrack(track, stream));
 
-        // The offer should already be set as remote description by the signaling layer.
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
 
@@ -259,41 +303,48 @@ export function useWebRTC(onSignal: (payload: { type: string; target: string; sd
 
   const reject = useCallback(() => {
     cleanup();
-    setState('idle');
   }, [cleanup]);
 
   const end = useCallback(() => {
     cleanup();
-    setState('idle');
   }, [cleanup]);
 
   const toggleMute = useCallback(() => {
-    if (!localStream) return;
-    const audioTrack = localStream.getAudioTracks()[0];
+    const stream = localStreamRef.current;
+    if (!stream) return;
+    const audioTrack = stream.getAudioTracks()[0];
     if (audioTrack) {
       audioTrack.enabled = !audioTrack.enabled;
       setIsMuted(!audioTrack.enabled);
     }
-  }, [localStream]);
+  }, []);
 
   const toggleCamera = useCallback(() => {
-    if (!localStream) return;
-    const videoTrack = localStream.getVideoTracks()[0];
+    const stream = localStreamRef.current;
+    if (!stream) return;
+    const videoTrack = stream.getVideoTracks()[0];
     if (videoTrack) {
       videoTrack.enabled = !videoTrack.enabled;
       setIsCameraOff(!videoTrack.enabled);
     }
-  }, [localStream]);
+  }, []);
 
   /**
    * Called by the signaling layer when an offer is received.
-   * Sets the remote description and prepares for answer.
+   * Creates the PC, sets the remote description, and queues local tracks
+   * to be added when the user accepts. Does NOT acquire media yet — that
+   * happens in accept() when the user explicitly accepts the call.
    */
   const handleOffer = useCallback(
     async (sdp: RTCSessionDescriptionInit, fromUserId: string) => {
       remoteUserIdRef.current = fromUserId;
       isInitiatorRef.current = false;
       setState('ringing');
+
+      // Close any existing PC before creating a new one.
+      if (peerRef.current) {
+        peerRef.current.close();
+      }
 
       const pc = createPeerConnection();
       peerRef.current = pc;
@@ -310,6 +361,7 @@ export function useWebRTC(onSignal: (payload: { type: string; target: string; sd
 
   /**
    * Called by the signaling layer when an answer is received.
+   * Sets the remote description on the initiator's PC.
    */
   const handleAnswer = useCallback(
     async (sdp: RTCSessionDescriptionInit) => {
@@ -328,6 +380,8 @@ export function useWebRTC(onSignal: (payload: { type: string; target: string; sd
 
   /**
    * Called by the signaling layer when an ICE candidate is received.
+   * Candidates that arrive before the remote description is set are buffered
+   * and applied automatically by addIceCandidate once the description exists.
    */
   const handleIceCandidate = useCallback(
     async (candidate: RTCIceCandidateInit) => {
@@ -356,7 +410,6 @@ export function useWebRTC(onSignal: (payload: { type: string; target: string; sd
     end,
     toggleMute,
     toggleCamera,
-    // Exposed for the signaling layer to call.
     handleOffer,
     handleAnswer,
     handleIceCandidate,

@@ -70,7 +70,12 @@ export function useCallSignaling(
   // Ref that always holds the latest call state so subscribe() does not need
   // to be recreated when state changes (which would cause duplicate channels).
   const callRef = useRef(call);
-  callRef.current = call;
+
+  // Keep callRef in sync with call outside of render to avoid
+  // "Cannot access refs during render" errors.
+  useEffect(() => {
+    callRef.current = call;
+  }, [call]);
 
   const channelRef = useRef<RealtimeChannel | null>(null);
   const myUserIdRef = useRef<string | null>(null);
@@ -290,10 +295,14 @@ export function useCallSignaling(
         callId,
       } as any /* eslint-disable-line @typescript-eslint/no-explicit-any */);
 
-      // The WebRTC offer is sent after the recipient accepts the invite.
-      // We wait for call-accept from the remote side before creating offer.
+      // Create the WebRTC offer immediately so the recipient can answer.
+      // The offer is broadcast as call-offer by webrtc.initiate().
+      await webrtc.initiate(
+        { audio: true, video: callType === 'video' },
+        targetUserId,
+      );
     },
-    [broadcast, resetCall]
+    [broadcast, resetCall, webrtc]
   );
 
   const acceptCall = useCallback(async () => {
@@ -308,7 +317,13 @@ export function useCallSignaling(
       to: call.remoteUserId,
       callId: call.callId,
     } as unknown as Omit<CallSignal, 'timestamp'>);
-  }, [call.callId, call.remoteUserId, broadcast, resetCall]);
+
+    // Create the WebRTC answer: acquire media, add tracks, set local description.
+    await webrtc.accept({
+      audio: true,
+      video: call.callType === 'video',
+    });
+  }, [call.callId, call.remoteUserId, call.callType, broadcast, resetCall, webrtc]);
 
   const rejectCall = useCallback(() => {
     if (!call.callId || !call.remoteUserId) return;
