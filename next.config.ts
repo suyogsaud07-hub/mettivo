@@ -34,7 +34,7 @@ const nextConfig: NextConfig = {
           // FIX 2: Allow Mapbox in Content Security Policy
           {
             key: 'Content-Security-Policy',
-            value: "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://js.stripe.com https://*.vercel.app https://vercel.com https://api.mapbox.com; style-src 'self' 'unsafe-inline' https://api.mapbox.com; img-src 'self' blob: data: https://*.supabase.co https://*.stripe.com https://*.mapbox.com; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.stripe.com https://api.groq.com https://vercel.com https://*.vercel.app https://api.mapbox.com https://events.mapbox.com; worker-src 'self' blob:; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; font-src 'self' data:; object-src 'none'; base-uri 'self';"
+            value: "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://js.stripe.com https://*.vercel.app https://vercel.com https://api.mapbox.com; style-src 'self' 'unsafe-inline' https://api.mapbox.com; img-src 'self' blob: data: https://*.supabase.co https://*.stripe.com https://*.mapbox.com; media-src 'self' blob: data: https://*.supabase.co https://*.mapbox.com; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.stripe.com https://api.groq.com https://vercel.com https://*.vercel.app https://api.mapbox.com https://events.mapbox.com; worker-src 'self' blob:; frame-src 'self' https://js.stripe.com https://hooks.stripe.com; font-src 'self' data:; object-src 'none'; base-uri 'self';"
           }
         ],
       },

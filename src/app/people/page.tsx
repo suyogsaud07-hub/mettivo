@@ -11,9 +11,12 @@ import DiscoveryEmptyState from './components/DiscoveryEmptyState';
 import DiscoveryCardSkeleton from './components/DiscoveryCardSkeleton';
 import DiscoveryTabs from './components/DiscoveryTabs';
 import { DiscoveryComingSoon } from './components/DiscoveryTabs';
+import FlatmateCard from '@/app/components/flatmate/FlatmateCard';
+import FlatmateDiscoverySection from '@/app/components/flatmate/FlatmateDiscoverySection';
+import { useFlatmateDiscovery } from '@/hooks/use-flatmate-discovery';
 import Toast from '@/app/components/ui/Toast';
 
-type TabId = 'for-you' | 'double-date' | 'astrology';
+type TabId = 'for-you' | 'double-date' | 'astrology' | 'flatmate';
 
 export default function PeoplePage() {
   const [activeTab, setActiveTab] = useState<TabId>('for-you');
@@ -43,6 +46,14 @@ export default function PeoplePage() {
     batchSize: 10,
     radiusKm: 10,
   });
+
+  const {
+    candidates: flatmateCandidates,
+    loading: flatmateLoading,
+    error: flatmateError,
+    canDiscover: flatmateCanDiscover,
+    completionPercentage: flatmateCompletion,
+  } = useFlatmateDiscovery();
 
   const clearToast = useCallback(() => {
     setTimeout(() => setToast(null), 1200);
@@ -100,7 +111,7 @@ export default function PeoplePage() {
     void router.push(`/profile/${current.id}`);
   }, [router, current]);
 
-  const isComingSoon = activeTab !== 'for-you';
+  const isComingSoon = activeTab !== 'for-you' && activeTab !== 'flatmate';
 
   if (loading) {
     return (
@@ -142,18 +153,23 @@ export default function PeoplePage() {
   }
 
   return (
-    <div className="h-screen dvh:h-[100dvh] bg-[#17121A] text-[#F2E9E4] relative overflow-hidden">
-      {/* Header + navigation tabs */}
-      <header className="absolute top-0 left-0 right-0 z-30 p-6 flex flex-col items-center gap-4 pointer-events-none">
-        <div className="bg-[#211A28]/80 backdrop-blur-md rounded-xl px-4 py-2 pointer-events-auto">
-          <h1 className="text-lg font-bold text-[#F2E9E4]">People</h1>
-        </div>
+    <div className="h-screen dvh:h-[100dvh] bg-[#17121A] text-[#F2E9E4] relative flex flex-col overflow-hidden">
+      <header className="bg-[#131017] z-20 flex items-center justify-center px-4 py-3">
         <DiscoveryTabs activeTab={activeTab} onTabChange={(tab) => setActiveTab(tab)} />
       </header>
 
-      <main className="relative flex flex-col h-full w-full items-center justify-center pt-24 pb-20 px-4">
+      <main className="flex-1 min-h-0 flex flex-col items-center justify-center overflow-y-auto pb-20 px-4">
         {isComingSoon ? (
           <DiscoveryComingSoon tab={activeTab} />
+        ) : activeTab === 'flatmate' ? (
+          <FlatmateDiscoverySection
+            candidates={flatmateCandidates}
+            loading={flatmateLoading}
+            error={flatmateError}
+            canDiscover={flatmateCanDiscover}
+            completionPercentage={flatmateCompletion}
+            refresh={refresh}
+          />
         ) : (
           <>
             <DiscoveryCard

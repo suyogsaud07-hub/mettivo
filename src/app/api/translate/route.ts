@@ -8,6 +8,29 @@ import {
 export const dynamic = 'force-dynamic';
 
 const DEEPL_ENDPOINT = 'https://api-free.deepl.com/v2/translate';
+const MYMEMORY_ENDPOINT = 'https://api.mymemory.translated.net/get';
+
+// In-memory rate limiter: max 10 requests per minute per user.
+const RATE_LIMIT_WINDOW_MS = 60_000;
+const RATE_LIMIT_MAX = 10;
+const rateLimitMap = new Map<string, { count: number; windowStart: number }>();
+
+function getRateLimit(userId: string): { allowed: boolean; remaining: number } {
+  const now = Date.now();
+  const entry = rateLimitMap.get(userId);
+
+  if (!entry || now - entry.windowStart > RATE_LIMIT_WINDOW_MS) {
+    rateLimitMap.set(userId, { count: 1, windowStart: now });
+    return { allowed: true, remaining: RATE_LIMIT_MAX - 1 };
+  }
+
+  if (entry.count >= RATE_LIMIT_MAX) {
+    return { allowed: false, remaining: 0 };
+  }
+
+  entry.count += 1;
+  return { allowed: true, remaining: RATE_LIMIT_MAX - entry.count };
+}
 
 function failure(error: string, message: string, status: number): NextResponse {
   return NextResponse.json({ error, message }, { status });
@@ -68,6 +91,18 @@ function parseDeeplPayload(payload: unknown): DeeplTranslation | null {
   };
 }
 
+function parseMyMemoryPayload(payload: unknown): { translatedText: string } | null {
+  if (!isRecord(payload)) return null;
+
+  const data = payload.responseData;
+  if (!isRecord(data)) return null;
+
+  const translatedText = data.translatedText;
+  if (typeof translatedText !== 'string') return null;
+
+  return { translatedText };
+}
+
 export async function POST(request: Request): Promise<NextResponse> {
   let raw: unknown;
   try {
@@ -114,51 +149,123 @@ export async function POST(request: Request): Promise<NextResponse> {
     return failure('unauthenticated', 'Sign in to translate messages.', 401);
   }
 
-  const apiKey = process.env.DEEPL_API_KEY;
-  if (!apiKey) {
-    console.error('[translate] missing DEEPL_API_KEY; translation service is unavailable');
-    return failure('service_unavailable', 'Translation service unavailable', 429);
+  // Rate limiting: max 10 requests per minute per user.
+  const rateLimit = getRateLimit(user.id);
+  if (!rateLimit.allowed) {
+    return failure(
+      'rate_limited',
+      'Too many translation requests. Please try again shortly.',
+      429
+    );
   }
 
-  try {
-    // Send the entire message as a single string so line breaks, bullet points,
-    // and numbering survive; preserve_formatting keeps them intact upstream.
-    const form = new URLSearchParams();
-    form.set('text', textValue);
-    form.set('target_lang', targetLanguage.toUpperCase());
-    form.set('preserve_formatting', '1');
+  const deepLKey = process.env.DEEPL_API_KEY;
+  const googleKey = process.env.GOOGLE_TRANSLATE_API_KEY;
 
-    const response = await fetch(DEEPL_ENDPOINT, {
-      method: 'POST',
-      headers: {
-        Authorization: `DeepL-Auth-Key ${apiKey}`,
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: form.toString(),
-    });
+  // Try DeepL first if configured.
+  if (deepLKey) {
+    try {
+      const form = new URLSearchParams();
+      form.set('text', textValue);
+      form.set('target_lang', targetLanguage.toUpperCase());
+      form.set('preserve_formatting', '1');
 
-    if (!response.ok) {
-      console.error(
-        `[translate] DeepL request failed with status ${response.status}`
+      const response = await fetch(DEEPL_ENDPOINT, {
+        method: 'POST',
+        headers: {
+          Authorization: `DeepL-Auth-Key ${deepLKey}`,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: form.toString(),
+      });
+
+      if (response.ok) {
+        const parsed = (await response.json()) as unknown;
+        const translation = parseDeeplPayload(parsed);
+        if (translation && translation.text.trim().length > 0) {
+          return NextResponse.json({
+            translatedText: translation.text.trim(),
+            provider: 'deepl',
+            ...(translation.detected_source_language
+              ? { detectedSourceLanguage: translation.detected_source_language }
+              : {}),
+          });
+        }
+      } else {
+        console.error(`[translate] DeepL request failed with status ${response.status}`);
+      }
+    } catch (error) {
+      console.error('[translate] DeepL error:', error);
+    }
+  }
+
+  // Try Google Translate next if configured.
+  if (googleKey) {
+    try {
+      const response = await fetch(
+        `https://translation.googleapis.com/language/translate/v2?key=${googleKey}`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            q: textValue,
+            target: targetLanguage,
+            format: 'text',
+          }),
+        }
       );
-      return failure('service_unavailable', 'Translation service unavailable', 429);
-    }
 
-    const parsed = (await response.json()) as unknown;
-    const translation = parseDeeplPayload(parsed);
-    if (!translation || translation.text.trim().length === 0) {
-      return failure('empty_result', 'Translation returned empty output.', 502);
+      if (response.ok) {
+        const parsed = (await response.json()) as unknown;
+        const data = parsed && isRecord(parsed) ? parsed.data : null;
+        if (data && isRecord(data)) {
+          const translations = data.translations;
+          if (Array.isArray(translations) && translations.length > 0) {
+            const first = translations[0];
+            if (isRecord(first) && typeof first.translatedText === 'string') {
+              return NextResponse.json({
+                translatedText: first.translatedText.trim(),
+                provider: 'google',
+              });
+            }
+          }
+        }
+      } else {
+        console.error(`[translate] Google Translate request failed with status ${response.status}`);
+      }
+    } catch (error) {
+      console.error('[translate] Google Translate error:', error);
     }
-
-    return NextResponse.json({
-      translatedText: translation.text.trim(),
-      provider: 'deepl',
-      ...(translation.detected_source_language
-        ? { detectedSourceLanguage: translation.detected_source_language }
-        : {}),
-    });
-  } catch (error) {
-    console.error('[translate] error:', error);
-    return failure('service_unavailable', 'Translation service unavailable', 429);
   }
+
+  // Fallback: MyMemory (keyless, free). Used when no provider keys are configured
+  // or when both configured providers have failed.
+  try {
+    const myMemoryUrl = `${MYMEMORY_ENDPOINT}?q=${encodeURIComponent(textValue)}&langpair=en|${targetLanguage}`;
+    const response = await fetch(myMemoryUrl);
+
+    if (response.ok) {
+      const parsed = (await response.json()) as unknown;
+      const translation = parseMyMemoryPayload(parsed);
+      if (translation && translation.translatedText.trim().length > 0) {
+        return NextResponse.json({
+          translatedText: translation.translatedText.trim(),
+          provider: 'mymemory',
+        });
+      }
+    } else {
+      console.error(`[translate] MyMemory request failed with status ${response.status}`);
+    }
+  } catch (error) {
+    console.error('[translate] MyMemory error:', error);
+  }
+
+  // All providers failed.
+  return failure(
+    'service_unavailable',
+    'Translation service is temporarily unavailable. Please try again later.',
+    503
+  );
 }

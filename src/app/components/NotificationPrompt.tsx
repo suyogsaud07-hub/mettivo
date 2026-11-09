@@ -205,7 +205,7 @@ export default function NotificationPrompt({
 
   return (
     <div
-      className="fixed bottom-6 left-6 right-6 z-[70] flex items-center gap-3 rounded-2xl bg-[#1C1822] border border-[#34283F]/60 p-4 shadow-2xl backdrop-blur-md text-[#F2E9E4]"
+      className="fixed bottom-36 sm:bottom-24 left-6 right-6 z-[70] flex items-center gap-3 rounded-2xl bg-[#1C1822] border border-[#34283F]/60 p-4 shadow-2xl backdrop-blur-md text-[#F2E9E4]"
       role="alert"
       aria-live="polite"
     >

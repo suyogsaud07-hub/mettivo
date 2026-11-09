@@ -139,9 +139,15 @@ export default function ExploreMorePage() {
             {categories.map((category) => {
               const count = counts?.categories?.[category.id as keyof typeof counts.categories] ?? 0;
               return (
-                <Link
-                  key={category.id}
-                  href={category.requires_goal ? '/explore-more/dating-goals' : `/explore-more/${category.id}`}
+              <Link
+                key={category.id}
+                href={
+                  category.id === 'flatmate-find'
+                    ? '/flatmate'
+                    : category.requires_goal
+                      ? '/explore-more/dating-goals'
+                      : `/explore-more/${category.id}`
+                }
                   className="explore-card"
                   aria-label={`${category.title}, ${count} ${count === 1 ? 'person' : 'people'}`}
                 >

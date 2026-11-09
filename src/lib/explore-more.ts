@@ -69,7 +69,7 @@ export const EXPLORE_CATEGORIES: readonly ExploreCategory[] = [
     id: 'pet-lovers',
     title: 'Pet Lovers',
     description: 'People who explicitly love or live with animals.',
-    icon: 'M12 21c-4 0-7-2.4-7-5.4 0-2 1.5-3.6 3.5-3.6 1.2 0 2.2.6 3.5 1.6 1.3-1 2.3-1.6 3.5-1.6 2 0 3.5 1.6 3.5 3.6 0 3-3 5.4-7 5.4ZM6.5 10a2 2 0 1 0 0-4 2 2 0 0 0 0 4Zm11 0a2 2 0 1 0 0-4 2 2 0 0 0 0 4Zm-5.5-2a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z',
+    icon: 'M12 21c-4 0-7-2.4-7-5.4 0-2 1.5-3.6 3.5-3.6 1.2 0 2.2.6 3.5 1.6 1.3-1 2.3-1.6 3.5-1.6 3.5-1.6 2 0 3.5 1.6 3.5 3.6 0 3-3 5.4-7 5.4ZM6.5 10a2 2 0 1 0 0-4 2 2 0 0 0 0 4Zm11 0a2 2 0 1 0 0-4 2 2 0 0 0 0 4Zm-5.5-2a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z',
   },
   {
     id: 'travel-partners',
@@ -82,6 +82,12 @@ export const EXPLORE_CATEGORIES: readonly ExploreCategory[] = [
     title: 'New Friends',
     description: 'Broader social discovery for people open to friendship.',
     icon: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2m17-10a3 3 0 1 1-6 0 3 3 0 0 1 6 0ZM9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm8 10v-2a4 4 0 0 0-3-3.87',
+  },
+  {
+    id: 'flatmate-find',
+    title: 'Flatmate Find',
+    description: 'Find a roommate or room to share. Independent of dating.',
+    icon: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 01-1 1H5z',
   },
 ];
 

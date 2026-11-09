@@ -1,9 +1,9 @@
 'use client';
 
 import { useCallback } from 'react';
-import { Star, Users, Sparkles } from 'lucide-react';
+import { Star, Users, Sparkles, Home } from 'lucide-react';
 
-type DiscoveryTab = 'for-you' | 'double-date' | 'astrology';
+type DiscoveryTab = 'for-you' | 'double-date' | 'astrology' | 'flatmate';
 
 interface TabItem {
   key: DiscoveryTab;
@@ -26,6 +26,11 @@ const TABS: TabItem[] = [
     key: 'astrology',
     label: 'Astrology',
     icon: <Star size={18} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />,
+  },
+  {
+    key: 'flatmate',
+    label: 'Flatmate',
+    icon: <Home size={18} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />,
   },
 ];
 
@@ -72,18 +77,20 @@ export default function DiscoveryTabs({
 }
 
 interface DiscoveryComingSoonProps {
-  tab: Extract<DiscoveryTab, 'double-date' | 'astrology'>;
+  tab: Extract<DiscoveryTab, 'double-date' | 'astrology' | 'flatmate'>;
 }
 
 export function DiscoveryComingSoon({ tab }: DiscoveryComingSoonProps) {
   const titles: Record<DiscoveryComingSoonProps['tab'], string> = {
     'double-date': 'Double Date',
     astrology: 'Astrology',
+    flatmate: 'Flatmate',
   };
   const messages: Record<DiscoveryComingSoonProps['tab'], string> = {
     'double-date':
       'Invite a friend and discover together. Double Date is coming soon.',
     astrology: 'Cosmic compatibility, unlocked by the stars. Astrology is coming soon.',
+    flatmate: 'Find your perfect flatmate or roommate. Flatmate Find is coming soon.',
   };
 
   return (
