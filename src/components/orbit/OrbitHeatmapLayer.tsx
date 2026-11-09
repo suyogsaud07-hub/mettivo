@@ -52,6 +52,8 @@ export default function OrbitHeatmapLayer({
 
   const registerHeatmap = useCallback(
     (m: Map) => {
+      if (!m.isStyleLoaded()) return;
+
       // GeoJSON source of density cells (point features).
       const geoJSON = {
         type: 'FeatureCollection' as const,

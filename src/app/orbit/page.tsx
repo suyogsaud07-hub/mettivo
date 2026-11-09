@@ -523,6 +523,7 @@ const OrbitMap = ({
   mapRef,
 }: OrbitMapProps) => {
   const errorLoggedRef = useRef(false);
+  const [mapLoaded, setMapLoaded] = useState(false);
 
   // Log map/tile errors once. Mapbox tile failures (including HTTP 429 rate
   // limiting) are handled by Mapbox's own backoff; we deliberately do NOT
@@ -541,6 +542,7 @@ const OrbitMap = ({
       mapboxAccessToken={MAPBOX_TOKEN}
       onMove={(evt) => onMapMove(evt.viewState)}
       onError={handleMapError}
+      onLoad={() => setMapLoaded(true)}
       ref={mapRef}
       style={{ width: '100%', height: '100%' }}
       maxBounds={[
@@ -557,10 +559,12 @@ const OrbitMap = ({
         onProfileClick={onProfileClick}
         onFlyTo={onFlyTo}
       />
-      <OrbitHeatmapLayer
-        bounds={heatmapBounds}
-        enabled={heatmapEnabled}
-      />
+      {mapLoaded && (
+        <OrbitHeatmapLayer
+          bounds={heatmapBounds}
+          enabled={heatmapEnabled}
+        />
+      )}
       {ownLocation && (
         <Marker
           latitude={ownLocation.latitude}
