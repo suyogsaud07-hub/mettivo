@@ -83,17 +83,14 @@ export default function OrbitHeatmapLayer({
           type: 'circle',
           source: SOURCE_ID,
           filter: ['>', ['get', 'live_count'], 0],
-          paint: {
+            paint: {
             'circle-color': '#10B981',
             'circle-radius': [
               'step',
               ['get', 'live_count'],
-              8,
-              3,
-              16,
-              7,
-              32,
-              24,
+              15,
+              2, 25,
+              5, 40,
             ],
             'circle-opacity': 0.6,
             'circle-stroke-color': '#064E3B',
@@ -111,17 +108,14 @@ export default function OrbitHeatmapLayer({
             ['<=', ['get', 'live_count'], 0],
             ['>', ['get', 'known_count'], 0],
           ],
-          paint: {
+            paint: {
             'circle-color': '#D9B38C',
             'circle-radius': [
               'step',
               ['get', 'known_count'],
-              8,
-              3,
-              16,
-              7,
-              32,
-              24,
+              15,
+              2, 25,
+              5, 40,
             ],
             'circle-opacity': 0.45,
             'circle-stroke-color': '#45321F',
