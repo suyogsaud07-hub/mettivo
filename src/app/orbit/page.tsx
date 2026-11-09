@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import Map, { Marker, Popup, MapRef, useMap } from 'react-map-gl';
@@ -10,6 +10,9 @@ import type { FeatureCollection, Point, Feature } from 'geojson';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import MobileNav from '@/app/components/layout/MobileNav';
 import { getCasualIntentEmoji } from '@/components/profile/CasualIntentChips';
+import { useOrbitLocation } from '@/hooks/use-orbit-location';
+import OrbitHeatmapLayer from '@/components/orbit/OrbitHeatmapLayer';
+import LocationSharingSettings from '@/components/orbit/LocationSharingSettings';
 
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN || process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;
 const MAP_STYLE = 'mapbox://styles/mapbox/navigation-night-v1';
@@ -52,6 +55,8 @@ interface OrbitProfile {
   snappedLat: number | null;
   snappedLon: number | null;
   distanceMeters: number;
+  locationStatus: 'live' | 'last_known' | 'hidden';
+  locationAgeSeconds: number | null;
 }
 
 interface Filters {
@@ -102,6 +107,7 @@ const buildOrbitGeoJSON = (profiles: OrbitProfile[]): FeatureCollection<Point> =
       properties: {
         id: profile.id,
         is_online: profile.isOnline === true,
+        location_status: profile.locationStatus,
         display_name: profile.displayName,
         distance_meters: profile.distanceMeters,
       },
@@ -301,12 +307,16 @@ const FilterPanel = ({ filters, onChange, onReset, onClose }: FilterPanelProps) 
 
 interface OrbitMapLayersProps {
   profiles: OrbitProfile[];
+  heatmapBounds: [number, number, number, number] | null;
+  heatmapEnabled: boolean;
   onProfileClick: (profile: OrbitProfile) => void;
   onFlyTo: (center: [number, number], zoom: number) => void;
 }
 
 const OrbitMapLayers = ({
   profiles,
+  heatmapBounds,
+  heatmapEnabled,
   onProfileClick,
   onFlyTo,
 }: OrbitMapLayersProps) => {
@@ -372,11 +382,20 @@ const OrbitMapLayers = ({
           paint: {
             'circle-color': [
               'case',
-              ['boolean', ['get', 'is_online'], false],
+              ['==', ['get', 'location_status'], 'live'],
               '#10B981',
+              ['==', ['get', 'location_status'], 'last_known'],
+              '#D9B38C',
               '#6B5B7B',
             ],
-            'circle-radius': 7,
+            'circle-radius': [
+              'case',
+              ['==', ['get', 'location_status'], 'live'],
+              7,
+              ['==', ['get', 'location_status'], 'last_known'],
+              6,
+              6,
+            ],
             'circle-opacity': 0.9,
             'circle-stroke-color': '#17121A',
             'circle-stroke-width': 2,
@@ -479,6 +498,8 @@ const OrbitMapLayers = ({
 interface OrbitMapProps {
   viewport: { latitude: number; longitude: number; zoom: number };
   profiles: OrbitProfile[];
+  heatmapBounds: [number, number, number, number] | null;
+  heatmapEnabled: boolean;
   ownLocation: OwnLocation | null;
   selectedProfile: OrbitProfile | null;
   onProfileClick: (profile: OrbitProfile) => void;
@@ -491,6 +512,8 @@ interface OrbitMapProps {
 const OrbitMap = ({
   viewport,
   profiles,
+  heatmapBounds,
+  heatmapEnabled,
   ownLocation,
   selectedProfile,
   onProfileClick,
@@ -529,8 +552,14 @@ const OrbitMap = ({
     >
       <OrbitMapLayers
         profiles={profiles}
+        heatmapBounds={heatmapBounds}
+        heatmapEnabled={heatmapEnabled}
         onProfileClick={onProfileClick}
         onFlyTo={onFlyTo}
+      />
+      <OrbitHeatmapLayer
+        bounds={heatmapBounds}
+        enabled={heatmapEnabled}
       />
       {ownLocation && (
         <Marker
@@ -580,6 +609,14 @@ export default function OrbitPage() {
   const router = useRouter();
   const mapRef: RefObject<MapRef | null> = useRef<MapRef | null>(null);
 
+  // Orbit location hook: sharing state, background tracking, network, profiles.
+  const {
+    sharingEnabled,
+    sharingState,
+    enableSharing,
+    disableSharing,
+  } = useOrbitLocation();
+
   const [viewport, setViewport] = useState({
     latitude: DEFAULT_VIEWPORT.latitude,
     longitude: DEFAULT_VIEWPORT.longitude,
@@ -611,8 +648,29 @@ export default function OrbitPage() {
   const refreshIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const locatingRef = useRef(false);
   const isInteractingRef = useRef(false);
+  const [heatmapEnabled, setHeatmapEnabled] = useState(false);
 
   const radiusKm = filters.radiusKm === 'global' ? GLOBAL_RADIUS_KM : filters.radiusKm;
+
+  // Derive heatmap bounds from the current viewport (roughly the visible box).
+  // Computed during render directly from `viewport` state (no ref access needed).
+  const heatmapBounds = useMemo<[number, number, number, number] | null>(
+    () => {
+      const { latitude, longitude, zoom } = viewport;
+      const degPerPixel = 360 / (256 * Math.pow(2, zoom));
+      // Approximate visible box around the center, scaled by zoom.
+      const padLat = 400 * degPerPixel;
+      const padLng =
+        (600 * degPerPixel) / Math.cos((latitude * Math.PI) / 180);
+      return [
+        longitude - padLng,
+        latitude - padLat,
+        longitude + padLng,
+        latitude + padLat,
+      ] as [number, number, number, number];
+    },
+    [viewport.latitude, viewport.longitude, viewport.zoom]
+  );
 
   const fetchProfiles = useCallback(
     async (lat: number, lng: number, radius: number) => {
@@ -636,6 +694,7 @@ export default function OrbitPage() {
           p_gender: filters.gender,
           p_online_only: filters.onlineOnly,
           p_country: filters.country,
+          p_include_last_known: true,
         });
 
         if (seq !== requestSeqRef.current) return;
@@ -658,6 +717,12 @@ export default function OrbitPage() {
             snappedLat: typeof row.snapped_lat === 'number' ? row.snapped_lat : null,
             snappedLon: typeof row.snapped_lng === 'number' ? row.snapped_lng : null,
             distanceMeters: typeof row.distance_meters === 'number' ? row.distance_meters : 0,
+            locationStatus:
+              (row.location_status as 'live' | 'last_known' | 'hidden') ?? 'hidden',
+            locationAgeSeconds:
+              typeof row.location_age_seconds === 'number'
+                ? row.location_age_seconds
+                : null,
           }));
           setProfiles(parsed);
         }
@@ -678,8 +743,9 @@ export default function OrbitPage() {
 
   const discoveryRefetch = useCallback(() => {
     if (isInteractingRef.current) return;
+    if (!sharingEnabled) return;
     void fetchProfiles(viewportRef.current.latitude, viewportRef.current.longitude, radiusKm);
-  }, [fetchProfiles, radiusKm]);
+  }, [fetchProfiles, radiusKm, sharingEnabled]);
 
   useEffect(() => {
     viewportRef.current = viewport;
@@ -901,9 +967,25 @@ export default function OrbitPage() {
       <header className="absolute top-0 left-0 right-0 z-20 p-4 flex justify-between items-center">
         <div className="bg-[#1C1822]/80 backdrop-blur-md rounded-xl px-4 py-2">
           <h1 className="text-lg font-bold">Live Orbit</h1>
+          {sharingState === 'enabling' ? (
+            <p className="text-xs text-[#D4B18A] mt-1">Enabling location sharing…</p>
+          ) : sharingState === 'enabled' ? (
+            <p className="text-xs text-[#10B981] mt-1">Location sharing active</p>
+          ) : null}
         </div>
         <div className="bg-[#1C1822]/80 backdrop-blur-md rounded-xl p-1 flex gap-1">
           <span className="text-xs text-[#B58A83]">{profiles.length} nearby</span>
+          <button
+            type="button"
+            onClick={() => setHeatmapEnabled((prev) => !prev)}
+            aria-label="Toggle heatmap"
+            className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${heatmapEnabled ? 'bg-[#D4B18A]' : 'bg-[#29202D] border border-[#34283F]/40'}`}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M1 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S1 12 1 12Z" />
+              <circle cx="12" cy="12" r="3" />
+            </svg>
+          </button>
         </div>
       </header>
 
@@ -928,6 +1010,8 @@ export default function OrbitPage() {
         <OrbitMap
           viewport={viewport}
           profiles={profiles}
+          heatmapBounds={heatmapBounds}
+          heatmapEnabled={heatmapEnabled}
           ownLocation={ownLocation}
           selectedProfile={selectedProfile}
           onProfileClick={handleMarkerClick}
@@ -936,6 +1020,13 @@ export default function OrbitPage() {
           onFlyTo={flyTo}
           mapRef={mapRef}
         />
+        <LocationSharingSettings onChange={(enabled) => {
+          if (enabled) {
+            void enableSharing();
+          } else {
+            void disableSharing();
+          }
+        }} />
 
         {viewport.zoom > DEFAULT_VIEWPORT.zoom && (
           <div className="absolute bottom-20 left-1/2 -translate-x-1/2 z-10">
