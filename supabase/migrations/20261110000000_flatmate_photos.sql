@@ -122,11 +122,27 @@ begin
         )
     $p$;
 
-    -- Owner may replace/delete their own objects.
+    -- Owner may update only their own flatmate media objects.
     execute $p$drop policy if exists "flatmate_media_manage_owner" on storage.objects$p$;
+    execute $p$drop policy if exists "flatmate_media_update_owner" on storage.objects$p$;
     execute $p$
-      create policy "flatmate_media_manage_owner"
-        on storage.objects for update, delete to authenticated
+      create policy "flatmate_media_update_owner"
+        on storage.objects for update to authenticated
+        using (
+          bucket_id = 'flatmate-media'
+          and (storage.foldername(name))[1] = auth.uid()::text
+        )
+        with check (
+          bucket_id = 'flatmate-media'
+          and (storage.foldername(name))[1] = auth.uid()::text
+        )
+    $p$;
+
+    -- Owner may delete only their own flatmate media objects.
+    execute $p$drop policy if exists "flatmate_media_delete_owner" on storage.objects$p$;
+    execute $p$
+      create policy "flatmate_media_delete_owner"
+        on storage.objects for delete to authenticated
         using (
           bucket_id = 'flatmate-media'
           and (storage.foldername(name))[1] = auth.uid()::text

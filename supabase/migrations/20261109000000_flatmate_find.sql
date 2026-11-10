@@ -282,6 +282,9 @@ begin
   if p_smoking is not null then completion := completion + 5; end if;
   if p_pets is not null then completion := completion + 5; end if;
 
+  -- Cap completion at 100 so it never violates the CHECK constraint.
+  completion := least(completion, 100);
+
   -- Upsert the flatmate profile
   insert into public.flatmate_profiles (
     id, first_name, age, occupation, university_workplace, introduction,
@@ -293,7 +296,7 @@ begin
     social_lifestyle, cooking, guests, noise_tolerance, work_study_routine,
     household_responsibilities, rent_sharing_arrangement, utilities_budget,
     deposit_expectations, payment_frequency, additional_expenses,
-    is_active, completion_percentage, photos, updated_at
+    is_active, completion_percentage, updated_at
   ) values (
     me, p_first_name, p_age, p_occupation, p_university_workplace, p_introduction,
     p_general_interests, p_preferred_language, p_current_city, p_preferred_living_arrangement,
@@ -304,7 +307,7 @@ begin
     p_social_lifestyle, p_cooking, p_guests, p_noise_tolerance, p_work_study_routine,
     p_household_responsibilities, p_rent_sharing_arrangement, p_utilities_budget,
     p_deposit_expectations, p_payment_frequency, p_additional_expenses,
-    p_is_active, completion, p_photos, now()
+    p_is_active, completion, now()
   )
   on conflict (id)
     do update set
@@ -349,7 +352,6 @@ begin
       additional_expenses = excluded.additional_expenses,
       is_active = excluded.is_active,
       completion_percentage = excluded.completion_percentage,
-      photos = excluded.photos,
       updated_at = now();
 
   return jsonb_build_object(
@@ -360,8 +362,8 @@ begin
 end;
 $$;
 
-revoke all on function public.save_flatmate_profile(text, integer, text, text, text, text[], text, text, text, boolean, boolean, text, text, integer, integer, date, integer, integer, text, boolean, boolean, integer, boolean, text, text, text, text, text, text, text, text, text, text, text, text, text, text, integer, text, text, text, boolean, text[]) from public, anon;
-grant execute on function public.save_flatmate_profile(text, integer, text, text, text, text[], text, text, text, boolean, boolean, text, text, integer, integer, date, integer, integer, text, boolean, boolean, integer, boolean, text, text, text, text, text, text, text, text, text, text, text, text, text, integer, text, text, text, boolean, text[]) to authenticated;
+revoke all on function public.save_flatmate_profile(text, integer, text, text, text, text[], text, text, text, boolean, boolean, text, text, integer, integer, date, integer, integer, text, boolean, boolean, integer, boolean, text, text, text, text, text, text, text, text, text, text, text, text, integer, text, text, text, boolean, text[]) from public, anon;
+grant execute on function public.save_flatmate_profile(text, integer, text, text, text, text[], text, text, text, boolean, boolean, text, text, integer, integer, date, integer, integer, text, boolean, boolean, integer, boolean, text, text, text, text, text, text, text, text, text, text, text, text, integer, text, text, text, boolean, text[]) to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- 6. flatmate interest RPC — express interest in another flatmate profile
