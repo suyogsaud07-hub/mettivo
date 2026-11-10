@@ -115,7 +115,7 @@ export default function DiscoveryCard({
         ref={cardRef}
         data-testid="people-swipe-card"
         className="w-full max-w-[420px] h-full max-h-[82vh] relative overflow-hidden rounded-3xl bg-[#17121A] shadow-2xl border border-[#34283F]/40"
-        style={{ x, y, rotate, opacity: dragDirection ? 0 : 1 }}
+        style={{ x, y, rotate, opacity: dragDirection ? 0 : 1, touchAction: 'none' }}
         transition={{ type: 'spring', stiffness: 400, damping: 30 }}
         drag="x"
         dragConstraints={{ left: -300, right: 300 }}

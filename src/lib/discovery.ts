@@ -63,6 +63,8 @@ export interface DiscoveryFilters {
   onlineOnly?: boolean;
   /** Ids already shown by this surface; prevents duplicate load-more cards. */
   excludeIds?: readonly string[];
+  /** Offset for cursor-based pagination (number of profiles already seen). */
+  offset?: number;
   /** Caller's latitude, supplied when available so the RPC can annotate distance. */
   latitude?: number | null;
   /** Caller's longitude, supplied when available so the RPC can annotate distance. */
@@ -177,6 +179,7 @@ export async function fetchDiscoveryCandidates(
       : [],
     p_lat: filters.latitude ?? null,
     p_lng: filters.longitude ?? null,
+    p_offset: filters.offset ?? 0,
   });
 
   if (error) {

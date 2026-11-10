@@ -65,6 +65,24 @@ function preloadImage(url: string): Promise<void> {
 }
 
 /**
+ * Preloads the primary photo of the next N candidates so they are in the
+ * browser cache before the user swipes to them. Respects browser memory by
+ * capping the queue and discarding URLs already loaded.
+ */
+const PREFETCH_COUNT = 5;
+
+function preloadCandidatePhotos(candidates: DiscoveryProfile[]): void {
+  for (let i = 0; i < Math.min(PREFETCH_COUNT, candidates.length); i++) {
+    const candidate = candidates[i];
+    if (candidate.photos.length > 0) {
+      void preloadImage(candidate.photos[0]);
+    } else if (candidate.avatarUrl) {
+      void preloadImage(candidate.avatarUrl);
+    }
+  }
+}
+
+/**
  * Reuse the project's existing distance convention (`formatDistance` from
  * `@/lib/nearby`) and render it as "500 m away" / "1.0 km away" / "10 km away".
  * Keeps the card and modal consistent.
@@ -163,16 +181,17 @@ export function useDiscovery(options: UseDiscoveryOptions = {}) {
 
   /**
    * Fetch a batch of eligible candidates and annotate with distance + casual
-   * intent where available.
+   * intent where available. Uses offset-based pagination so load-more never
+   * re-fetches from the start.
    */
   const fetchBatch = useCallback(
-    async (excludeIds: string[]): Promise<DiscoveryProfile[]> => {
+    async (offset: number): Promise<DiscoveryProfile[]> => {
       const candidates = await fetchDiscoveryCandidates({
         minAge,
         maxAge,
         genders,
         limit: batchSize,
-        excludeIds,
+        offset,
         latitude: userLat,
         longitude: userLng,
       });
@@ -192,17 +211,28 @@ export function useDiscovery(options: UseDiscoveryOptions = {}) {
     [minAge, maxAge, genders, batchSize, userLat, userLng]
   );
 
+  /**
+   * Fetch a batch and immediately begin preloading its candidates' primary
+   * photos so they are cached before the user swipes to them.
+   */
+  const fetchBatchAndPrefetch = useCallback(
+    async (offset: number): Promise<DiscoveryProfile[]> => {
+      const candidates = await fetchBatch(offset);
+      void preloadCandidatePhotos(candidates);
+      return candidates;
+    },
+    [fetchBatch]
+  );
+
   const loadBatch = useCallback(
     async (append: boolean): Promise<void> => {
       if (processingRef.current) return;
       processingRef.current = true;
 
       try {
-        const existingIds = append
-          ? profilesRef.current.map((p) => p.id)
-          : [];
+        const nextOffset = append ? profilesRef.current.length : 0;
 
-        const next = await fetchBatch(existingIds);
+        const next = await fetchBatchAndPrefetch(nextOffset);
 
         if (!isMountedRef.current) return;
 
@@ -227,7 +257,7 @@ export function useDiscovery(options: UseDiscoveryOptions = {}) {
         }
       }
     },
-    [fetchBatch]
+    [fetchBatchAndPrefetch]
   );
 
   const refresh = useCallback(async () => {
@@ -263,14 +293,14 @@ export function useDiscovery(options: UseDiscoveryOptions = {}) {
 
   /**
    * Background prefetch when the stack is running low (2 profiles remain).
+   * Uses offset-based pagination so load-more never re-fetches from the start.
    */
   useEffect(() => {
     if (profilesRef.current.length === 0 || index < profilesRef.current.length - 2) return;
 
     let cancelled = false;
     (async () => {
-      const existing = profilesRef.current.map((p) => p.id);
-      const next = await fetchBatch(existing);
+      const next = await fetchBatchAndPrefetch(profilesRef.current.length);
       if (cancelled || !isMountedRef.current) return;
       setProfiles((prev) => [...prev, ...next]);
     })();
@@ -278,7 +308,7 @@ export function useDiscovery(options: UseDiscoveryOptions = {}) {
     return () => {
       cancelled = true;
     };
-  }, [index, fetchBatch]);
+  }, [index, fetchBatchAndPrefetch]);
 
   /**
    * Record a like or pass and advance the stack. Errors are surfaced but do
@@ -313,7 +343,7 @@ export function useDiscovery(options: UseDiscoveryOptions = {}) {
         if (index + 1 < profiles.length) {
           setIndex((i) => i + 1);
         } else {
-          await loadBatch(false);
+          await loadBatch(true);
           setIndex(0);
         }
 
