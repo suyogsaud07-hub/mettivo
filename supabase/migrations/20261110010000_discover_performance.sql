@@ -12,11 +12,17 @@
 --     3. Multiple NOT EXISTS correlated subqueries against likes/matches
 --        with no supporting indexes beyond the PK.
 --     4. No pagination — load-more re-fetches from the start.
---     5. Missing indexes on profiles.age, gender, onboarding_completed,
---        is_suspended.
+--     5. Missing indexes on profiles.age and gender for the discovery WHERE
+--        clause; no separate index on onboarding_completed/is_suspended is
+--        added because a partial index on those columns would have constant
+--        values within its own predicate (they are fixed by the WHERE clause),
+--        providing zero selectivity.
 --
 -- WHAT
---   1. Partial B-tree indexes on profiles for the discovery WHERE clause.
+--   1. Partial B-tree indexes on profiles for the discovery WHERE clause
+--      (age, gender, updated_at). No separate index on onboarding_completed/
+--      is_suspended because those columns are constant within the partial
+--      predicate and would add no selectivity.
 --   2. Index on blocked_users(blocker_id, blocked_user_id) for is_blocked_pair.
 --   3. Refactor discover_profiles():
 --        - Cache auth.uid() in a variable (single evaluation).
@@ -35,17 +41,27 @@
 -- ---------------------------------------------------------------------------
 -- M56 uses geography(Point, 4326), ST_SetSRID, ST_MakePoint and ST_Distance,
 -- all provided by the PostGIS extension. Migration 20261105020000_postgis_location.sql
--- installs it, but we ensure it here so M56 is self-contained and idempotent.
--- PostGIS installs its types and functions into the public schema by default
--- (see 20261106000006_orbit_location_rpc_repair.sql), which is already on this
--- function's search_path (public, pg_temp). Guard creation so a Supabase project
--- without PostGIS available fails gracefully with a notice rather than a hard
--- error on the geography type declaration below.
+-- installs it, but we ensure it here so M56 is self-contained.
+-- PostGIS may be installed in the public schema or in a dedicated extensions
+-- schema; both are valid. The function's search_path must include the schema
+-- where PostGIS lives so that geography types and ST_* functions resolve.
+CREATE EXTENSION IF NOT EXISTS postgis;
+
+-- Verify PostGIS is installed and accessible before creating the function.
+-- Fail only if PostGIS is genuinely unavailable; its schema (public or
+-- extensions) is recorded for the search_path check below.
 do $$
+declare
+  ext_schema text;
 begin
-  create extension if not exists postgis;
-exception when others then
-  raise notice 'postgis extension unavailable in this environment - skipped';
+  select extnamespace::regnamespace::text into ext_schema
+  from pg_extension where extname = 'postgis';
+
+  if ext_schema is null then
+    raise exception 'PostGIS extension is not installed. The discover_profiles() function requires PostGIS for geography types and ST_* functions. Install it with: CREATE EXTENSION postgis;';
+  end if;
+
+  raise notice 'PostGIS extension verified in schema: %', ext_schema;
 end $$;
 
 -- ---------------------------------------------------------------------------
@@ -61,12 +77,6 @@ CREATE INDEX IF NOT EXISTS profiles_age_idx
 -- Gender filter: p.gender = any (p_genders)
 CREATE INDEX IF NOT EXISTS profiles_gender_idx
   ON public.profiles (gender)
-  WHERE onboarding_completed = true
-    AND coalesce(is_suspended, false) = false;
-
--- Onboarding + suspension filter
-CREATE INDEX IF NOT EXISTS profiles_onboarding_suspended_idx
-  ON public.profiles (onboarding_completed, coalesce(is_suspended, false))
   WHERE onboarding_completed = true
     AND coalesce(is_suspended, false) = false;
 
@@ -100,6 +110,11 @@ CREATE INDEX IF NOT EXISTS blocked_users_blocked_blocker_idx
 
 drop function if exists public.discover_profiles(integer, integer, text[], integer, boolean, uuid[], float, float);
 drop function if exists public.discover_profiles(integer, integer, text[], integer, boolean, uuid[], float, float, integer);
+
+-- Ensure the search_path includes the PostGIS extension schema (extensions)
+-- so that the geography type and ST_* functions resolve at CREATE FUNCTION
+-- time. The function itself also carries this search_path for execution time.
+set search_path = public, extensions, pg_temp;
 
 create function public.discover_profiles(
   p_min_age     integer default 18,
@@ -140,7 +155,7 @@ returns table (
 language plpgsql
 stable
 security definer
-set search_path = public, pg_temp
+set search_path = public, extensions, pg_temp
 as $$
 declare
   me uuid := auth.uid();
@@ -231,7 +246,7 @@ comment on function public.discover_profiles(integer, integer, text[], integer, 
 do $$
 begin
   raise notice 'M56: discover_profiles performance migration complete';
-  raise notice '  Indexes added: profiles_age_idx, profiles_gender_idx, profiles_onboarding_suspended_idx, profiles_updated_at_idx';
+  raise notice '  Indexes added: profiles_age_idx, profiles_gender_idx, profiles_updated_at_idx';
   raise notice '  Indexes added: blocked_users_blocker_blocked_idx, blocked_users_blocked_blocker_idx';
   raise notice '  discover_profiles(): auth.uid() cached, online status computed in subquery, p_offset added';
 end $$;
