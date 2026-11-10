@@ -15,6 +15,7 @@ interface FlatmateCardProps {
   onSave: (targetId: string, save: boolean) => void;
   onSkip: (targetId: string) => void;
   onViewProfile: (targetId: string) => void;
+  onMessage?: (targetId: string) => void;
   onOpenMenu?: (targetId: string) => void;
   menuOpen?: boolean;
 }
@@ -118,6 +119,7 @@ export default function FlatmateCard({
   onSave,
   onSkip,
   onViewProfile,
+  onMessage,
   onOpenMenu,
   menuOpen,
 }: FlatmateCardProps) {
@@ -162,6 +164,11 @@ export default function FlatmateCard({
     if (pending || !candidate.id) return;
     onSkip(candidate.id);
   }, [pending, candidate.id, onSkip]);
+
+  const handleMessage = useCallback(() => {
+    if (pending || !candidate.id || !onMessage) return;
+    onMessage(candidate.id);
+  }, [pending, candidate.id, onMessage]);
 
   const scoreColor = useMemo(() => {
     if (score >= 70) return 'text-[#10B981]';
@@ -310,6 +317,18 @@ export default function FlatmateCard({
           <Flame size={16} strokeWidth={2.5} />
           <span className="text-[10px] font-bold">{candidate.already_interested ? 'Interested' : 'Interest'}</span>
         </button>
+
+        {onMessage && (
+          <button
+            type="button"
+            onClick={handleMessage}
+            aria-label={`Message ${candidate.first_name}`}
+            disabled={pending}
+            className={`w-full rounded-xl flex items-center justify-center gap-2 transition-colors border border-[#D9B38C]/40 bg-[#D9B38C]/10 text-[#D9B38C] text-[10px] font-bold py-2 hover:bg-[#D9B38C]/20 disabled:opacity-50 disabled:cursor-not-allowed`}
+          >
+            <span className="flex items-center gap-1">Message</span>
+          </button>
+        )}
       </div>
     </article>
   );

@@ -179,7 +179,9 @@ export async function POST(request: Request): Promise<NextResponse> {
         body: form.toString(),
       });
 
-      if (response.ok) {
+      if (!response) {
+        console.error('[translate] DeepL request returned no response');
+      } else if (response.ok) {
         const parsed = (await response.json()) as unknown;
         const translation = parseDeeplPayload(parsed);
         if (translation && translation.text.trim().length > 0) {
@@ -217,7 +219,9 @@ export async function POST(request: Request): Promise<NextResponse> {
         }
       );
 
-      if (response.ok) {
+      if (!response) {
+        console.error('[translate] Google Translate request returned no response');
+      } else if (response.ok) {
         const parsed = (await response.json()) as unknown;
         const data = parsed && isRecord(parsed) ? parsed.data : null;
         if (data && isRecord(data)) {
@@ -246,7 +250,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     const myMemoryUrl = `${MYMEMORY_ENDPOINT}?q=${encodeURIComponent(textValue)}&langpair=en|${targetLanguage}`;
     const response = await fetch(myMemoryUrl);
 
-    if (response.ok) {
+    if (!response) {
+      console.error('[translate] MyMemory request returned no response');
+    } else if (response.ok) {
       const parsed = (await response.json()) as unknown;
       const translation = parseMyMemoryPayload(parsed);
       if (translation && translation.translatedText.trim().length > 0) {
@@ -265,7 +271,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   // All providers failed.
   return failure(
     'service_unavailable',
-    'Translation service is temporarily unavailable. Please try again later.',
+    'Translation service unavailable',
     503
   );
 }

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import MobileNav from '@/app/components/layout/MobileNav';
+import FlatmatePhotoGallery from '@/app/components/flatmate/FlatmatePhotoGallery';
 import {
   saveFlatmateProfile,
   fetchFlatmateProfile,
@@ -730,6 +731,53 @@ export default function FlatmateSettings() {
                 placeholder="e.g. Parking, storage"
                 className="w-full px-3 py-2 rounded-md bg-[#211A28] border border-[#34283F]/40 text-[#F2E9E4] text-sm focus:border-[#D9B38C] focus:outline-none"
               />
+            </div>
+          </section>
+
+          {/* Photo gallery */}
+          <FlatmatePhotoGallery
+            userId={profile?.id ?? ''}
+            offeringRoom={form.offeringRoom}
+            lookingForRoom={form.lookingForRoom}
+          />
+
+          {/* Visibility & status */}
+          <section className="space-y-4">
+            <h2 className="text-xs font-bold text-[#B58A83] uppercase tracking-wider mb-3">Visibility &amp; status</h2>
+            <div className="space-y-3">
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={form.isActive}
+                  onChange={(e) => handleInput('isActive', e.target.checked)}
+                  className="rounded bg-[#211A28] border-[#34283F]/40 text-[#D9B38C] focus:ring-0"
+                />
+                <span className="text-[#F2E9E4] text-sm">
+                  {form.isActive ? 'Appear in Flatmate Find discovery' : 'Hide from discovery (pause)'}
+                </span>
+              </label>
+              <p className="text-xs text-[#B58A83]">
+                Hiding your profile removes you from discovery without deleting your
+                profile or your METTIVO account. Connections you already have are kept.
+              </p>
+              {!form.isActive && (
+                <button
+                  type="button"
+                  onClick={() => handleInput('isActive', true)}
+                  className="w-full px-6 py-3 rounded-xl border border-[#D9B38C]/60 text-[#D9B38C] text-sm font-semibold hover:bg-[#D9B38C]/10 transition-colors"
+                >
+                  Reactivate Flatmate Find
+                </button>
+              )}
+              {form.isActive && (
+                <button
+                  type="button"
+                  onClick={() => handleInput('isActive', false)}
+                  className="w-full px-6 py-3 rounded-xl border border-[#F3A7AD]/40 text-[#F3A7AD] text-sm font-semibold hover:bg-[#F3A7AD]/10 hover:text-[#F2E9E4] transition-colors"
+                >
+                  Leave Flatmate Find (close listing)
+                </button>
+              )}
             </div>
           </section>
 

@@ -11,9 +11,9 @@ import {
 import { PROFILE_INTENTION_OPTIONS } from '@/lib/profile-options';
 
 describe('Explore More category and dating-goal contract', () => {
-  it('offers exactly the seven curated categories, each once', () => {
-    expect(EXPLORE_CATEGORY_IDS).toHaveLength(7);
-    expect(new Set(EXPLORE_CATEGORY_IDS).size).toBe(7);
+  it('offers exactly the eight curated categories, each once', () => {
+    expect(EXPLORE_CATEGORY_IDS).toHaveLength(8);
+    expect(new Set(EXPLORE_CATEGORY_IDS).size).toBe(8);
     expect(EXPLORE_CATEGORIES.map((category) => category.id)).toEqual([
       ...EXPLORE_CATEGORY_IDS,
     ]);
@@ -25,6 +25,7 @@ describe('Explore More category and dating-goal contract', () => {
       'Pet Lovers',
       'Travel Partners',
       'New Friends',
+      'Flatmate Find',
     ]);
   });
 

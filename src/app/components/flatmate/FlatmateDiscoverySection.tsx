@@ -6,6 +6,7 @@ import {
   FlatmateFilters,
 } from '@/hooks/use-flatmate-discovery';
 import FlatmateCard from '@/app/components/flatmate/FlatmateCard';
+import { startFlatmateConversation } from '@/lib/flatmate';
 import type { FlatmateCandidate } from '@/lib/flatmate';
 
 interface FlatmateDiscoverySectionProps {
@@ -27,6 +28,7 @@ export default function FlatmateDiscoverySection({
 }: FlatmateDiscoverySectionProps) {
   const [filterTab, setFilterTab] = useState<'have' | 'need' | 'all'>('all');
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [convError, setConvError] = useState<string | null>(null);
 
   const {
     filters,
@@ -37,6 +39,18 @@ export default function FlatmateDiscoverySection({
     reportProfile,
     connectionStatus,
   } = useFlatmateDiscovery();
+
+  const startConversation = useCallback(
+    async (targetId: string) => {
+      setConvError(null);
+      try {
+        await startFlatmateConversation(targetId);
+      } catch (err) {
+        setConvError(err instanceof Error ? err.message : 'Could not start conversation.');
+      }
+    },
+    []
+  );
 
   // Category filter based on looking_for_room / offering_room
   const haveFlatCandidates = passedCandidates.filter((c) => c.offering_room);
@@ -169,6 +183,19 @@ export default function FlatmateDiscoverySection({
           );
         })}
       </div>
+
+      {convError && (
+        <div className="mb-3 rounded-lg bg-[#17121A] border border-[#F3A7AD]/30 p-2 text-[#F3A7AD] text-xs">
+          {convError}
+          <button
+            type="button"
+            onClick={() => setConvError(null)}
+            className="ml-2 underline underline-offset-2 hover:text-[#F2E9E4]"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {/* Filters toggle */}
       <div className="flex justify-between items-center mb-2">
@@ -313,6 +340,7 @@ export default function FlatmateDiscoverySection({
             onViewProfile={(id) => {
               // Open profile modal - handled by parent via onVisitProfile
             }}
+            onMessage={startConversation}
           />
         ))}
       </div>

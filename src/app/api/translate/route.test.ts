@@ -95,7 +95,7 @@ describe('translation API', () => {
     // DEEPL_API_KEY intentionally left unset.
 
     const res = await callRoute({ text: 'Hello', targetLanguage: 'es' });
-    expect(res.status).toBe(429);
+    expect(res.status).toBe(503);
     const json = await res.json();
     expect(json.error).toBe('service_unavailable');
     expect(json.message).toBe('Translation service unavailable');
@@ -105,7 +105,7 @@ describe('translation API', () => {
     fetchMock.mockRejectedValueOnce(new Error('network boom'));
 
     const res = await callRoute({ text: 'Hello', targetLanguage: 'es' });
-    expect(res.status).toBe(429);
+    expect(res.status).toBe(503);
     const json = await res.json();
     expect(json.error).toBe('service_unavailable');
     expect(json.message).toBe('Translation service unavailable');
@@ -120,7 +120,7 @@ describe('translation API', () => {
     );
 
     const res = await callRoute({ text: 'Hello', targetLanguage: 'es' });
-    expect(res.status).toBe(429);
+    expect(res.status).toBe(503);
     const json = await res.json();
     expect(json.error).toBe('service_unavailable');
   });

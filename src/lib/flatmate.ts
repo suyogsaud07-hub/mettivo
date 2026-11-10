@@ -2,6 +2,7 @@
 
 import { supabase } from '@/lib/supabase';
 import { isMissingRelationError } from '@/lib/postgrest-errors';
+import { deleteFlatmatePhoto as deleteFlatmatePhotoFromStorage } from '@/lib/flatmate-media';
 
 /** Flatmate profile as stored in the database. */
 export interface FlatmateProfile {
@@ -213,26 +214,25 @@ export function computeFlatmateCompatibility(
   const matches: string[] = [];
 
   if (!viewer) {
-    const neutralScore = Math.round(
-      (Object.values(FLATMATE_COMPATIBILITY_WEIGHTS).reduce((a, b) => a + b, 0)) * 0.5
-    );
+    // No viewer data at all: nothing can be compared, so no compatibility points.
     return {
-      budget_financial: neutralScore,
-      location_accommodation: neutralScore,
-      sleeping_schedule: neutralScore,
-      cleanliness: neutralScore,
-      smoking_pets: neutralScore,
-      social_guests: neutralScore,
-      cooking_household: neutralScore,
-      total: neutralScore,
+      budget_financial: 0,
+      location_accommodation: 0,
+      sleeping_schedule: 0,
+      cleanliness: 0,
+      smoking_pets: 0,
+      social_guests: 0,
+      cooking_household: 0,
+      total: 0,
       conflicts: [],
       matches: [],
     };
   }
 
-  // Budget & financial (25%)
+  // Budget & financial (25%). Missing data on either side earns no points — it is
+  // never treated as compatibility.
   let budgetScore = 0;
-  if (viewer?.rent_budget_max !== null && candidate.rent_budget_max !== null) {
+  if (viewer.rent_budget_max !== null && candidate.rent_budget_max !== null) {
     // Compare max budgets: within 20% is good
     const viewerMax = viewer.rent_budget_max;
     const candidateMax = candidate.rent_budget_max;
@@ -240,26 +240,20 @@ export function computeFlatmateCompatibility(
     budgetScore = Math.round(ratio * FLATMATE_COMPATIBILITY_WEIGHTS.budget_financial);
     if (ratio >= 0.8) matches.push('Similar rent budget');
     else if (ratio < 0.6) conflicts.push('Significant rent budget difference');
-  } else if (viewer?.rent_budget_max === null || candidate.rent_budget_max === null) {
-    // missing budget info — neutral
-    budgetScore = Math.round(FLATMATE_COMPATIBILITY_WEIGHTS.budget_financial * 0.5);
   }
 
-  // Location & accommodation (20%)
+  // Location & accommodation (20%). Missing data earns no points.
   let locationScore = 0;
-  if (viewer?.preferred_city && candidate.preferred_city) {
+  if (viewer.preferred_city && candidate.preferred_city) {
     const sameCity = viewer.preferred_city.toLowerCase().trim() === candidate.preferred_city!.toLowerCase().trim();
     if (sameCity) {
       locationScore += Math.round(FLATMATE_COMPATIBILITY_WEIGHTS.location_accommodation * 0.6);
       matches.push('Same preferred city');
     }
   }
-  if (viewer?.room_type && candidate.room_type && viewer.room_type === candidate.room_type) {
+  if (viewer.room_type && candidate.room_type && viewer.room_type === candidate.room_type) {
     locationScore += Math.round(FLATMATE_COMPATIBILITY_WEIGHTS.location_accommodation * 0.4);
     matches.push('Same room type preference');
-  }
-  if ((!viewer?.preferred_city || !candidate.preferred_city) && (!viewer?.room_type || !candidate.room_type)) {
-    locationScore = Math.round(FLATMATE_COMPATIBILITY_WEIGHTS.location_accommodation * 0.5);
   }
 
   // Sleeping schedule (15%)
@@ -304,17 +298,19 @@ export function computeFlatmateCompatibility(
     matches.push('Similar social lifestyle');
   }
 
-  // Cooking & household (5%)
+  // Cooking & household (5%). Round the category total once so two half-weight
+  // matches cannot exceed the category weight (2.5 + 2.5 must not round to 6).
   let householdScore = 0;
-  if (viewer?.cooking && candidate.cooking && viewer.cooking === candidate.cooking) {
-    householdScore += Math.round(FLATMATE_COMPATIBILITY_WEIGHTS.cooking_household * 0.5);
+  if (viewer.cooking && candidate.cooking && viewer.cooking === candidate.cooking) {
+    householdScore += FLATMATE_COMPATIBILITY_WEIGHTS.cooking_household * 0.5;
     matches.push('Similar cooking habits');
   }
-  if (viewer?.household_responsibilities && candidate.household_responsibilities &&
+  if (viewer.household_responsibilities && candidate.household_responsibilities &&
       viewer.household_responsibilities === candidate.household_responsibilities) {
-    householdScore += Math.round(FLATMATE_COMPATIBILITY_WEIGHTS.cooking_household * 0.5);
+    householdScore += FLATMATE_COMPATIBILITY_WEIGHTS.cooking_household * 0.5;
     matches.push('Similar household responsibilities');
   }
+  householdScore = Math.round(householdScore);
 
   const total = Math.min(budgetScore + locationScore + sleepScore + cleanScore + smokePetScore + socialScore + householdScore, 100);
 
@@ -611,3 +607,159 @@ export async function reportFlatmateProfile(targetUserId: string, reason: string
   });
   if (error) throw new FlatmateError('We could not submit the report.', error.code);
 }
+
+/** A categorized flatmate photo row. */
+export interface FlatmatePhoto {
+  id: string;
+  user_id: string;
+  category: string;
+  storage_path: string;
+  caption: string | null;
+  sort_order: number;
+  is_visible: boolean;
+  media_type: string;
+  file_size: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Fetch the visible gallery photos for a user, ordered by sort_order. */
+export async function fetchFlatmatePhotos(userId: string): Promise<FlatmatePhoto[]> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return [];
+
+  const { data, error } = await supabase
+    .from('flatmate_photos')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('is_visible', true)
+    .order('sort_order', { ascending: true })
+    .order('created_at', { ascending: true });
+
+  if (error) {
+    if (isMissingRelationError(error)) return [];
+    throw new FlatmateError('We could not load gallery photos.', error.code);
+  }
+
+  const rows = Array.isArray(data) ? data : [];
+  return rows
+    .filter((row): row is Record<string, unknown> => typeof row === 'object' && row !== null && !Array.isArray(row))
+    .map((row) => ({
+      id: typeof row.id === 'string' ? row.id : '',
+      user_id: typeof row.user_id === 'string' ? row.user_id : '',
+      category: typeof row.category === 'string' ? row.category : '',
+      storage_path: typeof row.storage_path === 'string' ? row.storage_path : '',
+      caption: typeof row.caption === 'string' ? row.caption : null,
+      sort_order: typeof row.sort_order === 'number' ? row.sort_order : 0,
+      is_visible: typeof row.is_visible === 'boolean' ? row.is_visible : true,
+      media_type: typeof row.media_type === 'string' ? row.media_type : 'image',
+      file_size: typeof row.file_size === 'number' ? row.file_size : null,
+      created_at: typeof row.created_at === 'string' ? row.created_at : '',
+      updated_at: typeof row.updated_at === 'string' ? row.updated_at : '',
+    }));
+}
+
+/** Upsert (create or update) one flatmate photo row. */
+export async function upsertFlatmatePhoto({
+  photoId,
+  category,
+  storagePath,
+  caption,
+  sortOrder,
+  isVisible,
+  fileSize,
+}: {
+  photoId?: string;
+  category: string;
+  storagePath: string;
+  caption?: string | null;
+  sortOrder?: number;
+  isVisible?: boolean;
+  fileSize?: number | null;
+}): Promise<{ id: string; category: string }> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new FlatmateError('You must be signed in to do that.', '28000');
+
+  const { data, error } = await supabase.rpc('upsert_flatmate_photo', {
+    p_user_id: user.id,
+    p_category: category,
+    p_storage_path: storagePath,
+    p_caption: caption ?? null,
+    p_sort_order: sortOrder ?? 0,
+    p_is_visible: isVisible ?? true,
+    p_file_size: fileSize ?? null,
+    p_photo_id: photoId ?? null,
+  });
+
+  if (error) throw new FlatmateError('We could not save the photo.', error.code);
+  if (!data || typeof data !== 'object') throw new FlatmateError('Unexpected response saving photo.');
+
+  const saved = data as Record<string, unknown>;
+  return {
+    id: typeof saved.id === 'string' ? saved.id : '',
+    category: typeof saved.category === 'string' ? saved.category : category,
+  };
+}
+
+/** Delete one flatmate photo row (and its Storage object). */
+export async function deleteFlatmatePhotoRecord(photoId: string, storagePath: string): Promise<void> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new FlatmateError('You must be signed in to do that.', '28000');
+
+  const { error } = await supabase.rpc('delete_flatmate_photo', { p_photo_id: photoId });
+  if (error) throw new FlatmateError('We could not delete the photo.', error.code);
+
+  // Best-effort removal from Storage; a leftover object is not a data error.
+  try {
+    await deleteFlatmatePhotoFromStorage(storagePath);
+  } catch {
+    // swallow
+  }
+}
+
+/** Reorder the signed-in member's photos. */
+export async function reorderFlatmatePhotos(orders: { id: string; sortOrder: number }[]): Promise<void> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new FlatmateError('You must be signed in to do that.', '28000');
+
+  const { error } = await supabase.rpc('reorder_flatmate_photos', {
+    p_user_id: user.id,
+    p_photo_orders: orders.map((o) => ({ id: o.id, sort_order: o.sortOrder })),
+  });
+  if (error) throw new FlatmateError('We could not reorder the photos.', error.code);
+}
+
+/** A Flatmate conversation, independent of dating matches. */
+export interface FlatmateConversation {
+  id: string;
+  context: 'flatmate';
+  participants: string[];
+  created_at: string;
+}
+
+/** Start (or return) a Flatmate conversation with a member. No dating match is created. */
+export async function startFlatmateConversation(targetUserId: string): Promise<{ conversationId: string }> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new FlatmateError('You must be signed in to do that.', '28000');
+  if (!targetUserId) throw new FlatmateError('Choose a member to message.');
+  if (targetUserId === user.id) throw new FlatmateError('You cannot message yourself.');
+
+  const { data, error } = await supabase.rpc('start_flatmate_conversation', {
+    p_target_user_id: targetUserId,
+  });
+  if (error) throw new FlatmateError('Could not start the conversation.', error.code);
+  if (!data || typeof data !== 'object') throw new FlatmateError('Unexpected response starting conversation.');
+  const result = data as Record<string, unknown>;
+  return { conversationId: typeof result.conversation_id === 'string' ? result.conversation_id : '' };
+}
+

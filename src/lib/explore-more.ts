@@ -25,6 +25,7 @@ export const EXPLORE_CATEGORY_IDS = [
   'pet-lovers',
   'travel-partners',
   'new-friends',
+  'flatmate-find',
 ] as const;
 
 export type ExploreCategoryId = string;
@@ -230,6 +231,7 @@ function emptyCounts(): ExploreCounts {
       'pet-lovers': 0,
       'travel-partners': 0,
       'new-friends': 0,
+      'flatmate-find': 0,
     },
     goals: { friendship: 0, serious: 0, casual: 0 },
   };
