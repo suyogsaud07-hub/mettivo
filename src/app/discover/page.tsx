@@ -100,7 +100,7 @@ export default function DiscoverPage() {
         // In global mode the distance cap is bypassed server-side (NULL is
         // sent); the page preserves `distance` internally regardless of the
         // toggle so switching back restores the previous selection.
-        maxDistance: isGlobal ? null : distance,
+        maxDistance: isGlobal ? undefined : distance,
         isGlobal,
       });
 
@@ -335,8 +335,8 @@ export default function DiscoverPage() {
     sliderLabels: { display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#B58A83' },
     globalToggleRow: { display: 'flex', alignItems: 'center', gap: '10px', marginTop: '8px' },
     globalLabel: { fontSize: '14px', color: '#F2E9E4', fontWeight: '600' },
-    toggleTrack: { width: '44px', height: '24px', borderRadius: '999px', backgroundColor: isGlobal ? '#D4B18A' : '#34283F', position: 'relative', cursor: 'pointer', transition: 'background 0.2s ease' },
-    toggleThumb: { width: '20px', height: '20px', borderRadius: '50%', backgroundColor: '#FFFFFF', position: 'absolute', top: '2px', left: isGlobal ? '22px' : '2px', transition: 'transform 0.2s ease', boxShadow: '0 2px 4px rgba(0,0,0,0.35)' },
+    toggleTrack: { width: '44px', height: '24px', borderRadius: '999px', backgroundColor: isGlobal ? '#D4B18A' : '#34283F', position: 'relative' as const, cursor: 'pointer', transition: 'background 0.2s ease' },
+    toggleThumb: { width: '20px', height: '20px', borderRadius: '50%', backgroundColor: '#FFFFFF', position: 'absolute' as const, top: '2px', left: isGlobal ? '22px' : '2px', transition: 'transform 0.2s ease', boxShadow: '0 2px 4px rgba(0,0,0,0.35)' },
     globalHelper: { fontSize: '13px', color: '#B58A83', marginTop: '6px', display: 'flex', alignItems: 'center', gap: '6px' },
     genderPillContainer: { display: 'flex', gap: '10px', flexWrap: 'wrap' as const },
     genderPill: { padding: '12px 20px', borderRadius: '20px', border: '1px solid #4A1828', backgroundColor: '#0D0A10', color: '#B58A83', cursor: 'pointer', fontWeight: '600', fontSize: '14px', transition: 'all 0.2s' },
