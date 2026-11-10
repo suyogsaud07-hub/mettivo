@@ -12,6 +12,7 @@ import { recordLike, LikeError } from '@/lib/likes';
 import { blockMember, BlockingError } from '@/lib/blocking';
 import { fetchDiscoveryCandidates, rankDiscovery } from '@/lib/discovery';
 import { gendersForLookingFor } from '@/lib/dating-preferences';
+import { getBrowserLocation } from '@/lib/nearby';
 
 interface Profile {
   id: string;
@@ -50,7 +51,10 @@ export default function DiscoverPage() {
   const [minAge, setMinAge] = useState(18);
   const [maxAge, setMaxAge] = useState(50);
   const [distance, setDistance] = useState(50);
+  const [isGlobal, setIsGlobal] = useState(false);
   const [selectedGenders, setSelectedGenders] = useState<string[]>(['Woman', 'Man', 'Nonbinary']);
+  const [userLat, setUserLat] = useState<number | null>(null);
+  const [userLng, setUserLng] = useState<number | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [isCallModalOpen, setIsCallModalOpen] = useState(false);
@@ -91,6 +95,13 @@ export default function DiscoverPage() {
         genders: effectiveGenders,
         onlineOnly: false,
         limit: 50,
+        latitude: userLat,
+        longitude: userLng,
+        // In global mode the distance cap is bypassed server-side (NULL is
+        // sent); the page preserves `distance` internally regardless of the
+        // toggle so switching back restores the previous selection.
+        maxDistance: isGlobal ? null : distance,
+        isGlobal,
       });
 
       const me = {
@@ -129,10 +140,31 @@ export default function DiscoverPage() {
     }
   };
 
-  // `loadOnlineProfiles` only calls setState after an `await`, so this is a
-  // one-shot mount fetch, not a synchronous setState that cascades renders.
+  // Resolve the caller's location once, then fetch. Fetching after location
+  // resolves avoids a flash of empty results: local discovery without a
+  // verified caller location fails closed (no accidental worldwide search).
   // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => { void loadOnlineProfiles(undefined, true); }, []);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const pos = await getBrowserLocation();
+        if (!cancelled && pos) {
+          setUserLat(pos.latitude);
+          setUserLng(pos.longitude);
+        }
+      } catch {
+        // Location unavailable: fetch proceeds with null coordinates, which
+        // makes local mode return no rows (safe) while global mode still works.
+      }
+      if (!cancelled) {
+        void loadOnlineProfiles(undefined, true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const toggleGender = (gender: string) => {
     setSelectedGenders(prev => prev.includes(gender) ? prev.filter(g => g !== gender) : [...prev, gender]);
@@ -301,6 +333,11 @@ export default function DiscoverPage() {
     sliderContainer: { display: 'flex', flexDirection: 'column' as const, gap: '8px' },
     slider: { width: '100%', accentColor: '#D4B18A', height: '6px', borderRadius: '3px', cursor: 'pointer' },
     sliderLabels: { display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#B58A83' },
+    globalToggleRow: { display: 'flex', alignItems: 'center', gap: '10px', marginTop: '8px' },
+    globalLabel: { fontSize: '14px', color: '#F2E9E4', fontWeight: '600' },
+    toggleTrack: { width: '44px', height: '24px', borderRadius: '999px', backgroundColor: isGlobal ? '#D4B18A' : '#34283F', position: 'relative', cursor: 'pointer', transition: 'background 0.2s ease' },
+    toggleThumb: { width: '20px', height: '20px', borderRadius: '50%', backgroundColor: '#FFFFFF', position: 'absolute', top: '2px', left: isGlobal ? '22px' : '2px', transition: 'transform 0.2s ease', boxShadow: '0 2px 4px rgba(0,0,0,0.35)' },
+    globalHelper: { fontSize: '13px', color: '#B58A83', marginTop: '6px', display: 'flex', alignItems: 'center', gap: '6px' },
     genderPillContainer: { display: 'flex', gap: '10px', flexWrap: 'wrap' as const },
     genderPill: { padding: '12px 20px', borderRadius: '20px', border: '1px solid #4A1828', backgroundColor: '#0D0A10', color: '#B58A83', cursor: 'pointer', fontWeight: '600', fontSize: '14px', transition: 'all 0.2s' },
     genderPillActive: { backgroundColor: '#D4B18A', color: '#17121C', borderColor: '#D4B18A' },
@@ -312,7 +349,11 @@ export default function DiscoverPage() {
     <div style={styles.container}>
       <div style={styles.header}>
         <h1 style={styles.headerTitle}>Discover</h1>
-        <button style={styles.filterBtn} onClick={() => setIsFilterOpen(true)}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line><line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line><line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line><line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line><line x1="17" y1="16" x2="23" y2="16"></line></svg></button>
+        <button
+          style={styles.filterBtn}
+          aria-label="Open filters"
+          onClick={() => setIsFilterOpen(true)}
+        ><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line><line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line><line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line><line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line><line x1="17" y1="16" x2="23" y2="16"></line></svg></button>
       </div>
 
       <div style={{ ...styles.echoBanner, cursor: 'pointer' }} onClick={() => router.push('/discover/mettivo_voice')}>
@@ -553,10 +594,47 @@ export default function DiscoverPage() {
           <div style={styles.filterBox}>
             <div style={styles.filterHeader}><div style={styles.filterTitle}>Filters</div><button style={styles.closeBtn} onClick={() => setIsFilterOpen(false)}>×</button></div>
             <div style={styles.filterSection}><label style={styles.filterLabel}>Age Range</label><div style={styles.inputRow}><input type="number" value={minAge} onChange={(e) => setMinAge(Number(e.target.value))} min="18" max={maxAge} style={styles.filterInput} /><input type="number" value={maxAge} onChange={(e) => setMaxAge(Number(e.target.value))} min={minAge} max="100" style={styles.filterInput} /></div></div>
-            <div style={styles.filterSection}><label style={styles.filterLabel}>Maximum Distance (km)</label><div style={styles.sliderContainer}><input type="range" min="1" max="100" value={distance} onChange={(e) => setDistance(Number(e.target.value))} style={styles.slider} /><div style={styles.sliderLabels}><span>1 km</span><span style={{ color: '#D4B18A', fontWeight: '700' }}>{distance} km</span><span>100 km</span></div></div></div>
+            <div style={styles.filterSection}>
+              <label style={styles.filterLabel}>Maximum Distance (km)</label>
+              <div style={styles.sliderContainer}>
+                <input
+                  type="range"
+                  min="1"
+                  max="100"
+                  value={distance}
+                  onChange={(e) => setDistance(Number(e.target.value))}
+                  style={{
+                    ...styles.slider,
+                    ...(isGlobal ? { cursor: 'not-allowed', opacity: 0.5 } : {}),
+                  }}
+                  disabled={isGlobal}
+                />
+                <div style={styles.sliderLabels}>
+                  <span>1 km</span>
+                  <span style={{ color: '#D4B18A', fontWeight: '700' }}>{distance} km</span>
+                  <span>100 km</span>
+                </div>
+              </div>
+              <div style={styles.globalToggleRow}>
+                <span style={styles.globalLabel}>🌍 Go Global</span>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={isGlobal}
+                  aria-label={isGlobal ? 'Disable Go Global' : 'Enable Go Global'}
+                  onClick={() => setIsGlobal((prev) => !prev)}
+                  style={styles.toggleTrack}
+                >
+                  <div style={styles.toggleThumb} />
+                </button>
+              </div>
+              {isGlobal && (
+                <div style={styles.globalHelper}>🌍 Searching the entire world</div>
+              )}
+            </div>
             <div style={styles.filterSection}><label style={styles.filterLabel}>Show Me</label><div style={styles.genderPillContainer}>{['Woman', 'Man', 'Nonbinary'].map((gender) => (<button key={gender} onClick={() => toggleGender(gender)} style={{ ...styles.genderPill, ...(selectedGenders.includes(gender) ? styles.genderPillActive : {}) }}>{gender}</button>))}</div></div>
             <button style={styles.applyBtn} onClick={handleApplyFilters}>Apply Filters</button>
-            <button style={styles.resetBtn} onClick={() => { setMinAge(18); setMaxAge(50); setDistance(50); setSelectedGenders(['Woman', 'Man', 'Nonbinary']); }}>Reset to Default</button>
+            <button style={styles.resetBtn} onClick={() => { setMinAge(18); setMaxAge(50); setDistance(50); setSelectedGenders(['Woman', 'Man', 'Nonbinary']); setIsGlobal(false); }}>Reset to Default</button>
           </div>
         </div>
       )}

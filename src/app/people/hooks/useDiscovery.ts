@@ -105,6 +105,7 @@ export function useDiscovery(options: UseDiscoveryOptions = {}) {
     maxAge = 99,
     genders = null,
     batchSize = 10,
+    radiusKm = 10,
     onMatch,
   } = options;
 
@@ -194,6 +195,8 @@ export function useDiscovery(options: UseDiscoveryOptions = {}) {
         offset,
         latitude: userLat,
         longitude: userLng,
+        maxDistance: radiusKm,
+        isGlobal: false,
       });
 
       // Preload primary photos of the first candidate in the batch
@@ -208,7 +211,7 @@ export function useDiscovery(options: UseDiscoveryOptions = {}) {
           : null,
       }));
     },
-    [minAge, maxAge, genders, batchSize, userLat, userLng]
+    [minAge, maxAge, genders, batchSize, radiusKm, userLat, userLng]
   );
 
   /**

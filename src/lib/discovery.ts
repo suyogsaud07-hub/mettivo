@@ -69,6 +69,10 @@ export interface DiscoveryFilters {
   latitude?: number | null;
   /** Caller's longitude, supplied when available so the RPC can annotate distance. */
   longitude?: number | null;
+  /** Maximum distance in kilometres for local (non-global) discovery. */
+  maxDistance?: number;
+  /** When true, bypasses the maximum-distance restriction for worldwide discovery. */
+  isGlobal?: boolean;
 }
 
 /** Safety rails mirrored in SQL: `discover_profiles` clamps to the same range. */
@@ -180,6 +184,11 @@ export async function fetchDiscoveryCandidates(
     p_lat: filters.latitude ?? null,
     p_lng: filters.longitude ?? null,
     p_offset: filters.offset ?? 0,
+    // In global mode the distance cap is bypassed: pass NULL so the RPC does
+    // not apply ST_DWithin. In local mode pass the selected distance. The
+    // previously selected distance is preserved in caller state regardless.
+    p_max_distance_km: filters.isGlobal ? null : filters.maxDistance ?? null,
+    p_is_global: filters.isGlobal ?? false,
   });
 
   if (error) {
