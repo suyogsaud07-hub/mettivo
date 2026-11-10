@@ -1,5 +1,5 @@
 -- ===========================================================================
-# 20261110010000_discover_performance.sql
+-- 20261110010000_discover_performance.sql
 -- M56 — Discovery engine performance optimization
 --
 -- WHY
@@ -11,7 +11,7 @@
 --     2. auth.uid() was invoked inline 5+ times instead of being cached.
 --     3. Multiple NOT EXISTS correlated subqueries against likes/matches
 --        with no supporting indexes beyond the PK.
---     4. No cursor/offset pagination — load-more re-fetches from the start.
+--     4. No pagination — load-more re-fetches from the start.
 --     5. Missing indexes on profiles.age, gender, onboarding_completed,
 --        is_suspended.
 --
@@ -20,13 +20,33 @@
 --   2. Index on blocked_users(blocker_id, blocked_user_id) for is_blocked_pair.
 --   3. Refactor discover_profiles():
 --        - Cache auth.uid() in a variable (single evaluation).
---        - Compute online status once in a subquery (dedupes 3x evaluation).
---        - Add p_offset parameter for cursor-based pagination.
+--        - Compute online status in a subquery (written once; referenced in
+--          SELECT, ORDER BY, and the p_online_only filter — per-row evaluation
+--          count depends on the planner, not guaranteed by the CTE alone).
+--        - Add p_offset parameter for offset-based pagination.
 --        - Preserve ALL existing business rules and return columns.
 --   4. No RLS changes, no security mode changes.
 --
--- SAFE TO RE-RUN: IF NOT EXISTS on indexes, CREATE OR REPLACE on function.
+-- SAFE TO RE-RUN: IF NOT EXISTS on indexes, DROP IF EXISTS + CREATE on function.
 -- ===========================================================================
+
+-- ---------------------------------------------------------------------------
+-- 0. PostGIS extension — required for geography type and ST_* functions
+-- ---------------------------------------------------------------------------
+-- M56 uses geography(Point, 4326), ST_SetSRID, ST_MakePoint and ST_Distance,
+-- all provided by the PostGIS extension. Migration 20261105020000_postgis_location.sql
+-- installs it, but we ensure it here so M56 is self-contained and idempotent.
+-- PostGIS installs its types and functions into the public schema by default
+-- (see 20261106000006_orbit_location_rpc_repair.sql), which is already on this
+-- function's search_path (public, pg_temp). Guard creation so a Supabase project
+-- without PostGIS available fails gracefully with a notice rather than a hard
+-- error on the geography type declaration below.
+do $$
+begin
+  create extension if not exists postgis;
+exception when others then
+  raise notice 'postgis extension unavailable in this environment - skipped';
+end $$;
 
 -- ---------------------------------------------------------------------------
 -- 1. Indexes for discovery WHERE clause
@@ -69,8 +89,17 @@ CREATE INDEX IF NOT EXISTS blocked_users_blocked_blocker_idx
 -- ---------------------------------------------------------------------------
 -- 3. Refactored discover_profiles()
 -- ---------------------------------------------------------------------------
+--
+-- NOTE: CREATE OR REPLACE FUNCTION cannot be used here. PostgreSQL rejects any
+-- change to a function's parameter list under OR REPLACE, and this migration
+-- adds a ninth parameter (p_offset). DROP FUNCTION is therefore required.
+-- No database view, trigger, or other function depends on discover_profiles()
+-- (it is invoked only as an RPC from the browser), so dropping and recreating
+-- it breaks no dependent objects. Grants and the function comment are
+-- re-established immediately after recreation.
 
 drop function if exists public.discover_profiles(integer, integer, text[], integer, boolean, uuid[], float, float);
+drop function if exists public.discover_profiles(integer, integer, text[], integer, boolean, uuid[], float, float, integer);
 
 create function public.discover_profiles(
   p_min_age     integer default 18,
@@ -129,7 +158,8 @@ begin
 
   return query
   with candidate_online as (
-    -- Compute online status once; reused in SELECT, ORDER BY, and filter.
+    -- Compute online status in a subquery; referenced in SELECT, ORDER BY,
+    -- and the p_online_only filter.
     select
       p.*,
       case
@@ -192,7 +222,7 @@ revoke all on function public.discover_profiles(integer, integer, text[], intege
 grant execute on function public.discover_profiles(integer, integer, text[], integer, boolean, uuid[], float, float, integer) to authenticated;
 
 comment on function public.discover_profiles(integer, integer, text[], integer, boolean, uuid[], float, float, integer) is
-  'Allow-listed discovery feed. Excludes already-decided/blocked/matched/non-public members, supports load-more exclusions and cursor-based pagination (p_offset), ranks expiring online presence first, returns casual_intent and (optionally) distance_meters from the caller\'s supplied location. Online status is computed once per candidate in a CTE to avoid triple evaluation.';
+  'Allow-listed discovery feed. Excludes already-decided/blocked/matched/non-public members, supports load-more exclusions and offset-based pagination (p_offset), ranks expiring online presence first, returns casual_intent and (optionally) distance_meters from the caller''s supplied location. Online status expression is written once in a CTE and referenced in SELECT, ORDER BY, and filter; whether the planner evaluates it once per candidate depends on the execution plan.';
 
 -- ---------------------------------------------------------------------------
 -- 4. Verification
@@ -203,5 +233,5 @@ begin
   raise notice 'M56: discover_profiles performance migration complete';
   raise notice '  Indexes added: profiles_age_idx, profiles_gender_idx, profiles_onboarding_suspended_idx, profiles_updated_at_idx';
   raise notice '  Indexes added: blocked_users_blocker_blocked_idx, blocked_users_blocked_blocker_idx';
-  raise notice '  discover_profiles(): auth.uid() cached, online status deduplicated, p_offset added';
+  raise notice '  discover_profiles(): auth.uid() cached, online status computed in subquery, p_offset added';
 end $$;
